@@ -188,9 +188,9 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 // and reports whether any store writes a field of it. ok is false when
 // something this analysis does not follow may write it: a function literal
 // that captures it, or its address, or a field's, going anywhere but to a
-// load, a store to it, a debug reference, a field, a capture, or a call. A
-// call takes it as the receiver of a method of a value, as db.Begin() does
-// on a db held by value.
+// load, a store to it, a debug reference, a field, a capture, or a call of
+// another package. Such a call takes it as the receiver of a method of a
+// value, as db.Begin() does on a db held by value.
 func (ps *Paths) allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
 	set, read := ps.stores[a]
 	if !read {
@@ -245,7 +245,11 @@ func (set *allocStoreSet) visit(step allocStep) bool {
 func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 	for _, ref := range *v.Referrers() {
 		switch ref := ref.(type) {
-		case *ssa.UnOp, *ssa.DebugRef, ssa.CallInstruction:
+		case *ssa.UnOp, *ssa.DebugRef:
+		case ssa.CallInstruction:
+			if !libraryCall(ref.Common(), v) {
+				return false
+			}
 		case *ssa.FieldAddr:
 			if !set.collect(ref, true) {
 				return false
@@ -275,6 +279,16 @@ func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 		}
 	}
 	return true
+}
+
+// libraryCall reports whether call, which takes the address v, is of a
+// function of another package, as db.Begin() on a db held by value does. A function
+// of the package, as a repository's Bind(tx), may store another handle
+// there. So may a function value. A library's own method does not rebind a
+// field of the caller's struct.
+func libraryCall(call *ssa.CallCommon, v ssa.Value) bool {
+	fn := call.StaticCallee()
+	return fn != nil && fn.Pkg != nil && fn.Pkg != v.Parent().Pkg
 }
 
 // collectLoads collects, as collect does, through every load of the

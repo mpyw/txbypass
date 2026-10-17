@@ -130,3 +130,51 @@ func Normalized(db *gorm.DB, conds []string) error {
 		return tx.Create(q).Error
 	})
 }
+
+// ===== A method of the package that may rebind the field =====
+
+type BindRepo struct{ db *gorm.DB }
+
+func (r *BindRepo) Bind(tx *gorm.DB)   { r.db = tx }
+func (r *BindRepo) Unbind(db *gorm.DB) { r.db = db }
+
+// Not reported: Bind writes r.db, so it runs on tx.
+func RebindViaMethod(db *gorm.DB, u *User) error {
+	r := &BindRepo{db: db}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		r.Bind(tx)
+		defer r.Unbind(db)
+		return r.db.Create(u).Error
+	})
+}
+
+// Not reported: the same, on a struct held by value.
+func RebindViaMethodValue(db *gorm.DB, u *User) error {
+	var r BindRepo
+	r.db = db
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		r.Bind(tx)
+		return r.db.Create(u).Error
+	})
+}
+
+// Not reported: r is given to a function value, which may rebind r.db.
+func RebindViaFuncValue(db *gorm.DB, u *User, bind func(*BindRepo, *gorm.DB)) error {
+	var r BindRepo
+	r.db = db
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		bind(&r, tx)
+		return r.db.Create(u).Error
+	})
+}
+
+// Not reported: a copy of the pointer is given away in a variable, so what
+// it points to may be written there.
+func PointerCopyGivenAway(db *gorm.DB, u *User, sink func(**BindRepo)) error {
+	r := &BindRepo{db: db}
+	q := r
+	sink(&q)
+	tx := r.db.Begin()
+	r.db.Create(u)
+	return tx.Commit().Error
+}

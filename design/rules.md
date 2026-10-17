@@ -130,6 +130,8 @@ A handle is a root value and the fields selected from it. The root is what the S
 | A variable a function literal captures, written by one store | The value stored |
 | A variable in memory written by more than one store, or through a field, all in its own function | The variable itself, as `r` of `r := &Repo{db: db}`. A callback runs while it holds one value. A scope that writes it is below |
 | A variable written by a function literal that captures it, or whose address, or a field's, goes elsewhere | No handle: it is the same handle as nothing |
+| A variable whose address, or a field's, is given to a function of the package or a function value, as `r.Bind(tx)` | No handle. The function may store another handle there |
+| A variable whose address is given to a function of another package, as `db.Begin()` on a `gorm.DB` held by value | Followed. A library's method does not rebind a field of the caller's struct |
 | A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
 | A method value, as `db.Create` | Its receiver |
 | A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver, with three exceptions. A [begin](#begins), as gorm's `db.Begin()`, gives the transaction. `WithTx` gives queries bound to it: see [sqlc's `WithTx`](#sqlcs-withtx). A method that takes a value of the receiver's type binds a new value to it, as `repo.Using(tx)` does. So does one that takes a value with a method that ends a transaction |
