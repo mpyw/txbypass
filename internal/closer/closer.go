@@ -261,7 +261,8 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 		switch ref := ref.(type) {
 		case *ssa.DebugRef:
 		case ssa.CallInstruction:
-			if ref.Common().Value != mc {
+			// t.Cleanup runs it after the test returns, as a defer does.
+			if ref.Common().Value != mc && !program.Cleanup(ref.Common()) {
 				return true
 			}
 		default:
