@@ -92,3 +92,13 @@ func (s *TxService) SwapInLiteral(u *User) error {
 		return s.db.Create(u).Error
 	})
 }
+
+// A deferred literal that writes the field runs after the commit, so the
+// use before it is still read.
+func (s *TxService) DeferredRestore(u *User) error {
+	orig := s.db
+	tx := s.db.Begin()
+	defer func() { s.db = orig }()
+	s.db.Create(u) // want `^s\.db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit().Error
+}

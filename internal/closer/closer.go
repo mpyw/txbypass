@@ -9,8 +9,8 @@
 // binds.
 //
 // In the function that holds the begin, a transaction that goes where this
-// analysis does not follow, into a field, a map, a channel, or a function
-// literal that is given away, may be ended by code it does not read. That counts as
+// analysis does not follow, into a field, a map as a key or a value, a
+// channel, even in a select, or a function literal that is given away, may be ended by code it does not read. That counts as
 // an end too, so that nothing is reported after it. Inside a helper, only
 // an end the helper writes counts: a library's own methods store their
 // receiver in many places, and would otherwise seem to end it. A
@@ -95,7 +95,11 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 	case *ssa.Send:
 		return within(instr.X, txs)
 	case *ssa.MapUpdate:
-		return within(instr.Value, txs)
+		return within(instr.Key, txs) || within(instr.Value, txs)
+	case *ssa.Select:
+		return slices.ContainsFunc(instr.States, func(st *ssa.SelectState) bool {
+			return st.Dir == types.SendOnly && within(st.Send, txs)
+		})
 	case *ssa.MakeClosure:
 		return c.closureGivenAway(instr, txs)
 	}

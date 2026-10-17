@@ -438,3 +438,46 @@ func StoredOnOnePath(db *sql.DB, retry bool) (err error) {
 	}
 	return tx.Commit()
 }
+
+// A map insert keyed by the transaction gives it away too.
+type registry struct{ active map[*sql.Tx]string }
+
+func (r *registry) Open(db *sql.DB, id string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	r.active[tx] = id
+	_, err = db.Exec("after the transaction went away")
+	return err
+}
+
+// So does a send inside a select.
+func SelectSend(ctx context.Context, db *sql.DB, out chan<- *sql.Tx) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	select {
+	case out <- tx:
+	case <-ctx.Done():
+		tx.Rollback()
+		return ctx.Err()
+	}
+	_, err = db.Exec("after the send")
+	return err
+}
+
+// A receive in a select gives nothing away.
+func SelectReceive(ctx context.Context, db *sql.DB, in <-chan int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	select {
+	case <-in:
+	case <-ctx.Done():
+	}
+	db.Exec("still inside") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}

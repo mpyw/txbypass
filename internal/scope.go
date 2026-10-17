@@ -246,13 +246,34 @@ func (s txScope) scopeWrites(outer handle.Path) bool {
 		}
 		for _, anon := range fn.AnonFuncs {
 			made, ok := program.Creation(anon)
-			if ok && (fn != s.fn || s.region == nil || s.region.Inside(made)) && within(anon) {
+			if ok && (fn != s.fn || s.region == nil || s.region.Inside(made) && !scopeDeferred(made)) && within(anon) {
 				return true
 			}
 		}
 		return false
 	}
 	return within(s.fn)
+}
+
+// scopeDeferred reports whether the literal that made makes runs only when
+// the function returns: made is a defer of it, or a closure that only a
+// defer uses.
+func scopeDeferred(made ssa.Instruction) bool {
+	if _, ok := made.(*ssa.Defer); ok {
+		return true
+	}
+	mc, ok := made.(*ssa.MakeClosure)
+	if !ok {
+		return false
+	}
+	for _, ref := range *mc.Referrers() {
+		switch ref.(type) {
+		case *ssa.Defer, *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // scopeInside reports whether ref is evaluated inside the transaction of s.
