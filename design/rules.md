@@ -153,7 +153,9 @@ A scope is the code that runs inside one transaction. Each use of the outer hand
 | A callback opener | The callback's body, with its own function literals |
 | A begin | The region where the transaction is open. See [Regions](#regions) |
 
-In a callback, a function literal kept for after it is not read. Such a literal is assigned to a variable declared outside the callback, or appended to one. A field or an element of such a variable counts too. That is how an after-commit hook is kept: it runs once the callback has returned, outside the transaction, on purpose.
+In a callback, a function literal kept for after it is not read. Such a literal is stored in a variable declared outside the callback, or in a field or an element of one. It may be stored directly, appended, set as a field of a composite literal, or converted to a named function type. It may also be named first in a local of the callback that nothing else uses. That is how an after-commit hook is kept: it runs once the callback has returned, outside the transaction, on purpose.
+
+A literal given to any other call, as `after = wrap(func() {...})`, is still read: the call may run it inside the callback.
 
 Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`.
 
@@ -178,7 +180,7 @@ An instruction is in the region when the transaction is open there on every path
 
 | Not in the region | Why |
 | --- | --- |
-| A deferred statement | It runs when the function returns |
+| A deferred statement of the function that holds the begin | It runs when the function returns. A deferred statement in a function literal runs when the literal returns, so it is read |
 | Code after a branch that may end the transaction | Not every path leaves it open |
 
 The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
