@@ -402,7 +402,19 @@ func scopeDefers(instr ssa.Instruction) bool {
 
 // scopeInside reports whether ref is evaluated inside the transaction of s.
 func (s txScope) scopeInside(ref *ssa.DebugRef) bool {
-	return s.region == nil || s.region.Inside(scopeAnchor(s.fn, ref))
+	if s.region == nil {
+		return true
+	}
+	// The body of a range over a function runs in the loop, where its own
+	// ends are read. Any other literal runs where it is made.
+	var anchor ssa.Instruction = ref
+	for f := ref.Parent(); f != s.fn; f = f.Parent() {
+		if program.Yield(f) && !s.region.InsideBody(f, anchor) {
+			return false
+		}
+		anchor, _ = program.Creation(f)
+	}
+	return s.region.Inside(anchor)
 }
 
 // scopeWritten reports whether e is written where it stands: on the left
@@ -420,17 +432,6 @@ func scopeWritten(e ast.Expr, stack []ast.Node) bool {
 		return ok && slices.Contains(parent.Names, id)
 	}
 	return false
-}
-
-// scopeAnchor is the instruction of fn where ref is evaluated. A reference
-// in a function literal is evaluated where the literal is made. walkScope
-// reads no literal that is never made, so each one on the way is made.
-func scopeAnchor(fn *ssa.Function, ref *ssa.DebugRef) ssa.Instruction {
-	var anchor ssa.Instruction = ref
-	for f := ref.Parent(); f != fn; f = f.Parent() {
-		anchor, _ = program.Creation(f)
-	}
-	return anchor
 }
 
 // reportScopeUses reports, as rule r, each expression in s that is the

@@ -15,6 +15,7 @@
 package region
 
 import (
+	"go/constant"
 	"go/token"
 	"go/types"
 	"slices"
@@ -65,6 +66,8 @@ type Region struct {
 	// at holds the state before each instruction, once the fixpoint is
 	// done. A rule asks about every use in the region.
 	at map[ssa.Instruction]state
+	// bodies holds the bodies of ranges over functions already read.
+	bodies map[*ssa.Function]bool
 }
 
 // New computes the region of the transaction that begin returns, in begin's
@@ -76,15 +79,22 @@ func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer
 	r := &Region{
 		begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{paths.Of(tx)}, err: err, closer: c,
 		entry: make(map[*ssa.BasicBlock]state), ends: make(map[ssa.Instruction]bool), at: make(map[ssa.Instruction]state),
+		bodies: make(map[*ssa.Function]bool),
 	}
 	if txAddr != nil {
 		r.txs = append(r.txs, paths.Of(txAddr))
 	}
-	fn := begin.Parent()
+	r.solve(begin.Parent(), closed)
+	return r
+}
+
+// solve computes the state before each instruction of fn, whose entry is in
+// state start.
+func (r *Region) solve(fn *ssa.Function, start state) {
 	for _, b := range fn.Blocks[1:] {
 		r.entry[b] = dead
 	}
-	r.entry[fn.Blocks[0]] = closed
+	r.entry[fn.Blocks[0]] = start
 	for changed := true; changed; {
 		changed = false
 		for _, b := range fn.Blocks[1:] {
@@ -105,7 +115,38 @@ func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer
 			s = r.step(instr, s)
 		}
 	}
-	return r
+}
+
+// InsideBody reports whether the transaction is open at instr, in body, the
+// function the builder makes of the body of a range over a function. The
+// body is entered where the transaction is open, on the first iteration.
+// It is entered again where it returns true for the next one, so an end
+// that goes on to the next iteration leaves the entry outside.
+func (r *Region) InsideBody(body *ssa.Function, instr ssa.Instruction) bool {
+	if !r.bodies[body] {
+		r.bodies[body] = true
+		r.solve(body, open)
+		if r.endsIteration(body) {
+			r.solve(body, closed)
+		}
+	}
+	return r.at[instr] == open
+}
+
+// endsIteration reports whether body returns true, for the next iteration,
+// where the transaction may have ended.
+func (r *Region) endsIteration(body *ssa.Function) bool {
+	for _, b := range body.Blocks {
+		ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
+		if !ok {
+			continue
+		}
+		next, ok := ret.Results[0].(*ssa.Const)
+		if ok && constant.BoolVal(next.Value) && r.at[ret] == closed {
+			return true
+		}
+	}
+	return false
 }
 
 // edge is the state on the edge from p to b.

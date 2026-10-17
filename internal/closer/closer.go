@@ -250,7 +250,7 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path, helper
 		if !c.within(b, txs) {
 			continue
 		}
-		if fn.Synthetic == yieldSynthetic && !helper {
+		if program.Yield(fn) && !helper {
 			ends = ends || c.yieldEnds(mc, fn.FreeVars[i])
 		} else {
 			ends = ends || c.rootEnds(fn, fn.FreeVars[i])
@@ -316,10 +316,6 @@ func (c *Closer) Export(prog *program.Program) {
 		}
 	}
 }
-
-// yieldSynthetic is how the builder marks the function it makes of the body
-// of a range over a function.
-const yieldSynthetic = "range-over-func yield"
 
 // yieldEnds reports whether the body of a range over a function, which mc
 // makes, ends the transaction rooted at root and then goes on: to the next
@@ -435,7 +431,7 @@ func yieldExitReturns(fn *ssa.Function, jump ssa.Value, exit *ssa.Const) bool {
 			// builder makes for it. A labeled break or a goto out of the body
 			// jumps to its target, which may end in a return of its own.
 			returns = returns && then.Comment == "rangefunc.resume.match"
-			if !returns || fn.Synthetic != yieldSynthetic {
+			if !returns || !program.Yield(fn) {
 				return returns
 			}
 			made, _ := program.Creation(fn)

@@ -166,3 +166,53 @@ func ImportThroughHelper(db *sql.DB, rows iter.Seq[int]) error {
 	}
 	return tx.Commit()
 }
+
+// Not reported: the use after the rollback, in the same iteration, runs
+// with the transaction ended, as in a loop over a slice.
+func RollbackThenUseInRangeFunc(db *sql.DB, rows iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for r := range rows {
+		if _, err := tx.Exec("INSERT", r); err != nil {
+			tx.Rollback()
+			db.Exec("INSERT INTO import_failures VALUES ($1)", r)
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// A use before the end in the same iteration is inside.
+func UseThenRollbackInRangeFunc(db *sql.DB, rows iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for r := range rows {
+		db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+		if r < 0 {
+			tx.Rollback()
+			return nil
+		}
+	}
+	return tx.Commit()
+}
+
+// Not reported: an iteration after one that committed and went on may run
+// with the transaction ended.
+func CommitGoesOnThenUseInRangeFunc(db *sql.DB, rows iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for r := range rows {
+		db.Exec("SELECT 1")
+		if r < 0 {
+			tx.Commit()
+		}
+	}
+	return nil
+}
