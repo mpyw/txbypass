@@ -186,3 +186,18 @@ func NamedWithTx(ctx context.Context, db *sql.DB, q *NamedQueries) error {
 	_ = q.Name()
 	return tx.Commit()
 }
+
+// Not reported: the queries built on the pool are rebound to the
+// transaction before they run.
+func NewWithTx(ctx context.Context, db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := New(db).WithTx(tx)
+	if err := q.CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
