@@ -245,3 +245,16 @@ func Address(db *sql.DB, p *pointing) {
 	p.tx = &tx
 	db.Exec("after the address was given away")
 }
+
+// A transaction kept in a variable that a literal captures and that is
+// assigned again still ends where it is committed.
+func ReassignedCaptured(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { tx = nil }()
+	tx.Commit()
+	_, err = db.Exec("after the commit")
+	return err
+}

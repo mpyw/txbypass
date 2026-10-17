@@ -221,10 +221,12 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 	return false
 }
 
-// within reports whether v is one of txs, or a field of one.
+// within reports whether v is stored where one of txs is, or in a field of
+// one. A transaction kept in a variable assigned twice counts: a commit on
+// a load of it may end the one this region began.
 func within(v ssa.Value, txs []handle.Path) bool {
 	p := handle.Of(v)
-	return slices.ContainsFunc(txs, p.Within)
+	return slices.ContainsFunc(txs, p.Stored)
 }
 
 // Export exports the fact of each function of the package that ends a

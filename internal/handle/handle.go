@@ -32,6 +32,11 @@ type Path struct {
 	// fields are the fields selected from base, in order, including the
 	// embedded fields a promoted field or method passes through.
 	fields []*types.Var
+	// unknown reports that base is a variable in memory written more than
+	// once, or written where this analysis does not follow. Which handle it
+	// holds is not known, so it is the same handle as nothing. It is still
+	// the same storage as itself: see Stored.
+	unknown bool
 }
 
 // Of is the handle v is.
@@ -74,8 +79,12 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 			return of(b, seen)
 		}
 	case *ssa.Alloc:
-		if stored, ok := onlyStore(v); ok {
+		stored, n, ok := allocStores(v)
+		switch {
+		case ok && n == 1:
 			return of(stored, seen)
+		case !ok || n > 1:
+			return Path{base: v, unknown: true}
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
@@ -148,25 +157,30 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 	return made.(*ssa.MakeClosure).Bindings[slices.Index(fn.FreeVars, v)], true
 }
 
-// onlyStore is the value a variable in memory holds, when one store writes
-// it, in its own function or in a literal that captures it. Its address
-// must go nowhere else, or something else may write it.
-func onlyStore(a *ssa.Alloc) (ssa.Value, bool) {
+// allocStores counts the stores that write a variable in memory, in its own
+// function or in a literal that captures it, and gives the value of the
+// last one. ok is false when its address goes where something else may
+// write it.
+func allocStores(a *ssa.Alloc) (ssa.Value, int, bool) {
 	var stores []*ssa.Store
-	if !collectStores(a, &stores) || len(stores) != 1 {
-		return nil, false
+	if !collectStores(a, &stores) {
+		return nil, 0, false
 	}
-	return stores[0].Val, true
+	if len(stores) == 0 {
+		return nil, 0, true
+	}
+	return stores[len(stores)-1].Val, len(stores), true
 }
 
 // collectStores adds the stores to the address v to stores. It reports
-// false when the address is used for anything but a load, a store to it, a
-// debug reference, or a capture.
+// false when the address goes anywhere but to a load, a store to it, a
+// debug reference, a field of it, a capture, or a call. A call takes it as
+// the receiver of a method of a value, as db.Begin() does on a db held by
+// value.
 func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
 	for _, ref := range *v.Referrers() {
 		switch ref := ref.(type) {
-		case *ssa.UnOp:
-		case *ssa.DebugRef:
+		case *ssa.UnOp, *ssa.DebugRef, *ssa.FieldAddr, ssa.CallInstruction:
 		case *ssa.Store:
 			if ref.Addr != v {
 				return false
@@ -226,16 +240,23 @@ func samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
 }
 
 // Equal reports whether p and q are the same handle: the same root, and the
-// same fields.
+// same fields. A handle that is not known is the same as nothing.
 func (p Path) Equal(q Path) bool {
-	return p.base == q.base && slices.Equal(p.fields, q.fields)
+	return !p.unknown && !q.unknown && p.base == q.base && slices.Equal(p.fields, q.fields)
 }
 
-// Within reports whether p is q, or a field selected from q. A method of
-// tx.TX is a method of the transaction tx, and reading db.Error reads the
-// handle db. A value that embeds q is not within it: it may hold other
-// things.
+// Within reports whether p is q, or a field selected from q. Reading
+// db.Error reads the handle db. A value that embeds q is not within it: it
+// may hold other things. A handle that is not known is within nothing.
 func (p Path) Within(q Path) bool {
+	return !p.unknown && !q.unknown && p.Stored(q)
+}
+
+// Stored reports whether p is stored where q is, or in a field of it, known
+// or not. A transaction kept in a variable assigned twice is still that
+// variable: a commit through a load of it ends what it holds. A method of
+// tx.TX is a method of the transaction tx.
+func (p Path) Stored(q Path) bool {
 	return p.base == q.base && len(p.fields) >= len(q.fields) && slices.Equal(p.fields[:len(q.fields)], q.fields)
 }
 
