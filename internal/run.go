@@ -41,9 +41,7 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	}
 	if runNeedsProgram(pass) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
-		// Every driver gives a module. Its path is empty outside module
-		// mode.
-		c.paths = handle.NewPaths(pass.Module.Path)
+		c.paths = handle.NewPaths(runModule(pass.Module))
 		c.closer = closer.New(pass, c.paths)
 		c.closer.Export(c.prog)
 		for _, f := range pass.Files {
@@ -62,6 +60,16 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	}
 	c.flush()
 	return nil, nil
+}
+
+// runModule is the path of module, or empty when there is none. go vet
+// gives no module for a package outside any, as the standard library, and
+// nogo gives none at all. The path is empty outside module mode too.
+func runModule(module *analysis.Module) string {
+	if module == nil {
+		return ""
+	}
+	return module.Path
 }
 
 // runNeedsProgram reports whether the package calls an opener or a begin,
