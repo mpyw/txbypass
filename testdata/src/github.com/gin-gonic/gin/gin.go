@@ -30,3 +30,6 @@ func (c *Context) Value(key any) any { return nil }
 func (c *Context) Param(key string) string { return "" }
 
 func (c *Context) JSON(code int, obj any) {}
+
+// Copy is a copy of the context, safe to use outside the request.
+func (c *Context) Copy() *Context { return c }

@@ -65,3 +65,16 @@ func StatementResult(db *gorm.DB, u *User) error {
 
 // A method of the universe, such as error's, belongs to no package.
 func errText(err error) string { return err.Error() }
+
+// The error of a statement, read through error's own method, which belongs
+// to no package.
+func StatementErrorText(db *gorm.DB, u *User) string {
+	var text string
+	db.Transaction(func(tx *gorm.DB) error {
+		if err := db.Create(u).Error; err != nil { // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+			text = err.Error()
+		}
+		return nil
+	})
+	return text
+}

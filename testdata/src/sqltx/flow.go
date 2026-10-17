@@ -669,6 +669,11 @@ func dropSoon(db *sql.DB, table string) {
 	drop()
 }
 
+// dropDeferred uses db in a deferred literal, which runs when it returns.
+func dropDeferred(db *sql.DB, table string) {
+	defer func() { db.Exec("DROP TABLE " + table) }()
+}
+
 // Not reported: the helper only registers a cleanup with the pool, which
 // runs after the test. A helper that uses the pool at once is reported.
 func CleanupHelper(t *testing.T, db *sql.DB) {
@@ -678,7 +683,8 @@ func CleanupHelper(t *testing.T, db *sql.DB) {
 	}
 	tx.Exec("CREATE TABLE t (id int)")
 	dropOnCleanup(t, db, "t")
-	dropNow(t, db, "u") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
-	dropSoon(db, "v")   // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	dropNow(t, db, "u")   // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	dropSoon(db, "v")     // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	dropDeferred(db, "w") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	tx.Commit()
 }
