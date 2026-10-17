@@ -125,6 +125,7 @@ A handle is a root value and the fields selected from it. The root is what the S
 | --- | --- |
 | A copy, as `d := db` | What it copies. The SSA form makes them one value |
 | A variable a function literal captures, written by one store | The value stored |
+| A variable in memory written by more than one store, or whose address goes where something else may write it | No handle: it is the same handle as nothing |
 | A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
 | A method value, as `db.Create` | Its receiver |
 | A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver. A [begin](#begins), as gorm's `db.Begin()`, is an exception: it gives the transaction. So is `WithTx`: see [sqlc's `WithTx`](#sqlcs-withtx) |
@@ -136,7 +137,9 @@ A handle is a root value and the fields selected from it. The root is what the S
 
 Two values are the same handle when they have the same root and the same fields. A use reaches the outer handle when it is the outer handle, or a field selected from it: reading `db.Error` reads `db`. A method or a field promoted from an embedded handle reaches it through the embedded field, as `s.Create(u)` reaches `s.DB`.
 
-A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. So is a variable assigned in two places with two handles.
+A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A variable assigned twice holds no known handle, so `db = tx` inside the callback makes `db` no use of the outer `db`.
+
+What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds.
 
 A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names.
 
@@ -281,6 +284,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |
+| A captured variable assigned again, then used before the new value | It holds no known handle, so neither use is read |
 | A begin whose result is kept in a field, or is not kept | The region follows the begin's value |
 | A transaction ended through a function value or an interface method | Its body is not known, so the transaction stays open, and a use after it is reported |
 | A helper that stores the transaction somewhere, and code elsewhere ends it | Only an end the helper writes counts. A use after the helper is reported |
