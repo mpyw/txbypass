@@ -82,7 +82,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | A phi is a handle only when every edge gives it | Two handles meeting is neither. A loop edge back to the phi adds nothing |
 | A phi already read gives its handle again, and only a phi still on the way is a loop | Two optional filters, as `q = q.Where(...)` under two conditions, meet one phi through two paths. Taking the second arrival for a loop made `q` a root of its own |
 | One `handle.Paths` per pass remembers every answer | The SSA form does not change during a pass. A handle in memory is read through every use of it, and a rule asks about every use in a region. Without the memory, a region of 3000 statements took 35 s |
-| An address given to a function of the package gives no handle | A repository's `Bind(tx)` writes the field the transaction was opened on. Reading that it does would mean reading the callee, and a miss is better than a false report |
+| An address given to a function of the module gives no handle | A repository's `Bind(tx)` writes the field the transaction was opened on. Reading that it does would mean reading the callee, and a miss is better than a false report |
 | A variable already on the way is itself | `q = q.Where(c)` stores a call on `q`, which gives `q` back. Pointers copied back and forth lead back to one variable too. Without the guard, the analysis recursed until the stack overflowed |
 | A free variable of a synthetic function is a root | The wrapper of a bound method value has no parent to find its closure in |
 | `WithTx` does not give its receiver back | `qtx := q.WithTx(tx)` is another handle, bound to the transaction |
@@ -169,6 +169,7 @@ mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, co
 ```
 
 - `testdata/src/*` are analysistest packages. Each library `internal/opener` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `txhelper` holds helpers whose facts another fixture reads.
+- `testdata/mod` is a module, run by `TestModule` in module mode. It holds what depends on the module, as a repository in another package of it. Its `go.mod` replaces `gorm.io/gorm` with the stub, which has a `go.mod` for that.
 - `analyzer_test.go` lists every fixture package. **A package left out of the list is not run**, and its `want` comments are never checked. It runs the default flags, `-outer-handle=false` and `-outer-context=false`.
 - A fact is checked as a `want` too: `// want finish:"closes\\[0\\]"` on the function that exports it.
 - A directive without a reason cannot be pinned in a fixture: the expectation comment on its line would be read as the reason. `internal/directive` tests it.

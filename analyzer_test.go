@@ -1,6 +1,7 @@
 package txbypass_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -34,6 +35,12 @@ func TestAnalyzer(t *testing.T) {
 		"directives",
 		"generated",
 	)
+}
+
+// TestModule runs in module mode, where the module of a callee says whether
+// it is a library.
+func TestModule(t *testing.T) {
+	analysistest.Run(t, filepath.Join(analysistest.TestData(), "mod"), txbypass.Analyzer, "example.com/app/svc")
 }
 
 // TestOuterHandleOff runs with the default flags, then with outer-handle
