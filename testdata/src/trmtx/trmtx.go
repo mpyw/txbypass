@@ -181,3 +181,12 @@ func NestedDo(ctx context.Context, m *manager.Manager) error {
 		})
 	})
 }
+
+// Not reported: the same through the trm.Manager interface.
+func NestedDoInterface(ctx context.Context, m trm.Manager) error {
+	return m.Do(ctx, func(outer context.Context) error {
+		return m.Do(outer, func(inner context.Context) error {
+			return save(outer)
+		})
+	})
+}
