@@ -80,16 +80,17 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 			return of(b, seen)
 		}
 	case *ssa.Alloc:
-		// A variable written once is the value written. One written more
-		// than once, all in its own function, is itself: a callback runs
-		// while it holds one value, and a region checks the writes inside
-		// it (see Address). One written elsewhere is not known.
-		stores, ok := allocStores(v)
+		// A variable written once as a whole is the value written. One
+		// written more than once, or through a field, all in its own
+		// function, is itself: a callback runs while it holds one value, and
+		// a scope checks the writes inside it (see Address). One written
+		// elsewhere is not known.
+		whole, fields, ok := allocStores(v)
 		switch {
 		case !ok:
 			return Path{base: v, unknown: true}
-		case len(stores) == 1:
-			return of(stores[0].Val, seen)
+		case len(whole) == 1 && !fields:
+			return of(whole[0].Val, seen)
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
@@ -159,46 +160,85 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 	return made.(*ssa.MakeClosure).Bindings[slices.Index(fn.FreeVars, v)], true
 }
 
-// allocStores lists the stores that write a variable in memory. ok is false
-// when something this analysis does not follow may write it: a function
-// literal that captures it, a store through a field of it, or its address
-// going anywhere but to a load, a store to it, a debug reference, a field
-// read, a capture, or a call. A call takes it as the receiver of a method of
-// a value, as db.Begin() does on a db held by value.
-func allocStores(a *ssa.Alloc) ([]*ssa.Store, bool) {
-	var stores []*ssa.Store
-	if !collectStores(a, &stores) {
-		return nil, false
+// allocStores lists the stores that write a variable in memory as a whole,
+// and reports whether any store writes a field of it. ok is false when
+// something this analysis does not follow may write it: a function literal
+// that captures it, or its address, or a field's, going anywhere but to a
+// load, a store to it, a debug reference, a field, a capture, or a call. A
+// call takes it as the receiver of a method of a value, as db.Begin() does
+// on a db held by value.
+func allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
+	var set allocStoreSet
+	if !set.collect(a, false) {
+		return nil, false, false
 	}
-	for _, st := range stores {
+	for _, st := range append(slices.Clip(set.whole), set.fields...) {
 		if st.Parent() != a.Parent() {
-			return nil, false
+			return nil, false, false
 		}
 	}
-	return stores, true
+	return set.whole, len(set.fields) > 0, true
 }
 
-// collectStores adds the stores to the address v to stores, and reports
-// whether the address goes only where allocStores allows.
-func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
+// allocStoreSet is what allocStores finds.
+type allocStoreSet struct {
+	whole  []*ssa.Store
+	fields []*ssa.Store
+}
+
+// collect adds the stores to the address v to the set, as whole stores or,
+// when field is set, as stores to a field. It reports whether the address
+// goes only where allocStores allows.
+func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 	for _, ref := range *v.Referrers() {
 		switch ref := ref.(type) {
 		case *ssa.UnOp, *ssa.DebugRef, ssa.CallInstruction:
 		case *ssa.FieldAddr:
-			if slices.ContainsFunc(*ref.Referrers(), func(r ssa.Instruction) bool {
-				st, ok := r.(*ssa.Store)
-				return ok && st.Addr == ref
-			}) {
+			if !set.collect(ref, true) {
 				return false
 			}
 		case *ssa.Store:
-			if ref.Addr != v {
-				return false
+			switch {
+			case ref.Addr != v:
+				// The address kept in a variable of the function, as the
+				// pointer r := &Repo{db: db} a literal captures, is still
+				// this address wherever the variable is loaded.
+				local, ok := ref.Addr.(*ssa.Alloc)
+				if !ok || !set.collectLoads(local, field) {
+					return false
+				}
+			case field:
+				set.fields = append(set.fields, ref)
+			default:
+				set.whole = append(set.whole, ref)
 			}
-			*stores = append(*stores, ref)
 		case *ssa.MakeClosure:
 			fv := ref.Fn.(*ssa.Function).FreeVars[slices.Index(ref.Bindings, v)]
-			if !collectStores(fv, stores) {
+			if !set.collect(fv, field) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// collectLoads collects, as collect does, through every load of the
+// variable in memory v that holds the address. Another store to v changes
+// what v holds, not the address. A literal that captures v loads it
+// through its free variable.
+func (set *allocStoreSet) collectLoads(v ssa.Value, field bool) bool {
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.UnOp:
+			if !set.collect(ref, field) {
+				return false
+			}
+		case *ssa.Store, *ssa.DebugRef:
+		case *ssa.MakeClosure:
+			fv := ref.Fn.(*ssa.Function).FreeVars[slices.Index(ref.Bindings, v)]
+			if !set.collectLoads(fv, field) {
 				return false
 			}
 		default:

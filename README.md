@@ -917,6 +917,20 @@ client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) 
 <td>
 
 ```go
+tx, _ := db.Begin()
+job := Job{tx: tx}
+job.Run()
+db.Exec(audit)
+```
+
+</td>
+<td>⚠️</td>
+<td>A transaction placed in a struct ends the region: where it goes from there is not followed</td>
+</tr>
+<tr>
+<td>
+
+```go
 tx, _ := db.Begin() // db is a *sqlx.DB
 db.MustExec(audit)
 ```

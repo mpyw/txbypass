@@ -126,8 +126,8 @@ A handle is a root value and the fields selected from it. The root is what the S
 | --- | --- |
 | A copy, as `d := db` | What it copies. The SSA form makes them one value |
 | A variable a function literal captures, written by one store | The value stored |
-| A variable in memory written by more than one store, all in its own function | The variable itself. A callback runs while it holds one value. In a region, see below |
-| A variable written by a function literal that captures it, through a field of it, or through an address that goes elsewhere | No handle: it is the same handle as nothing |
+| A variable in memory written by more than one store, or through a field, all in its own function | The variable itself, as `r` of `r := &Repo{db: db}`. A callback runs while it holds one value. A scope that writes it is below |
+| A variable written by a function literal that captures it, or whose address, or a field's, goes elsewhere | No handle: it is the same handle as nothing |
 | A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
 | A method value, as `db.Create` | Its receiver |
 | A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver, with three exceptions. A [begin](#begins), as gorm's `db.Begin()`, gives the transaction. `WithTx` gives queries bound to it: see [sqlc's `WithTx`](#sqlcs-withtx). A method that takes a value of the receiver's type binds a new value to it, as `repo.Using(tx)` does. So does one that takes a value with a method that ends a transaction |
@@ -302,4 +302,5 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies |
 | A hook kept for after the callback, but called inside it too | The literal is not read |
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
+| A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |
