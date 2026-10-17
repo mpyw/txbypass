@@ -1,16 +1,49 @@
 #!/usr/bin/env bash
-# Fails when statement coverage of the module falls below the floor.
+# Fails when a statement is not covered, unless the code says why no input
+# can reach it.
 #
 # Every package is measured against every test, so a branch the analyzer's
-# fixtures reach counts for the package that holds it. What is not covered
-# should be a guard no input reaches: design/implementation.md lists them.
+# fixtures reach counts for the package that holds it. A block may stay
+# uncovered only when the comment right above its first statement starts
+# with "Unreachable:" and says why. Anything else needs a test, or is
+# deleted.
 set -o pipefail
 
-floor=99.5
 profile=$(mktemp)
 trap 'rm -f "$profile"' EXIT
 
 go test -coverpkg=./... -coverprofile="$profile" ./... > /dev/null || exit 1
-total=$(go tool cover -func="$profile" | awk '/^total:/ {sub("%", "", $3); print $3}')
-echo "statement coverage ${total}% (floor ${floor}%)"
-awk -v t="$total" -v f="$floor" 'BEGIN { exit !(t >= f) }'
+module=$(go list -m)
+
+# The profile lists a block once for each test binary. A block is covered
+# when any of them ran it.
+uncovered=$(awk 'NR > 1 {
+	if (!($1 in count) || $3 > count[$1]) count[$1] = $3
+} END {
+	for (b in count) if (count[b] == 0) print b
+}' "$profile" | sort)
+
+failed=0
+while read -r block; do
+	[ -z "$block" ] && continue
+	file=${block%%:*}
+	file=${file#"$module"/}
+	line=${block#*:}
+	line=${line%%.*}
+	# The comment above the block's first statement, read upward to its
+	# first line.
+	reason=$(awk -v l="$line" 'NR < l { lines[NR] = $0 } END {
+		for (i = l - 1; i > 0 && lines[i] ~ /^[ \t]*\/\//; i--) first = lines[i]
+		print first
+	}' "$file")
+	if [[ "$reason" =~ //[[:space:]]Unreachable: ]]; then
+		echo "unreachable  $file:$line"
+	else
+		echo "UNCOVERED    $file:$line"
+		failed=1
+	fi
+done <<< "$uncovered"
+
+total=$(go tool cover -func="$profile" | awk '/^total:/ {print $3}')
+echo "statement coverage $total"
+exit $failed

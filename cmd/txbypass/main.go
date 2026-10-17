@@ -26,5 +26,7 @@ func init() {
 }
 
 func main() {
+	// Unreachable: the driver ends the process, so no test runs it. The
+	// tests run the analyzer, and init, instead.
 	singlechecker.Main(txbypass.Analyzer)
 }

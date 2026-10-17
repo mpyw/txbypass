@@ -210,11 +210,11 @@ func Fresh(u *User) error {
 
 func open() *gorm.DB { return &gorm.DB{} }
 
-// A copy of the handle names another variable.
+// A copy of the handle is the handle.
 func Copied(db *gorm.DB, u *User) error {
 	d := db
 	return db.Transaction(func(tx *gorm.DB) error {
-		d.Create(u)
+		d.Create(u) // want `^d bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }

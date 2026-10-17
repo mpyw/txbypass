@@ -5,21 +5,36 @@ import (
 	"go/types"
 	"slices"
 
+	"golang.org/x/tools/go/ssa"
+
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/opener"
+	"github.com/mpyw/txbypass/internal/program"
+	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
+	"github.com/mpyw/txbypass/internal/spell"
 )
 
 // txScope is the code that runs inside one transaction: the body of a
-// callback, or the nodes of a region where a begun transaction is open.
+// callback, or the part of a function where a begun transaction is open.
 //
 //declscope:shared // outer_handle.go and outer_context.go build one for each transaction
 type txScope struct {
-	nodes []ast.Node
+	// root is the syntax to read: the callback's body, or the body of the
+	// function that holds the begin.
+	root ast.Node
+	// fn is root's function.
+	fn *ssa.Function
+	// region is where a begun transaction is open in fn. It is nil for a
+	// callback, which is inside throughout.
+	region *region.Region
 	// opener names the call that opened the transaction, for messages.
 	opener string
 	// tx is the variable or parameter that holds the transaction, or the
 	// context that carries it. It is nil when there is none to name.
 	tx *ast.Ident
+	// txs are the values of the transaction, which WithTx is called with.
+	txs []handle.Path
 	// unnamed is what a message suggests when tx is nil.
 	unnamed string
 	// builds reports whether the handle builds references for the
@@ -28,39 +43,135 @@ type txScope struct {
 	builds bool
 }
 
-// reportScopeUses reports, as rule r, each expression in s that names outer.
-// use is what the message tells the reader to use instead. An expression in
-// exempt is not read, and neither is a chain built on one, as in
-// q.WithTx(tx).CreateUser(ctx).
+// scopeOuter is the handle o opens its transaction on, in fn. For a method,
+// that is its receiver, through the embedded fields its promotion passes.
+//
+//declscope:shared // both rules find the handle or the context outside the scope through it
+func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bool) {
+	expr := o.Outer
+	var promoted []*types.Var
+	if o.Receiver {
+		sel := o.Outer.(*ast.SelectorExpr)
+		expr = sel.X
+		promoted = handle.Promoted(c.pass.TypesInfo.Selections[sel])
+	}
+	ref, ok := c.prog.Ref(fn, expr)
+	if !ok {
+		return handle.Path{}, false
+	}
+	return handle.Of(ref.X).With(promoted), true
+}
+
+// scopeVisit is called for each expression of a scope that has a value
+// inside the transaction. It reports whether to read inside the expression.
+type scopeVisit func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool
+
+// walkScope calls visit for each expression in s that is evaluated inside
+// the transaction. A function literal in s is read as part of it. In a
+// region, a deferred statement is not read: it runs when the function
+// returns. A variable on the left of an assignment, or in its declaration,
+// is written, not used.
+func (c *checker) walkScope(s txScope, visit scopeVisit) {
+	ast.PreorderStack(s.root, nil, func(n ast.Node, stack []ast.Node) bool {
+		if _, ok := n.(*ast.DeferStmt); ok && s.region != nil {
+			return false
+		}
+		e, ok := n.(ast.Expr)
+		if !ok {
+			return true
+		}
+		if scopeWritten(e, stack) {
+			return false
+		}
+		fn := s.fn
+		for _, a := range slices.Backward(stack) {
+			if lit, ok := a.(*ast.FuncLit); ok {
+				fn = c.prog.Func(lit)
+				break
+			}
+		}
+		ref, ok := c.prog.Ref(fn, e)
+		if !ok || ref.IsAddr {
+			return true
+		}
+		if s.region != nil && !s.region.Inside(scopeAnchor(s.fn, ref)) {
+			return false
+		}
+		return visit(e, ref, stack)
+	})
+}
+
+// scopeWritten reports whether e is a variable written where it stands: on
+// the left of an assignment, or declared by one.
+func scopeWritten(e ast.Expr, stack []ast.Node) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.AssignStmt:
+		return slices.Contains(parent.Lhs, ast.Expr(id))
+	case *ast.ValueSpec:
+		return slices.Contains(parent.Names, id)
+	}
+	return false
+}
+
+// scopeAnchor is the instruction of fn where ref is evaluated. A reference
+// in a function literal is evaluated where the literal is made.
+func scopeAnchor(fn *ssa.Function, ref *ssa.DebugRef) ssa.Instruction {
+	var anchor ssa.Instruction = ref
+	for f := ref.Parent(); f != fn; f = f.Parent() {
+		anchor = program.Creation(f)
+	}
+	return anchor
+}
+
+// reportScopeUses reports, as rule r, each expression in s that is the
+// handle outer. use is what the message tells the reader to use instead. An
+// expression in exempt is not read, and neither is a chain built on one, as
+// in q.WithTx(tx).CreateUser(ctx).
 //
 //declscope:shared // the rules report what their scopes find through it
 func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use string, exempt map[ast.Node]bool) {
 	info := c.pass.TypesInfo
-	for _, n := range s.nodes {
-		ast.PreorderStack(n, nil, func(n ast.Node, stack []ast.Node) bool {
-			e, ok := n.(ast.Expr)
-			if !ok {
-				return true
-			}
-			if exempt[e] {
-				return false
-			}
-			if scopeChainsOn(e, exempt) {
-				return true
-			}
-			p, ok := handle.Of(info, e)
-			if !ok || !p.Equal(outer) {
-				return true
-			}
-			if !s.builds || scopeRuns(info, e, stack) {
-				c.report(e.Pos(), r, p.Spell(c.pass.Pkg)+" bypasses the transaction opened with "+s.opener+"; use "+use+" instead")
-			}
+	c.walkScope(s, func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
+		if scopeChainsOn(e, exempt) {
+			return !exempt[e]
+		}
+		if !handle.Of(ref.X).Equal(outer) {
+			return true
+		}
+		if !s.builds || scopeRuns(info, e, stack) {
+			c.report(e.Pos(), r, spell.Of(info, e, c.pass.Pkg)+" bypasses the transaction opened with "+s.opener+"; use "+use+" instead")
+		}
+		return false
+	})
+}
+
+// scopeChainsOn reports whether e is an expression in exempt, or a chain of
+// selectors and calls built on one.
+func scopeChainsOn(e ast.Expr, exempt map[ast.Node]bool) bool {
+	for {
+		if exempt[e] {
+			return true
+		}
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.CallExpr:
+			e = x.Fun
+		default:
 			return false
-		})
+		}
 	}
 }
 
-// scopeRuns reports whether the handle e names runs something where it is
+// scopeRuns reports whether the handle e is runs something where it is
 // used, for a handle that builds references. stack holds e's ancestors. A
 // chain of method calls on e runs when one of its calls takes a context, as
 // client.Doc(p).Set(ctx, v) does. A chain of builders alone, as in
@@ -101,28 +212,6 @@ func scopeTakesContext(info *types.Info, call *ast.CallExpr) bool {
 	return false
 }
 
-// scopeChainsOn reports whether e is a chain of selectors and calls built on
-// an expression in exempt.
-func scopeChainsOn(e ast.Expr, exempt map[ast.Node]bool) bool {
-	for {
-		if exempt[e] {
-			return true
-		}
-		switch x := e.(type) {
-		case *ast.ParenExpr:
-			e = x.X
-		case *ast.StarExpr:
-			e = x.X
-		case *ast.SelectorExpr:
-			e = x.X
-		case *ast.CallExpr:
-			e = x.Fun
-		default:
-			return false
-		}
-	}
-}
-
 // scopeUse is what a message in s suggests in place of the outer handle.
 //
 //declscope:shared // the rules phrase their messages with it
@@ -141,9 +230,6 @@ type scopeQueries struct {
 	// use is what a message suggests: the variable the result is assigned
 	// to, or the call itself.
 	use string
-	// call is the WithTx call. It returns its receiver's type, so it names
-	// the handle too, but it is not a use.
-	call *ast.CallExpr
 }
 
 // reportScopeQueries reports the uses in s of each handle that s rebinds to
@@ -153,78 +239,47 @@ type scopeQueries struct {
 //
 //declscope:shared // outer_handle.go reads both kinds of scope through it
 func (c *checker) reportScopeQueries(s txScope) {
-	info := c.pass.TypesInfo
-	if s.tx == nil {
-		return
-	}
-	tx, _ := handle.Of(info, s.tx)
 	var found []scopeQueries
-	for _, n := range s.nodes {
-		ast.Inspect(n, func(n ast.Node) bool {
-			var q scopeQueries
-			switch n := n.(type) {
-			case *ast.AssignStmt:
-				call, ok := scopeWithTx(info, n.Rhs, tx)
-				if !ok {
-					return true
-				}
-				q = scopeQueriesOf(info, call)
-				if id, ok := n.Lhs[0].(*ast.Ident); ok && len(n.Lhs) == 1 && id.Name != "_" {
-					q.use = id.Name
-				}
-				found = append(found, q)
-				// The call on the right is this one, so it is not read
-				// again.
-				return false
-			case *ast.CallExpr:
-				call, ok := scopeWithTx(info, []ast.Expr{n}, tx)
-				if !ok {
-					return true
-				}
-				q = scopeQueriesOf(info, call)
-			default:
-				return true
-			}
-			found = append(found, q)
-			return true
-		})
-	}
 	exempt := make(map[ast.Node]bool)
-	for _, q := range found {
-		exempt[q.call] = true
-	}
+	c.walkScope(s, func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
+		call, ok := e.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		q, ok := c.scopeWithTx(s, call, ref.Parent())
+		if !ok {
+			return true
+		}
+		if assign, ok := stack[len(stack)-1].(*ast.AssignStmt); ok && len(assign.Lhs) == 1 {
+			if id, ok := assign.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
+				q.use = id.Name
+			}
+		}
+		found = append(found, q)
+		exempt[call] = true
+		return true
+	})
 	for _, q := range found {
 		c.reportScopeUses(s, q.outer, rule.OuterHandle, q.use, exempt)
 	}
 }
 
-// scopeWithTx reports the call in exprs, when exprs is one call of WithTx
-// with the transaction tx, on a handle, returning the handle's own type.
-func scopeWithTx(info *types.Info, exprs []ast.Expr, tx handle.Path) (*ast.CallExpr, bool) {
-	if len(exprs) != 1 {
-		return nil, false
-	}
-	call, ok := ast.Unparen(exprs[0]).(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return nil, false
-	}
+// scopeWithTx reports the handle call rebinds, when call is a call of WithTx
+// with the transaction of s, on a handle, returning the handle's own type.
+// fn is the function call is in.
+func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (scopeQueries, bool) {
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "WithTx" {
-		return nil, false
+	if !ok || sel.Sel.Name != "WithTx" || len(call.Args) != 1 {
+		return scopeQueries{}, false
 	}
-	if arg, ok := handle.Of(info, call.Args[0]); !ok || !arg.Equal(tx) {
-		return nil, false
+	arg, ok := c.prog.Ref(fn, call.Args[0])
+	if !ok || !slices.ContainsFunc(s.txs, handle.Of(arg.X).Equal) {
+		return scopeQueries{}, false
 	}
-	if _, ok := handle.Of(info, sel.X); !ok || !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) {
-		return nil, false
+	recv, ok := c.prog.Ref(fn, sel.X)
+	info := c.pass.TypesInfo
+	if !ok || !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) {
+		return scopeQueries{}, false
 	}
-	return call, true
-}
-
-// scopeQueriesOf is the rebound handle of a call scopeWithTx accepted. Its
-// use is the call as written, until an assignment names a variable.
-func scopeQueriesOf(info *types.Info, call *ast.CallExpr) scopeQueries {
-	sel := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	p, _ := handle.Of(info, sel.X)
-	return scopeQueries{outer: p, use: types.ExprString(call), call: call}
+	return scopeQueries{outer: handle.Of(recv.X), use: types.ExprString(call)}, true
 }

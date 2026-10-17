@@ -61,6 +61,11 @@ jobs:
       - name: Run tests with coverage
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic -coverpkg=./... ./...
 
+      # Every statement is covered, except blocks marked "Unreachable:" with
+      # a reason. The script runs the tests again, without -race.
+      - name: Check coverage
+        run: ./coverage.sh
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:

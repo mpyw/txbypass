@@ -48,6 +48,13 @@ func Clean(ctx context.Context, pool *pgxpool.Pool) error {
 	})
 }
 
+// A nil handle is no handle.
+func Nil(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, nil, func(tx pgx.Tx) error {
+		return nil
+	})
+}
+
 // A handle given by a call is not named from a variable.
 func Fresh(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, connect(), func(tx pgx.Tx) error {

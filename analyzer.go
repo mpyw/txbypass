@@ -10,9 +10,10 @@ package txbypass
 
 import (
 	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/analysis/passes/inspect"
+	"golang.org/x/tools/go/analysis/passes/ctrlflow"
 
 	"github.com/mpyw/txbypass/internal"
+	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -21,8 +22,11 @@ var Analyzer = &analysis.Analyzer{
 	Name:     "txbypass",
 	Doc:      "reports a database handle used inside a transaction it opened",
 	URL:      "https://github.com/mpyw/txbypass",
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
-	Run:      runAnalyzer,
+	Requires: []*analysis.Analyzer{ctrlflow.Analyzer},
+	// The fact says which parameters a function ends, so that a helper of
+	// another package that commits a transaction is seen.
+	FactTypes: []analysis.Fact{new(closer.Fact)},
+	Run:       runAnalyzer,
 }
 
 // analyzerFlagOf holds the flag of each rule.

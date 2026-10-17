@@ -1,48 +1,59 @@
 // Package internal implements the txbypass rules.
 //
 // Each rule has its own file. They share one pass's state, in checker.go:
-// the directives, and the files that are generated. They read the code
-// inside a transaction through scope.go. Which calls open a transaction,
-// where a begun one is open, and which expressions name the same handle,
-// live in the packages below this one.
+// the directives, the files that are generated, and the package's SSA
+// form. They read the code inside a transaction through scope.go. Which
+// calls open a transaction, what a name holds, what may end a transaction
+// and where a begun one is open, live in the packages below this one.
 package internal
 
 import (
 	"errors"
 	"go/ast"
+	"go/types"
+	"slices"
 
 	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/analysis/passes/inspect"
-	"golang.org/x/tools/go/ast/inspector"
+	"golang.org/x/tools/go/analysis/passes/ctrlflow"
+	"golang.org/x/tools/go/ssa"
 
+	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/opener"
+	"github.com/mpyw/txbypass/internal/program"
 )
 
-// errRunWithoutInspector is returned by Run when the pass carries no
-// inspector, which means the analyzer was registered without its
+// errRunWithoutCtrlflow is returned by Run when the pass carries no
+// ctrlflow result, which means the analyzer was registered without its
 // requirement.
-var errRunWithoutInspector = errors.New("txbypass: inspect result missing")
+var errRunWithoutCtrlflow = errors.New("txbypass: ctrlflow result missing")
 
-// Run analyzes one package.
+// Run analyzes one package. The SSA form is built only for a package that
+// opens a transaction, or has a function that takes one: the others have
+// nothing to report and no fact to export.
 func Run(pass *analysis.Pass, cfg Config) (any, error) {
-	insp, ok := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	cfgs, ok := pass.ResultOf[ctrlflow.Analyzer].(*ctrlflow.CFGs)
 	if !ok {
-		return nil, errRunWithoutInspector
+		return nil, errRunWithoutCtrlflow
 	}
 	c := newChecker(pass, cfg)
 	for _, p := range c.directives.Problems() {
 		c.reportf(p.Pos, p.Message)
 	}
-	for n := range insp.PreorderSeq((*ast.CallExpr)(nil), (*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
-		// Nothing is reported in a generated file, so it is not analyzed.
-		if c.inGenerated(n.Pos()) {
-			continue
+	if runNeedsProgram(pass) {
+		c.prog = program.Build(pass, cfgs.NoReturn)
+		c.closer = closer.New(pass)
+		c.closer.Export(c.prog)
+		for _, f := range pass.Files {
+			// Nothing is reported in a generated file, so it is not
+			// analyzed.
+			if !c.inGenerated(f.Pos()) {
+				c.runFile(f)
+			}
 		}
-		c.runNode(n)
 	}
-	// Every call the pass reports on is seen in full, in a package's test
-	// variant as in the ordinary one, so an ignore that silenced nothing
-	// here silences nothing anywhere.
+	// Every function the pass reports on is seen in full, in a package's
+	// test variant as in the ordinary one, so an ignore that silenced
+	// nothing here silences nothing anywhere.
 	for _, pos := range c.directives.Unused(cfg.On) {
 		c.reportf(pos, "unused txbypass:ignore directive")
 	}
@@ -50,24 +61,82 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	return nil, nil
 }
 
-// runNode runs the rules that n starts: a callback opener's, or those of the
-// begins in a function's body.
-func (c *checker) runNode(n ast.Node) {
-	switch n := n.(type) {
-	case *ast.CallExpr:
-		o, ok := opener.Of(c.pass.TypesInfo, n)
-		switch {
-		case !ok:
-		case o.InContext:
-			c.checkOuterContext(o)
-		default:
-			c.checkOuterHandle(o)
+// runNeedsProgram reports whether the package calls an opener or a begin,
+// or has a function with a parameter that has a method that ends a
+// transaction.
+func runNeedsProgram(pass *analysis.Pass) bool {
+	found := false
+	for _, f := range pass.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CallExpr:
+				_, isOpener := opener.Of(pass.TypesInfo, n)
+				found = found || isOpener || opener.IsBegin(pass.TypesInfo, n)
+			case *ast.FuncDecl:
+				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature())
+			case *ast.FuncLit:
+				found = found || runTakesTx(pass.TypesInfo.TypeOf(n).(*types.Signature))
+			}
+			return !found
+		})
+	}
+	return found
+}
+
+// runTakesTx reports whether a function of signature sig takes a value that
+// has a method that ends a transaction, as its receiver or a parameter.
+func runTakesTx(sig *types.Signature) bool {
+	if sig.Recv() != nil && closer.Holds(sig.Recv().Type()) {
+		return true
+	}
+	for p := range sig.Params().Variables() {
+		if closer.Holds(p.Type()) {
+			return true
 		}
-	case *ast.FuncDecl:
-		if n.Body != nil {
-			c.checkOuterHandleBegins(n.Body)
+	}
+	return false
+}
+
+// runFile runs the rules over the functions of f.
+func (c *checker) runFile(f *ast.File) {
+	for _, decl := range f.Decls {
+		decl, ok := decl.(*ast.FuncDecl)
+		if !ok || decl.Body == nil {
+			continue
 		}
-	case *ast.FuncLit:
-		c.checkOuterHandleBegins(n.Body)
+		ast.PreorderStack(decl, nil, func(n ast.Node, stack []ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncDecl:
+				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
+			case *ast.FuncLit:
+				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
+			case *ast.CallExpr:
+				c.runCall(n, c.runEnclosing(decl, stack))
+			}
+			return true
+		})
+	}
+}
+
+// runEnclosing is the function the innermost literal in stack makes, or
+// decl's.
+func (c *checker) runEnclosing(decl *ast.FuncDecl, stack []ast.Node) *ssa.Function {
+	for _, n := range slices.Backward(stack) {
+		if lit, ok := n.(*ast.FuncLit); ok {
+			return c.prog.Func(lit)
+		}
+	}
+	return c.prog.Func(decl)
+}
+
+// runCall runs the rule of the callback opener that call is, in fn.
+func (c *checker) runCall(call *ast.CallExpr, fn *ssa.Function) {
+	o, ok := opener.Of(c.pass.TypesInfo, call)
+	switch {
+	case !ok:
+	case o.InContext:
+		c.checkOuterContext(o, fn)
+	default:
+		c.checkOuterHandle(o, fn)
 	}
 }

@@ -7,7 +7,9 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
+	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -18,6 +20,10 @@ type checker struct {
 	pass *analysis.Pass
 	// directives is what the package's //txbypass: comments say.
 	directives *directive.Set
+	// prog is the package's SSA form.
+	prog *program.Program
+	// closer says what may end a transaction.
+	closer *closer.Closer
 	//declscope:private
 	cfg Config
 	// generated holds the files marked as generated, by name. Nothing is
@@ -54,13 +60,12 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 	return c
 }
 
-// report reports msg at pos for rule r, unless r is off, pos is in a
-// generated file, an ignore silences it there, or r was already reported
-// there.
+// report reports msg at pos for rule r, unless r is off, an ignore silences
+// it there, or r was already reported there.
 //
 //declscope:shared
 func (c *checker) report(pos token.Pos, r rule.Name, msg string) {
-	if !c.cfg.On(r) || c.inGenerated(pos) || c.reported[r][pos] {
+	if !c.cfg.On(r) || c.reported[r][pos] {
 		return
 	}
 	if c.reported[r] == nil {
@@ -75,7 +80,7 @@ func (c *checker) report(pos token.Pos, r rule.Name, msg string) {
 
 // inGenerated reports whether pos is in a file marked as generated.
 //
-//declscope:shared // run.go skips the calls there
+//declscope:shared // run.go skips the files
 func (c *checker) inGenerated(pos token.Pos) bool {
 	return c.generated[c.pass.Fset.PositionFor(pos, false).Filename]
 }

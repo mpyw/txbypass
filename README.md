@@ -244,7 +244,7 @@ return tx.Commit()
 </tr>
 </table>
 
-A handle is a variable and the fields selected from it. Two expressions name the same handle when they start from the same variable and select the same fields.
+A handle is a value and the fields selected from it. Two expressions are the same handle when they hold the same value, as the SSA form of the function says: a copy of the handle is the handle.
 
 <table>
 <tr><th>Inside the transaction</th><th>Reported</th><th>Why</th></tr>
@@ -285,6 +285,28 @@ db.WithContext(ctx).Create(u)
 <td>
 
 A method that returns its receiver's type gives the same handle back
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+d := db
+db.Transaction(func(tx *gorm.DB) error {
+	d.Create(u)
+	...
+```
+
+</td>
+<td>
+
+✅ Yes
+
+</td>
+<td>
+
+A copy of the handle is the handle
 
 </td>
 </tr>
@@ -544,6 +566,90 @@ defer db.Exec(audit)
 <td>
 
 It runs when the function returns
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+t := tx
+t.Commit()
+db.Exec(refresh)
+```
+
+</td>
+<td>
+
+❌ No
+
+</td>
+<td>
+
+A copy of the transaction is the transaction
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+finish(tx, err) // commits or rolls back
+db.Exec(refresh)
+```
+
+</td>
+<td>
+
+❌ No
+
+</td>
+<td>
+
+A helper that ends the transaction ends it, in this package or another
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+h.tx = tx
+db.Exec(refresh)
+```
+
+</td>
+<td>
+
+❌ No
+
+</td>
+<td>
+
+The transaction went where this analysis does not follow. Other code may end it
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+if err != nil {
+	tx.Rollback()
+	log.Fatal(err)
+}
+db.Exec(audit)
+```
+
+</td>
+<td>
+
+✅ Yes
+
+</td>
+<td>
+
+The path through `log.Fatal` never comes back, so the transaction is open on every other one
 
 </td>
 </tr>
@@ -957,24 +1063,7 @@ db.Transaction(func(tx *gorm.DB) error {
 </td>
 <td>
 
-Only the code inside the transaction is read, not the functions it calls
-
-</td>
-</tr>
-<tr>
-<td>
-
-```go
-d := db
-db.Transaction(func(tx *gorm.DB) error {
-	d.Create(u)
-	...
-```
-
-</td>
-<td>
-
-Names are compared, not values
+Only the code inside the transaction is read for uses, not the functions it calls
 
 </td>
 </tr>
@@ -988,7 +1077,7 @@ open().Transaction(...)
 </td>
 <td>
 
-The handle is named from no variable
+Each call gives a value of its own, so a second `open()` is another handle
 
 </td>
 </tr>
@@ -1002,7 +1091,7 @@ r.tx, err = db.Begin()
 </td>
 <td>
 
-The region follows a variable, not a field
+Only a begin kept in a variable opens a region
 
 </td>
 </tr>
@@ -1017,7 +1106,7 @@ ref.Set(ctx, v)
 </td>
 <td>
 
-Only the chain on Firestore's client is read
+`ref` is a Firestore reference, not the client
 
 </td>
 </tr>
@@ -1037,24 +1126,39 @@ A method expression takes its receiver as an argument
 </tr>
 </table>
 
-This is reported although it may be fine:
+These are reported although the transaction may have ended:
 
 <table>
-<tr><th>Reported, but may be fine</th><th>Instead</th></tr>
+<tr><th>Reported, but may be fine</th><th>Why</th></tr>
 <tr>
 <td>
 
 ```go
-tx, err := db.Begin()
-...
-finish(tx, err) // commits or rolls back
+tx, _ := db.Begin()
+end(tx) // end is a func(*sql.Tx) parameter
 db.Exec(refresh)
 ```
 
 </td>
 <td>
 
-Commit in the function, or write an ignore
+The body of a function value, or of an interface method, is not known. The transaction is taken to stay open
+
+</td>
+</tr>
+<tr>
+<td>
+
+```go
+tx, _ := db.Begin()
+repo.Keep(tx) // stores tx; other code commits it
+db.Exec(refresh)
+```
+
+</td>
+<td>
+
+Inside a helper, only an end it writes counts. Commit in the function, or write an ignore
 
 </td>
 </tr>

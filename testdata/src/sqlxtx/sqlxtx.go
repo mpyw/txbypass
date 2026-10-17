@@ -18,8 +18,11 @@ func Beginx(db *sqlx.DB) error {
 	return tx.Commit()
 }
 
-func MustBegin(db *sqlx.DB) error {
+func MustBegin(db *sqlx.DB, check bool) error {
 	tx := db.MustBegin()
+	if check {
+		db.MustExec("SELECT 1") // want `^db bypasses the transaction opened with MustBegin; use tx instead \[outer-handle\]$`
+	}
 	var u User
 	db.Get(&u, "SELECT * FROM users") // want `^db bypasses the transaction opened with MustBegin; use tx instead \[outer-handle\]$`
 	return tx.Commit()

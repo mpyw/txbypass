@@ -47,10 +47,11 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 func (p *pluginRules) BuildAnalyzers() ([]*analysis.Analyzer, error) {
 	cfg := internal.Config{On: p.ruleOn}
 	return []*analysis.Analyzer{{
-		Name:     txbypass.Analyzer.Name,
-		Doc:      txbypass.Analyzer.Doc,
-		URL:      txbypass.Analyzer.URL,
-		Requires: txbypass.Analyzer.Requires,
+		Name:      txbypass.Analyzer.Name,
+		Doc:       txbypass.Analyzer.Doc,
+		URL:       txbypass.Analyzer.URL,
+		Requires:  txbypass.Analyzer.Requires,
+		FactTypes: txbypass.Analyzer.FactTypes,
 		Run: func(pass *analysis.Pass) (any, error) {
 			return internal.Run(pass, cfg)
 		},

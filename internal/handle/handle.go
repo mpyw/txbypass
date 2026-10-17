@@ -1,124 +1,224 @@
-// Package handle tells whether two expressions name the same handle.
+// Package handle tells whether two values are the same handle.
 //
-// A handle is named by a variable and the fields selected from it: db, r.db,
-// or s.repo.db. Two expressions name the same handle when they start from the
-// same variable and select the same fields. A method that returns the type of
-// its receiver, as gorm's WithContext does, gives the same handle back, so
-// db.WithContext(ctx) names db. A value is the same handle as the fields it
-// embeds: when s embeds *gorm.DB, s and s.DB are one handle.
+// A handle is a root value and the fields selected from it: db, r.db, or
+// s.repo.db. The root is what the SSA form gives the value before any field
+// is selected: a parameter, a package-level variable, the result of a call.
+// Two values are one handle when they come from the same root through the
+// same fields.
 //
-// Only names are compared. A copy of the handle into another variable, as in
-// d := db, names a different handle.
+// The SSA form makes a copy the same value as what it copies, so d := db is
+// one handle. A variable that a function literal captures lives in memory.
+// When one store writes it, it is the value it holds. A method that returns
+// the type of its receiver, as gorm's WithContext does, gives the same
+// handle back. A value is the same handle as the fields it embeds: when s
+// embeds *gorm.DB, s and s.DB are one handle.
 package handle
 
 import (
-	"go/ast"
+	"go/token"
 	"go/types"
 	"slices"
 	"strings"
+
+	"golang.org/x/tools/go/ssa"
+
+	"github.com/mpyw/txbypass/internal/program"
 )
 
-// Path is a handle: a variable, and the fields selected from it.
+// Path is a handle: a root value, and the fields selected from it.
 type Path struct {
-	base types.Object
+	base ssa.Value
 	// fields are the fields selected from base, in order, including the
 	// embedded fields a promoted field or method passes through.
 	fields []*types.Var
 }
 
-// Var is the handle v names by itself.
-func Var(v types.Object) Path {
+// Of is the handle v is.
+func Of(v ssa.Value) Path {
+	return of(v, make(map[ssa.Value]bool))
+}
+
+// of is Of, with the phis already on the way, so that a loop of phis ends.
+func of(v ssa.Value, seen map[ssa.Value]bool) Path {
+	switch v := v.(type) {
+	case *ssa.UnOp:
+		// A load gives what its address holds. Any other operator gives a
+		// value of its own.
+		if v.Op == token.MUL {
+			return of(v.X, seen)
+		}
+	case *ssa.FieldAddr:
+		return of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+	case *ssa.Field:
+		return of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+	case *ssa.ChangeType:
+		return of(v.X, seen)
+	case *ssa.MakeInterface:
+		return of(v.X, seen)
+	case *ssa.ChangeInterface:
+		return of(v.X, seen)
+	case *ssa.TypeAssert:
+		// Only an assertion that panics when it fails gives the value
+		// itself. The comma-ok form gives a tuple.
+		if !v.CommaOk {
+			return of(v.X, seen)
+		}
+	case *ssa.MakeClosure:
+		// A method value, as db.Create, binds its receiver.
+		if strings.HasPrefix(v.Fn.(*ssa.Function).Synthetic, "bound method wrapper") {
+			return of(v.Bindings[0], seen)
+		}
+	case *ssa.FreeVar:
+		if b, ok := binding(v); ok {
+			return of(b, seen)
+		}
+	case *ssa.Alloc:
+		if stored, ok := onlyStore(v); ok {
+			return of(stored, seen)
+		}
+	case *ssa.Call:
+		if recv, ok := returnedReceiver(v); ok {
+			return of(recv, seen)
+		}
+	case *ssa.Phi:
+		if seen[v] {
+			return Path{base: v}
+		}
+		if p, ok := samePhi(v, seen); ok {
+			return p
+		}
+	}
 	return Path{base: v}
 }
 
-// Of reports the handle e names. It reports nothing for an expression that
-// does not name one from a variable, such as the result of a call that
-// returns something other than its receiver.
-func Of(info *types.Info, e ast.Expr) (Path, bool) {
-	switch e := ast.Unparen(e).(type) {
-	case *ast.Ident:
-		v, ok := info.ObjectOf(e).(*types.Var)
-		// A key of a composite literal resolves to its field, which names
-		// no handle without the value it is selected from.
-		if !ok || v.IsField() {
-			return Path{}, false
-		}
-		return Path{base: v}, true
-	case *ast.StarExpr:
-		return Of(info, e.X)
-	case *ast.CallExpr:
-		return returnedReceiver(info, e)
-	case *ast.SelectorExpr:
-		return selected(info, e)
-	}
-	return Path{}, false
+// with extends p with f.
+func (p Path) with(f *types.Var) Path {
+	return Path{base: p.base, fields: append(slices.Clip(p.fields), f)}
 }
 
-// selected reports the handle a selector names. A field extends the handle
-// of the value it is selected from. A method value names the handle of its
-// receiver, through the embedded fields its promotion passes. A qualified
-// identifier names a package-level variable.
-func selected(info *types.Info, e *ast.SelectorExpr) (Path, bool) {
-	sel := info.Selections[e]
-	if sel == nil {
-		v, ok := info.Uses[e.Sel].(*types.Var)
-		if !ok {
-			return Path{}, false
-		}
-		return Path{base: v}, true
+// With extends p with fields, as the embedded fields a promoted method
+// passes through.
+func (p Path) With(fields []*types.Var) Path {
+	for _, f := range fields {
+		p = p.with(f)
 	}
+	return p
+}
+
+// Promoted lists the embedded fields that a promoted method or field
+// passes through, before the one it selects.
+func Promoted(sel *types.Selection) []*types.Var {
+	var fields []*types.Var
+	t := sel.Recv()
 	idx := sel.Index()
-	switch sel.Kind() {
-	case types.FieldVal:
-	case types.MethodVal:
-		idx = idx[:len(idx)-1]
-	default:
-		return Path{}, false
-	}
-	p, ok := Of(info, e.X)
-	if !ok {
-		return Path{}, false
-	}
-	return p.through(sel.Recv(), idx), true
-}
-
-// returnedReceiver reports the handle of the receiver of a method call that
-// returns a value of the receiver's own type, as db.WithContext(ctx) or
-// db.Session(cfg) do in gorm.
-func returnedReceiver(info *types.Info, call *ast.CallExpr) (Path, bool) {
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok {
-		return Path{}, false
-	}
-	s := info.Selections[sel]
-	if s == nil || s.Kind() != types.MethodVal {
-		return Path{}, false
-	}
-	if !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) {
-		return Path{}, false
-	}
-	return Of(info, sel)
-}
-
-// through extends p with the fields at idx, read from t.
-func (p Path) through(t types.Type, idx []int) Path {
-	fields := append([]*types.Var(nil), p.fields...)
-	for _, i := range idx {
-		if ptr, ok := t.Underlying().(*types.Pointer); ok {
-			t = ptr.Elem()
-		}
-		f := t.Underlying().(*types.Struct).Field(i)
+	for _, i := range idx[:len(idx)-1] {
+		f := fieldOf(t, i)
 		fields = append(fields, f)
 		t = f.Type()
 	}
-	return Path{base: p.base, fields: fields}
+	return fields
 }
 
-// Equal reports whether p and q name the same handle. Embedded fields at the
+// fieldOf is field i of the struct that t is, or points to.
+func fieldOf(t types.Type, i int) *types.Var {
+	if ptr, ok := t.Underlying().(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	return t.Underlying().(*types.Struct).Field(i)
+}
+
+// binding is the value that the closure making v's function binds v to. A
+// literal with free variables is always made by a closure. A synthetic
+// function, such as the wrapper of a bound method value, has no parent to
+// read, so its free variable is a root of its own.
+func binding(v *ssa.FreeVar) (ssa.Value, bool) {
+	fn := v.Parent()
+	if fn.Parent() == nil {
+		return nil, false
+	}
+	mc := program.Creation(fn).(*ssa.MakeClosure)
+	return mc.Bindings[slices.Index(fn.FreeVars, v)], true
+}
+
+// onlyStore is the value a variable in memory holds, when one store writes
+// it, in its own function or in a literal that captures it. Its address
+// must go nowhere else, or something else may write it.
+func onlyStore(a *ssa.Alloc) (ssa.Value, bool) {
+	var stores []*ssa.Store
+	if !collectStores(a, &stores) || len(stores) != 1 {
+		return nil, false
+	}
+	return stores[0].Val, true
+}
+
+// collectStores adds the stores to the address v to stores. It reports
+// false when the address is used for anything but a load, a store to it, a
+// debug reference, or a capture.
+func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.UnOp:
+		case *ssa.DebugRef:
+		case *ssa.Store:
+			if ref.Addr != v {
+				return false
+			}
+			*stores = append(*stores, ref)
+		case *ssa.MakeClosure:
+			fv := ref.Fn.(*ssa.Function).FreeVars[slices.Index(ref.Bindings, v)]
+			if !collectStores(fv, stores) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// returnedReceiver is the receiver of a method call that returns a value of
+// the receiver's own type, as db.WithContext(ctx) or db.Session(cfg) do in
+// gorm. WithTx is the exception: sqlc's q.WithTx(tx) gives queries bound to
+// the transaction, which are another handle.
+func returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
+	c := call.Common()
+	var recv ssa.Value
+	var name string
+	switch {
+	case c.IsInvoke():
+		recv, name = c.Value, c.Method.Name()
+	case c.Signature().Recv() != nil:
+		recv, name = c.Args[0], c.StaticCallee().Name()
+	default:
+		return nil, false
+	}
+	return recv, name != "WithTx" && types.Identical(call.Type(), recv.Type())
+}
+
+// samePhi is the handle every edge of a phi gives, when they all give one.
+// An edge that comes back to the phi itself, around a loop, gives nothing
+// new.
+func samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
+	seen[v] = true
+	var p Path
+	found := false
+	for _, e := range v.Edges {
+		q := of(e, seen)
+		if q.base == v {
+			continue
+		}
+		if found && !q.Equal(p) {
+			return Path{}, false
+		}
+		p, found = q, true
+	}
+	return p, found
+}
+
+// Equal reports whether p and q are the same handle. Embedded fields at the
 // end of either are left out, since a value is the handle it embeds.
 func (p Path) Equal(q Path) bool {
-	pf, qf := p.named(), q.named()
-	return p.base == q.base && slices.Equal(pf, qf)
+	return p.base == q.base && slices.Equal(p.named(), q.named())
 }
 
 // Within reports whether p is q, or a field selected from q, embedded or
@@ -134,20 +234,4 @@ func (p Path) named() []*types.Var {
 		n--
 	}
 	return p.fields[:n]
-}
-
-// Spell spells the handle as source in package from would: the variable,
-// then each field. A variable of another package is qualified by its
-// package's name. Embedded fields at the end are left out, as Equal leaves
-// them out.
-func (p Path) Spell(from *types.Package) string {
-	var b strings.Builder
-	if pkg := p.base.Pkg(); pkg != from {
-		b.WriteString(pkg.Name() + ".")
-	}
-	b.WriteString(p.base.Name())
-	for _, f := range p.named() {
-		b.WriteString("." + f.Name())
-	}
-	return b.String()
 }

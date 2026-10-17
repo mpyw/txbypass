@@ -1,210 +1,171 @@
 // Package region finds where a transaction from a begin is open.
 //
 // A transaction from database/sql's BeginTx, or any other begin, is open from
-// the begin until it is committed or rolled back. Inside reads the control
-// flow graph of the function that holds the begin. A node is inside when the
+// the begin until it may have ended. Region reads the SSA form of the
+// function that holds the begin. An instruction is inside when the
 // transaction is open there on every path from the function's entry: the
-// begin comes before it, and no commit, rollback or new assignment of the
-// transaction comes between.
+// begin comes before it, and nothing that may end the transaction comes
+// between. What may end it is closer's to say.
 //
 // The analysis asks "on every path", so a branch that might have committed
-// leaves the code after it outside. The branch on the begin's own error is
-// outside too: the transaction did not begin there. That is the "if err !=
-// nil" right after the begin, or the one the begin is the init of. A later
-// check of the same variable checks another error.
+// leaves the code after it outside. The branch where the begin's error is
+// set is outside too: the transaction did not begin there. A path that
+// never comes back, through a panic or a call such as log.Fatal, takes no
+// part.
 package region
 
 import (
-	"go/ast"
 	"go/token"
-	"go/types"
-	"slices"
 
-	"golang.org/x/tools/go/cfg"
+	"golang.org/x/tools/go/ssa"
 
+	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/handle"
 )
 
-// closers are the names of the methods that end a transaction. go-pg's take
-// a context as CommitContext and RollbackContext.
-var closers = map[string]bool{"Commit": true, "Rollback": true, "CommitContext": true, "RollbackContext": true}
+// state is what is known of the transaction at a point.
+type state int
 
-// Inside lists the nodes of body where the transaction that begin assigns to
-// tx is open on every path. err is the begin's error, or nil. A deferred
-// statement is left out: it runs when the function returns.
-func Inside(info *types.Info, body *ast.BlockStmt, begin ast.Node, tx, err types.Object) []ast.Node {
-	g := cfg.New(body, func(*ast.CallExpr) bool { return true })
-	a := &analysis{info: info, begin: begin, tx: handle.Var(tx), txObj: tx, err: err, check: checkAfter(body, begin)}
-	preds := make(map[*cfg.Block][]*cfg.Block)
-	for _, b := range g.Blocks {
-		for _, s := range b.Succs {
-			preds[s] = append(preds[s], b)
-		}
+const (
+	// dead is a point no path that returns reaches. It joins any other
+	// state as that state.
+	dead state = iota
+	open
+	closed
+)
+
+// join is the state where two paths meet.
+func join(a, b state) state {
+	if a == dead {
+		return b
 	}
-	// open[b] is whether the transaction is open on entry to b, on every
-	// path. It starts true everywhere but the entry, and only ever falls.
-	open := make(map[*cfg.Block]bool)
-	for _, b := range g.Blocks[1:] {
-		open[b] = true
+	if b == dead || a == b {
+		return a
 	}
+	return closed
+}
+
+// Region is where one begun transaction is open.
+type Region struct {
+	begin  ssa.Instruction
+	txs    []handle.Path
+	err    ssa.Value
+	closer *closer.Closer
+	// entry holds the state at the entry of each block.
+	entry map[*ssa.BasicBlock]state
+}
+
+// New computes the region of the transaction that begin returns, in begin's
+// function. tx is the transaction's value. err is the begin's error, or
+// nil. A transaction kept in a variable in memory is also every load of it,
+// so its address is given as txAddr, or nil.
+func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer) *Region {
+	r := &Region{begin: begin, txs: []handle.Path{handle.Of(tx)}, err: err, closer: c, entry: make(map[*ssa.BasicBlock]state)}
+	if txAddr != nil {
+		r.txs = append(r.txs, handle.Of(txAddr))
+	}
+	fn := begin.Parent()
+	for _, b := range fn.Blocks[1:] {
+		r.entry[b] = dead
+	}
+	r.entry[fn.Blocks[0]] = closed
 	for changed := true; changed; {
 		changed = false
-		for _, b := range g.Blocks[1:] {
-			in := a.entry(b, preds[b], open)
-			if in != open[b] {
-				open[b] = in
+		for _, b := range fn.Blocks[1:] {
+			in := dead
+			for _, p := range b.Preds {
+				in = join(in, r.edge(p, b))
+			}
+			if in != r.entry[b] {
+				r.entry[b] = in
 				changed = true
 			}
 		}
 	}
-	var out []ast.Node
-	for _, b := range g.Blocks {
-		if !b.Live {
-			continue
-		}
-		state := open[b]
-		for _, n := range b.Nodes {
-			if _, deferred := n.(*ast.DeferStmt); state && !deferred {
-				out = append(out, n)
-			}
-			state = a.step(n, state)
-		}
+	return r
+}
+
+// edge is the state on the edge from p to b.
+func (r *Region) edge(p, b *ssa.BasicBlock) state {
+	s := r.entry[p]
+	for _, instr := range p.Instrs {
+		s = r.step(instr, s)
 	}
-	return out
-}
-
-// analysis is what one begin's region is computed from.
-type analysis struct {
-	info  *types.Info
-	begin ast.Node
-	tx    handle.Path
-	txObj types.Object
-	err   types.Object
-	// check is the if statement that checks the begin's error, or nil.
-	check *ast.IfStmt
-}
-
-// checkAfter finds the if statement that checks begin's error: the one whose
-// init is begin, or the one right after begin in its block.
-func checkAfter(body *ast.BlockStmt, begin ast.Node) *ast.IfStmt {
-	var found *ast.IfStmt
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.IfStmt:
-			if n.Init == begin {
-				found = n
-			}
-		case *ast.BlockStmt:
-			for i, s := range n.List[:max(len(n.List)-1, 0)] {
-				if checkHolds(s, begin) {
-					found, _ = n.List[i+1].(*ast.IfStmt)
-				}
-			}
-		}
-		return found == nil
-	})
-	return found
-}
-
-// checkHolds reports whether s is begin, or declares it.
-func checkHolds(s ast.Stmt, begin ast.Node) bool {
-	if s == begin {
-		return true
+	if s == open && r.failed(p, b) {
+		return closed
 	}
-	decl, ok := s.(*ast.DeclStmt)
+	return s
+}
+
+// step is the state after instr.
+func (r *Region) step(instr ssa.Instruction, s state) state {
+	switch {
+	case instr == r.begin:
+		return open
+	case s == open && r.closer.Ends(instr, r.txs):
+		return closed
+	}
+	return s
+}
+
+// failed reports whether the edge from p to b is taken when the begin's
+// error is set, so the transaction did not begin there. That is the true
+// edge of "err != nil", or the false edge of "err == nil".
+func (r *Region) failed(p, b *ssa.BasicBlock) bool {
+	if r.err == nil {
+		return false
+	}
+	cond, ok := p.Instrs[len(p.Instrs)-1].(*ssa.If)
 	if !ok {
 		return false
 	}
-	// A DeclStmt always holds a GenDecl.
-	gen := decl.Decl.(*ast.GenDecl)
-	return slices.ContainsFunc(gen.Specs, func(sp ast.Spec) bool { return sp == begin })
-}
-
-// entry is whether the transaction is open on entry to b, from what its
-// predecessors leave. A block no path reaches stays open, so it does not
-// close the blocks after it.
-func (a *analysis) entry(b *cfg.Block, preds []*cfg.Block, open map[*cfg.Block]bool) bool {
-	if a.failed(b) {
+	cmp, ok := cond.Cond.(*ssa.BinOp)
+	if !ok || !r.isErr(cmp.X, cmp.Y) && !r.isErr(cmp.Y, cmp.X) {
 		return false
 	}
-	in := true
-	for _, p := range preds {
-		state := open[p]
-		for _, n := range p.Nodes {
-			state = a.step(n, state)
-		}
-		in = in && state
-	}
-	return in
+	return cmp.Op == token.NEQ && b == p.Succs[0] || cmp.Op == token.EQL && b == p.Succs[1]
 }
 
-// failed reports whether b is the branch where the begin's error is set, so
-// the transaction did not begin: the body of "if err != nil", or the else of
-// "if err == nil".
-func (a *analysis) failed(b *cfg.Block) bool {
-	s, ok := b.Stmt.(*ast.IfStmt)
-	if !ok || a.err == nil || s != a.check {
+// isErr reports whether v is the begin's error, compared with nil. A
+// variable in memory that holds the error is it when loaded right after the
+// begin, in the begin's block.
+func (r *Region) isErr(v, other ssa.Value) bool {
+	if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
 		return false
 	}
-	cond, ok := ast.Unparen(s.Cond).(*ast.BinaryExpr)
-	if !ok || !a.isErr(cond.X) && !a.isErr(cond.Y) {
-		return false
-	}
-	switch b.Kind {
-	case cfg.KindIfThen:
-		return cond.Op == token.NEQ
-	case cfg.KindIfElse:
-		return cond.Op == token.EQL
-	}
-	return false
-}
-
-func (a *analysis) isErr(e ast.Expr) bool {
-	id, ok := ast.Unparen(e).(*ast.Ident)
-	return ok && a.info.Uses[id] == a.err
-}
-
-// step is whether the transaction is open after n, given whether it was
-// open before.
-func (a *analysis) step(n ast.Node, open bool) bool {
-	if n == a.begin {
+	if v == r.err {
 		return true
 	}
-	if !open {
+	load, ok := v.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL || load.Block() != r.begin.Block() {
 		return false
 	}
-	return !a.ends(n)
+	return storedBefore(load, r.err)
 }
 
-// ends reports whether n commits or rolls back the transaction, or assigns
-// another value to its variable. A function literal inside n is not read: it
-// does not run where it is written. A deferred call does not run there
-// either.
-func (a *analysis) ends(n ast.Node) bool {
-	if _, deferred := n.(*ast.DeferStmt); deferred {
-		return false
-	}
-	found := false
-	ast.Inspect(n, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.AssignStmt:
-			for _, e := range n.Lhs {
-				if id, ok := e.(*ast.Ident); ok && a.info.ObjectOf(id) == a.txObj {
-					found = true
-				}
-			}
-		case *ast.CallExpr:
-			sel, ok := ast.Unparen(n.Fun).(*ast.SelectorExpr)
-			if !ok || !closers[sel.Sel.Name] {
-				return true
-			}
-			if p, ok := handle.Of(a.info, sel.X); ok && p.Within(a.tx) {
-				found = true
-			}
+// storedBefore reports whether the last store to load's address before load,
+// in its block, writes v.
+func storedBefore(load *ssa.UnOp, v ssa.Value) bool {
+	var last ssa.Value
+	for _, instr := range load.Block().Instrs {
+		if instr == load {
+			break
 		}
-		return !found
-	})
-	return found
+		if st, ok := instr.(*ssa.Store); ok && st.Addr == load.X {
+			last = st.Val
+		}
+	}
+	return last == v
+}
+
+// Inside reports whether the transaction is open at instr, on every path.
+func (r *Region) Inside(instr ssa.Instruction) bool {
+	s := r.entry[instr.Block()]
+	for _, i := range instr.Block().Instrs {
+		if i == instr {
+			break
+		}
+		s = r.step(i, s)
+	}
+	return s == open
 }

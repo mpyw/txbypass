@@ -61,6 +61,14 @@ func Collection(ctx context.Context, sess *mongo.Session, coll *mongo.Collection
 	return err
 }
 
+// A nil context is no context.
+func NilContext(sess *mongo.Session, coll *mongo.Collection, u *User) error {
+	return mongo.WithSession(nil, sess, func(sc context.Context) error {
+		_, err := coll.InsertOne(sc, u)
+		return err
+	})
+}
+
 // A context given by a call names no variable.
 func Fresh(sess *mongo.Session, coll *mongo.Collection, u *User) error {
 	_, err := sess.WithTransaction(context.Background(), func(sc context.Context) (any, error) {

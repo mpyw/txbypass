@@ -24,11 +24,13 @@ type Opener struct {
 	// function by its package's name and its own, as in pgx.BeginFunc.
 	Name string
 	// Outer is the expression that gives the handle the transaction is
-	// opened on. For a method, it is the selector of the call, so that a
-	// method promoted from an embedded field names that field. For an
-	// opener whose transaction rides in a context, it is the context
-	// given to the call.
+	// opened on, or the context outside it. For a method opened on its
+	// receiver, it is the selector of the call, so that a method promoted
+	// from an embedded field names that field.
 	Outer ast.Expr
+	// Receiver reports whether Outer is the selector of the call, rather
+	// than an argument.
+	Receiver bool
 	// Callback is the function literal that runs inside the transaction.
 	Callback *ast.FuncLit
 	// Tx is the callback's parameter that holds the transaction, or the
@@ -185,7 +187,7 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 		if !ok {
 			return Opener{}, false
 		}
-		o.Outer = sel
+		o.Outer, o.Receiver = sel, true
 	} else {
 		o.Outer = call.Args[k.outer]
 	}
@@ -205,11 +207,10 @@ type Begin struct {
 	Name string
 	// Outer is the selector of the call, which names the handle.
 	Outer *ast.SelectorExpr
+	// Call is the call of the begin.
+	Call *ast.CallExpr
 	// Tx is the variable the transaction is assigned to.
 	Tx *ast.Ident
-	// Err is the variable the error is assigned to. It is nil when the call
-	// returns no error, or the error is not kept.
-	Err *ast.Ident
 }
 
 // knownBegins lists every begin. Each is a method that returns the
@@ -287,19 +288,22 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 	if !ok {
 		return Begin{}, false
 	}
+	if !IsBegin(info, call) {
+		return Begin{}, false
+	}
+	sel, _ := methodSelector(info, call)
+	b := Begin{Name: sel.Sel.Name, Outer: sel, Call: call, Tx: lhs[0]}
+	return b, true
+}
+
+// IsBegin reports whether call is a call of a begin.
+func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	sel, ok := methodSelector(info, call)
 	if !ok {
-		return Begin{}, false
+		return false
 	}
-	fn := info.Selections[sel].Obj().(*types.Func)
-	if _, _, ok := lookup(info, call, knownBegins); !ok && !entBegin(fn) {
-		return Begin{}, false
-	}
-	b := Begin{Name: fn.Name(), Outer: sel, Tx: lhs[0]}
-	if len(lhs) == 2 && lhs[1] != nil && lhs[1].Name != "_" {
-		b.Err = lhs[1]
-	}
-	return b, true
+	_, _, known := lookup(info, call, knownBegins)
+	return known || entBegin(info.Selections[sel].Obj().(*types.Func))
 }
 
 // entBegin reports whether fn is the Tx or BeginTx method of a client that

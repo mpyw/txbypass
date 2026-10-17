@@ -4,7 +4,7 @@ This file specifies what txbypass reports. It is the source of truth for the fix
 
 ## Scope
 
-txbypass reports code that runs outside a transaction while the transaction is open. It reads names and types inside a transaction's scope. It follows no values and no calls.
+txbypass reports code that runs outside a transaction while the transaction is open. It finds uses in the syntax of a transaction's scope, and asks the package's SSA form what each use holds. It follows values inside a function, and a transaction into the helpers it is given.
 
 | Rule | What it reports |
 | --- | --- |
@@ -117,20 +117,23 @@ A begin is read where its result is kept in a variable:
 
 ## Handles
 
-A handle is named by one of these:
+A handle is a root value and the fields selected from it. The root is what the SSA form gives a value before any field is selected: a parameter, a package-level variable, the result of a call.
 
-| Expression | Handle |
+| The value | Is the handle of |
 | --- | --- |
-| A variable, local or package-level | The variable |
-| A qualified identifier of a variable, as `dbs.Main` | The variable |
-| `x.f`, a field | The handle of `x`, then `f` |
-| `x.m`, a method value | The handle of `x`, then each embedded field the promotion of `m` passes |
-| `x.m(...)`, a call of a method whose result has the type of `x` | The handle of `x` |
-| `(e)`, `*e` | The handle of `e` |
+| A copy, as `d := db` | What it copies. The SSA form makes them one value |
+| A variable a function literal captures, written by one store | The value stored |
+| A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
+| A method value, as `db.Create` | Its receiver |
+| A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver. `WithTx` is the exception: see [sqlc's `WithTx`](#sqlcs-withtx) |
+| A conversion, a conversion to an interface, or an assertion that panics when it fails | What it converts |
+| A phi whose edges all give one handle | That handle. An edge back to the phi, around a loop, gives nothing |
+| A free variable of a literal | What the closure binds it to |
+| Anything else | A root of its own |
 
-Anything else names no handle. That includes a call that returns another type, a method expression, a composite literal's key, and a type.
+Two values are the same handle when they have the same root and the same fields. Embedded fields at the end of either are left out: a value is the handle it embeds. So `s` and `s.DB` are one handle when `s` embeds `*gorm.DB`. A parameter of the callback with the outer handle's name is another value. So is a variable assigned in two places with two handles.
 
-Two handles are the same when they start from the same variable and select the same fields. Embedded fields at the end of either are left out: a value is the handle it embeds. So `s` and `s.DB` are one handle when `s` embeds `*gorm.DB`. A parameter of the callback with the outer handle's name is another variable. So is a copy, as in `d := db`.
+A use is an expression with a value in the SSA form. A variable on the left of an assignment, or in its declaration, is written, not used.
 
 ## Scopes
 
@@ -145,25 +148,42 @@ Once an expression is reported, nothing inside it is read again. A position is r
 
 ### Regions
 
-A begin's region is read from the control flow graph of the function that holds it. A begin inside a function literal belongs to the literal.
+A begin's region is read from the SSA form of the function that holds it. A begin inside a function literal belongs to the literal.
 
-A node is in the region when the transaction is open there on every path from the function's entry:
+An instruction is in the region when the transaction is open there on every path from the function's entry:
 
 | On a path | The transaction is |
 | --- | --- |
 | The begin | Open after it |
-| A call of `Commit`, `Rollback`, `CommitContext` or `RollbackContext`, on the transaction or a field of it | Closed after it. pop commits through `tx.TX.Commit()` |
-| An assignment to the transaction's variable | Closed after it |
-| The branch where the begin's error is set | Closed. See below |
-| A node no path reaches | Not read |
+| A call of `Commit`, `Rollback`, `CommitContext` or `RollbackContext` on the transaction, a copy of it, or a field of it, that takes no function | Closed after it. pop commits through `tx.TX.Commit()`. pop's `Rollback(fn)` takes a function, and opens a transaction of its own |
+| A call of a function that ends a parameter it is given the transaction in | Closed after it. See [Helpers](#helpers) |
+| A call of a function literal that ends a variable it captures | Closed after it |
+| A store of the transaction into anything but a variable of the function, or a send of it on a channel | Closed after it. Code this analysis does not read may end it |
+| A function literal that ends the transaction, made and given to anything but a call or a `defer` | Closed after it, for the same reason |
+| The edge where the begin's error is set | Closed. See below |
+| A call that never returns, as `log.Fatal` or `os.Exit`, or a panic | The path ends. It takes no part |
 
 | Not in the region | Why |
 | --- | --- |
 | A deferred statement | It runs when the function returns |
-| A commit or rollback inside a function literal | The literal does not run where it is written |
-| Code after a branch that commits | Not every path leaves the transaction open |
+| Code after a branch that may end the transaction | Not every path leaves it open |
 
-The branch where the begin's error is set is the body of `if err != nil`, or the else of `if err == nil`. Only the error check that the begin is the init of, or that comes right after the begin, counts. A later check of the same variable checks another error.
+The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
+
+An error can live in memory, as a named result that a deferred literal reads. It counts when it is loaded in the begin's block, and the last store to it there is the begin's.
+
+A transaction given to a function value or an interface method, whose body is not known, stays open.
+
+### Helpers
+
+A function ends its parameter when its body calls one of the ending methods on it. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read.
+
+| The function is | It is read |
+| --- | --- |
+| Of the package being analyzed | Directly, through the generic origin of an instance. A call of itself counts as no end |
+| Of another package | Through the fact `closes[i...]` that the analysis of that package exports. The receiver of a method is parameter 0 |
+
+A store or a send inside a helper does not count. A library's own methods store their receiver in many places, and would seem to end it.
 
 ### References
 
@@ -249,13 +269,13 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
-| A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read. Following calls needs facts across packages |
-| A copy of the outer handle, made before the transaction | Names are compared, not values |
-| A field of a struct that holds the handle, read through another variable. `rr := r` then `rr.db` is one | The variable differs |
-| An outer handle given by a call, as `open().Transaction(...)` | It is named from no variable |
-| A begin whose result is kept in a field, or is not kept | The region follows a variable |
-| A helper that commits or rolls back the transaction, as `finish(tx, err)` | The region does not end there. A use of the handle after it, while the function goes on, is reported. Commit in the function, or write an ignore |
-| A Firestore reference built in the scope, then used to run outside it. `ref := client.Doc(p)` then `ref.Set(ctx, v)` is one | Only the chain on the client is read |
+| A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
+| An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
+| A variable assigned two handles on two paths, then used | The phi gives no single handle |
+| A begin whose result is kept in a field, or is not kept | The region follows the begin's value |
+| A transaction ended through a function value or an interface method | Its body is not known, so the transaction stays open, and a use after it is reported |
+| A helper that stores the transaction somewhere, and code elsewhere ends it | Only an end the helper writes counts. A use after the helper is reported |
+| A Firestore reference built in the scope, then used to run outside it. `ref := client.Doc(p)` then `ref.Set(ctx, v)` is one | `ref` is a reference, not the client |
 | An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
 | A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies |

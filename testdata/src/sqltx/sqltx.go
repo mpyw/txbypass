@@ -170,12 +170,12 @@ func PerRow(db *sql.DB, ids []int) {
 	}
 }
 
-// A new assignment to the variable ends what it held, as far as this
-// analysis follows it.
+// A new assignment to the variable leaves the transaction it held open. It
+// is never committed, so a statement on the handle still bypasses it.
 func Reassigned(db *sql.DB, other *sql.Tx) {
 	tx, _ := db.Begin()
 	tx = other
-	db.Exec("SELECT 1")
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	use(tx)
 }
 

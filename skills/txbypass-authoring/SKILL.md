@@ -56,9 +56,9 @@ A helper parameter that takes either the handle or the transaction:
 
 | Do not | Why |
 | --- | --- |
-| Copy the handle first, as `d := db`, and use `d` | It is the same pool. txbypass compares names, so it stops reporting, and the bug stays |
-| Move the statement into a helper that reads `r.db` itself | Same as above. Only the transaction's own code is read |
-| Keep the transaction in a field, as `r.tx, err = db.Begin()` | The region follows a variable, so nothing is read. The bug stays |
+| Move the statement into a helper that reads `r.db` itself | Only the transaction's own code is read for uses. The report stops, and the bug stays |
+| Keep the transaction in a field, as `r.tx, err = db.Begin()` | Only a begin kept in a variable opens a region, so nothing is read. The bug stays |
+| Store the transaction somewhere, so that the region ends | Storing it counts as a possible end, so the report stops, and the bug stays |
 | Commit in a branch, then go on with the handle | Code after a branch that may commit is not read. Commit where the function ends |
 | Build a Firestore reference into a variable, then run it outside the transaction | `ref := client.Doc(p)` then `ref.Set(ctx, v)` is not read, and still runs outside |
 | Write an ignore without saying why the statement must run outside | The next reader cannot tell a decision from a shortcut |
@@ -71,7 +71,7 @@ Only when the statement must not be part of the transaction:
 | --- | --- |
 | A record that must survive a rollback | An audit log of a failed attempt |
 | A statement the database forbids inside a transaction | `CREATE INDEX CONCURRENTLY` in PostgreSQL |
-| A helper that commits the transaction, before more work on the handle | `finish(tx, err)`, then a cache refresh through `db` |
+| A function value or an interface method that ends the transaction, before more work on the handle | `end(tx)`, where `end` is a parameter, then a cache refresh through `db` |
 
 ```go
 //txbypass:ignore outer-handle // the audit log must survive a rollback
@@ -91,8 +91,8 @@ A clean run does not prove that no statement bypasses a transaction:
 | --- | --- |
 | A callback that is not a function literal | `db.Transaction(r.place)` |
 | A function the transaction's code calls | `r.audit(ctx)`, where `audit` uses `r.db` |
-| A copy of the handle | `d := db` before the transaction |
 | A transaction kept in a field | `r.tx, err = db.Begin()` |
+| A transaction stored, or sent away | `h.tx = tx`, `ch <- tx` |
 | A library or a call txbypass does not know | A begin helper of your own, sqlboiler's global executor |
 
 Write such code as if txbypass read it.

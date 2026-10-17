@@ -28,8 +28,8 @@ run_test "lint" golangci-lint run ./...
 # file, and the analyzer then judges that narrower scope.
 run_test "shrink" declscope shrink ./...
 run_test "declscope" declscope ./...
-# The engine is held near full coverage. What is left are guards that no
-# input reaches, listed in design/implementation.md.
+# Every statement is covered, except blocks marked "Unreachable:" with a
+# reason. See design/implementation.md.
 run_test "coverage" ./coverage.sh
 
 echo ""
