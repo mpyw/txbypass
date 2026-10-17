@@ -22,7 +22,7 @@ txbypass reports code that runs outside a transaction while the transaction is o
 | Scope | The code that runs inside one transaction. See [Scopes](#scopes) |
 | Generated file | A file with a `// Code generated ... DO NOT EDIT.` comment before the package clause, as `ast.IsGenerated` reads it. A file that cgo rewrote is not one |
 
-Nothing is reported in a generated file. Test files are checked like any other file.
+Nothing is reported in a generated file. Test files are checked like any other file. Code in a package-level declaration is read too, as a function literal in a table of test cases: the package initializer runs it.
 
 ## Callback openers
 

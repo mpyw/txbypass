@@ -12,7 +12,9 @@ set -o pipefail
 profile=$(mktemp)
 trap 'rm -f "$profile"' EXIT
 
-go test -coverpkg=./... -coverprofile="$profile" ./... > /dev/null || exit 1
+# -count=1: analysistest reads the fixtures through go list, which the test
+# cache does not see, so a cached result can miss a fixture change.
+go test -count=1 -coverpkg=./... -coverprofile="$profile" ./... > /dev/null || exit 1
 module=$(go list -m)
 
 # The profile lists a block once for each test binary. A block is covered
