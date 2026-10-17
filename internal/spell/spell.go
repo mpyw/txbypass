@@ -53,8 +53,9 @@ func path(info *types.Info, e ast.Expr, from *types.Package) (string, []*types.V
 			return path(info, e.Args[0], from)
 		}
 		// Any other call that gives a handle is a method that returns its
-		// receiver's type.
-		return path(info, ast.Unparen(e.Fun).(*ast.SelectorExpr).X, from)
+		// receiver's type. Its selector adds the embedded fields its
+		// promotion passes, as s.Create(u) reaches s.DB.
+		return selected(info, ast.Unparen(e.Fun).(*ast.SelectorExpr), from)
 	case *ast.SelectorExpr:
 		return selected(info, e, from)
 	}

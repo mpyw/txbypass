@@ -74,3 +74,11 @@ func (b *Backend) Do(ctx context.Context) error {
 	b.Set(ctx, "k", "v", 0)
 	return tx.Commit()
 }
+
+// The README's example: a field of the result of a promoted method is
+// spelled as the handle.
+func (r *Repository) SaveError(u *User) error {
+	return r.Transaction(func(tx *gorm.DB) error {
+		return r.Create(u).Error // want `^r bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
