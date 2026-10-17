@@ -49,7 +49,9 @@ func path(info *types.Info, e ast.Expr, from *types.Package) (string, []*types.V
 		// *&x is x.
 		return path(info, e.X, from)
 	case *ast.CallExpr:
-		if info.Types[e.Fun].IsType() {
+		// A conversion, or new(db), gives what it is given, or a pointer
+		// to a copy of it.
+		if info.Types[e.Fun].IsType() || info.Types[e.Fun].IsBuiltin() {
 			return path(info, e.Args[0], from)
 		}
 		// Any other call that gives a handle is a method that returns its

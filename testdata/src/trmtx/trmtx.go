@@ -137,3 +137,18 @@ func MixedSlots[C interface {
 		return save(txCtx)
 	})
 }
+
+// saver saves with a context, through a method expression too.
+type saver struct{}
+
+func (saver) Save(ctx context.Context) error { return nil }
+
+// The outer context given through a method expression, whose receiver is
+// its first argument.
+func MethodExpression(ctx context.Context, m *manager.Manager, r saver) error {
+	return m.Do(ctx, func(txCtx context.Context) error {
+		_ = saver.Save(r, ctx)      // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		<-context.Context.Done(ctx) // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		return save(txCtx)
+	})
+}

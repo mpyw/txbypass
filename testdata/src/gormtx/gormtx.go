@@ -377,3 +377,12 @@ func (r *ScopedRepo) Save(u *User) error {
 		return r.Scoped[User]().db.Create(u).Error // want `^r\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 	})
 }
+
+// new with an expression is spelled by what it is given.
+func NewOfHandle(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		p := new(db) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		_ = p        // want `^p bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		return nil
+	})
+}
