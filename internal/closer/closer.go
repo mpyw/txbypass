@@ -45,16 +45,17 @@ func (f *Fact) String() string { return fmt.Sprintf("closes%v", f.Params) }
 // Closer answers whether instructions end a transaction, for one pass.
 type Closer struct {
 	pass *analysis.Pass
-	// memo holds what is known of each function and root: whether the
-	// function ends the transaction rooted at that parameter or free
-	// variable.
-	memo map[closerKey]bool
-	// reading holds the pairs being read. A pair met again while it is
-	// read counts as false, which ends a recursion. That false is not
-	// final, so a result that depended on it is not memoized.
-	reading map[closerKey]bool
-	// cycled reports that the read in progress met a pair being read.
-	cycled bool
+	// known holds, for each function and root that has been asked about,
+	// whether the function ends the transaction rooted at that parameter or
+	// free variable. Every answer starts false and only turns true, in a
+	// least fixpoint over all of them.
+	known map[closerKey]bool
+	// order lists the keys of known in the order they were asked about, so
+	// that the fixpoint reads them the same way each time.
+	order []closerKey
+	// solving reports that the fixpoint is being computed. A key asked about
+	// then answers what is known so far, and is read in the same pass.
+	solving bool
 }
 
 // closerKey is a function, and the parameter or free variable of it that
@@ -66,7 +67,7 @@ type closerKey struct {
 
 // New is a Closer for pass.
 func New(pass *analysis.Pass) *Closer {
-	return &Closer{pass: pass, memo: make(map[closerKey]bool), reading: make(map[closerKey]bool)}
+	return &Closer{pass: pass, known: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -166,29 +167,39 @@ func (c *Closer) paramEnds(fn *ssa.Function, i int) bool {
 // its parameters or free variables. Its deferred calls count: they run
 // before it returns.
 //
-// Helpers may call each other. A pair met again while it is read answers
-// false for now. A false that rests on such an answer is not memoized, so
-// it is read again once the cycle has been read through, and the answer
-// does not depend on which helper is read first.
+// Helpers may call each other, so the answers are a least fixpoint. Every
+// key starts false. Each pass reads every key still false, and a pass that
+// turns none true ends it. An answer never turns back, so there are at most
+// as many passes as keys, and a ring of helpers that never end the
+// transaction takes one pass, whichever is read first.
 func (c *Closer) rootEnds(fn *ssa.Function, root ssa.Value) bool {
 	key := closerKey{fn, root}
-	if done, ok := c.memo[key]; ok {
+	if done, ok := c.known[key]; ok {
 		return done
 	}
-	if c.reading[key] {
-		c.cycled = true
-		return false
+	c.known[key] = false
+	c.order = append(c.order, key)
+	if !c.solving {
+		c.solve()
 	}
-	c.reading[key] = true
-	outer := c.cycled
-	c.cycled = false
-	ends := c.rootEndsRead(fn, root)
-	delete(c.reading, key)
-	if ends || !c.cycled {
-		c.memo[key] = ends
+	return c.known[key]
+}
+
+// solve computes the fixpoint over every key known so far, and over the keys
+// the reads ask about.
+func (c *Closer) solve() {
+	c.solving = true
+	for changed := true; changed; {
+		changed = false
+		for i := 0; i < len(c.order); i++ {
+			key := c.order[i]
+			if !c.known[key] && c.rootEndsRead(key.fn, key.root) {
+				c.known[key] = true
+				changed = true
+			}
+		}
 	}
-	c.cycled = outer || c.cycled
-	return ends
+	c.solving = false
 }
 
 // rootEndsRead reads fn for a call that ends the transaction rooted at root.

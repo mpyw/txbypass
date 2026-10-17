@@ -115,7 +115,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | --- | --- |
 | Only a parameter whose type has an ending method gets a fact | A fact for every parameter that is stored somewhere marked half of the standard library |
 | A store or a send inside a helper does not count as an end | `(*sql.Tx).ExecContext` stores its receiver in closures. With escapes counted, every statement would seem to end the transaction |
-| A call of a function still being read answers false for now, and a false that rests on it is not memoized | A recursion has to stop. Memoizing that false made the answer for mutually recursive helpers depend on which one was read first, and the order came from a map |
+| The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
