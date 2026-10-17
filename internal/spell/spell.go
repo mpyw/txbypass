@@ -4,9 +4,9 @@
 // wrote. A message names the expression where the use is: d, when the code
 // used a copy d of db. It follows the names that select a handle: a
 // variable, its fields, conversions, and the methods that give their
-// receiver back, as gorm's WithContext does. Embedded fields at the end are
-// left out, since a value is the handle it embeds. What it does not follow,
-// such as a type assertion, it spells as written.
+// receiver back, as gorm's WithContext does, and the embedded fields a
+// promoted method passes. What it does not follow, such as a type
+// assertion, it spells as written.
 package spell
 
 import (
@@ -15,17 +15,21 @@ import (
 	"strings"
 )
 
-// Of spells the handle e is, as source in package from would. A variable of
-// another package is qualified by its package's name.
-func Of(info *types.Info, e ast.Expr, from *types.Package) string {
+// Of spells the handle e reaches, as source in package from would: what e
+// begins with, then its first depth fields. A use that reads a field of the
+// handle, as db.Error, is spelled as the handle, db. Embedded fields at the
+// end are left out, as the source leaves them out: s.Create(u) reaches s.DB,
+// and is spelled s. A variable of another package is qualified by its
+// package's name.
+func Of(info *types.Info, e ast.Expr, from *types.Package, depth int) string {
 	head, fields := path(info, e, from)
-	n := len(fields)
-	for n > 0 && fields[n-1].Embedded() {
-		n--
+	fields = fields[:min(depth, len(fields))]
+	for len(fields) > 0 && fields[len(fields)-1].Embedded() {
+		fields = fields[:len(fields)-1]
 	}
 	var b strings.Builder
 	b.WriteString(head)
-	for _, f := range fields[:n] {
+	for _, f := range fields {
 		b.WriteString("." + f.Name())
 	}
 	return b.String()

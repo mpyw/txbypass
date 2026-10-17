@@ -52,14 +52,16 @@ func OnConn(ctx context.Context, conn *sqlx.Conn) error {
 	return tx.Commit()
 }
 
-// Begin is database/sql's, promoted from the embedded *sql.DB. sqlx's own
-// methods are on the same handle.
+// Begin is database/sql's, promoted from the embedded *sql.DB, so the
+// transaction is opened on db.DB. A method promoted from it is a use. sqlx's
+// own MustExec is on db, which embeds the handle, and is not read: a struct
+// that embeds a handle may hold other things. Use Beginx instead.
 func Promoted(db *sqlx.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	db.MustExec("INSERT INTO ledger VALUES (1)") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
-	db.Exec("INSERT INTO ledger VALUES (2)")     // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	db.MustExec("INSERT INTO ledger VALUES (1)")
+	db.Exec("INSERT INTO ledger VALUES (2)") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }

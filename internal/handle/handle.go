@@ -10,8 +10,8 @@
 // one handle. A variable that a function literal captures lives in memory.
 // When one store writes it, it is the value it holds. A method that returns
 // the type of its receiver, as gorm's WithContext does, gives the same
-// handle back. A value is the same handle as the fields it embeds: when s
-// embeds *gorm.DB, s and s.DB are one handle.
+// handle back. A struct that embeds a handle is not that handle: when s
+// embeds *gorm.DB, s.Create(u) reaches s.DB, but s.validate(u) does not.
 package handle
 
 import (
@@ -225,23 +225,21 @@ func samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
 	return p, found
 }
 
-// Equal reports whether p and q are the same handle. Embedded fields at the
-// end of either are left out, since a value is the handle it embeds.
+// Equal reports whether p and q are the same handle: the same root, and the
+// same fields.
 func (p Path) Equal(q Path) bool {
-	return p.base == q.base && slices.Equal(p.named(), q.named())
+	return p.base == q.base && slices.Equal(p.fields, q.fields)
 }
 
-// Within reports whether p is q, or a field selected from q, embedded or
-// not. A method of tx.TX is a method of the transaction tx.
+// Within reports whether p is q, or a field selected from q. A method of
+// tx.TX is a method of the transaction tx, and reading db.Error reads the
+// handle db. A value that embeds q is not within it: it may hold other
+// things.
 func (p Path) Within(q Path) bool {
 	return p.base == q.base && len(p.fields) >= len(q.fields) && slices.Equal(p.fields[:len(q.fields)], q.fields)
 }
 
-// named is p's fields without the embedded fields at their end.
-func (p Path) named() []*types.Var {
-	n := len(p.fields)
-	for n > 0 && p.fields[n-1].Embedded() {
-		n--
-	}
-	return p.fields[:n]
+// Depth is the number of fields p selects from its root.
+func (p Path) Depth() int {
+	return len(p.fields)
 }
