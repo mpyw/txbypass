@@ -76,9 +76,21 @@ type scopeVisit func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool
 // given to promoted, when it is not nil, with the reference of what it
 // selects from.
 func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
+	hooks := make(map[*ast.FuncLit]bool)
 	ast.PreorderStack(s.root, nil, func(n ast.Node, stack []ast.Node) bool {
-		if _, ok := n.(*ast.DeferStmt); ok && s.region != nil {
-			return false
+		switch n := n.(type) {
+		case *ast.DeferStmt:
+			if s.region != nil {
+				return false
+			}
+		case *ast.AssignStmt:
+			if s.region == nil {
+				c.scopeHooks(s.root, n, hooks)
+			}
+		case *ast.FuncLit:
+			if hooks[n] {
+				return false
+			}
 		}
 		e, ok := n.(ast.Expr)
 		if !ok {
@@ -112,6 +124,56 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 		x, ok := c.prog.Ref(fn, sel.X)
 		return !ok || !s.scopeInside(x) || promoted(sel, x, stack)
 	})
+}
+
+// scopeHooks adds to hooks the function literals that assign keeps for
+// after the callback root: assigned to a variable declared outside it, or
+// appended to one, as an after-commit hook is. Such a literal runs once the
+// callback has returned, outside the transaction, on purpose.
+func (c *checker) scopeHooks(root ast.Node, assign *ast.AssignStmt, hooks map[*ast.FuncLit]bool) {
+	info := c.pass.TypesInfo
+	for i, lhs := range assign.Lhs {
+		base := scopeBase(lhs)
+		obj := info.ObjectOf(base)
+		if obj == nil || root.Pos() <= obj.Pos() && obj.Pos() < root.End() || i >= len(assign.Rhs) {
+			continue
+		}
+		rhs := ast.Unparen(assign.Rhs[i])
+		if lit, ok := rhs.(*ast.FuncLit); ok {
+			hooks[lit] = true
+		}
+		call, ok := rhs.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if b, ok := info.Uses[scopeBase(call.Fun)].(*types.Builtin); !ok || b.Name() != "append" {
+			continue
+		}
+		for _, arg := range call.Args[1:] {
+			if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
+				hooks[lit] = true
+			}
+		}
+	}
+}
+
+// scopeBase is the identifier an expression selects or indexes from, as h
+// in h.hooks[0]. It is nil for anything else.
+func scopeBase(e ast.Expr) *ast.Ident {
+	for {
+		switch x := ast.Unparen(e).(type) {
+		case *ast.Ident:
+			return x
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		default:
+			return nil
+		}
+	}
 }
 
 // scopeInside reports whether ref is evaluated inside the transaction of s.

@@ -152,6 +152,8 @@ A scope is the code that runs inside one transaction. Each use of the outer hand
 | A callback opener | The callback's body, with its own function literals |
 | A begin | The region where the transaction is open. See [Regions](#regions) |
 
+In a callback, a function literal kept for after it is not read. Such a literal is assigned to a variable declared outside the callback, or appended to one. A field or an element of such a variable counts too. That is how an after-commit hook is kept: it runs once the callback has returned, outside the transaction, on purpose.
+
 Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`.
 
 Once an expression is reported, nothing inside it is read again. A position is reported once for each rule. A use inside two transactions opened on the same handle is reported for the first one that reads it.
@@ -293,4 +295,6 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
 | A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |
 | A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies |
+| A hook kept for after the callback, but called inside it too | The literal is not read |
+| A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |
