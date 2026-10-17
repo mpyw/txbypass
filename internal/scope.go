@@ -141,6 +141,21 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
 }
 
+// scopeYieldsContext reports whether e, a method selector on the outer
+// context, is called for a context.Context, as gin's c.Request.Context()
+// gives the outer context back. A method call is read at its selector, so
+// the call is e's parent.
+func scopeYieldsContext(info *types.Info, e ast.Expr, stack []ast.Node) bool {
+	call, ok := stack[len(stack)-1].(*ast.CallExpr)
+	return ok && call.Fun == e && scopeIsContext(info.TypeOf(call))
+}
+
+// scopeIsContext reports whether t is context.Context.
+func scopeIsContext(t types.Type) bool {
+	named, ok := types.Unalias(t).(*types.Named)
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "context" && named.Obj().Name() == "Context"
+}
+
 // scopeGivenForLater reports whether e is given to a function of the
 // package that uses it only in a function it gives to t.Cleanup, as a test
 // helper that drops a table after the test. The use runs after the test,
@@ -163,7 +178,7 @@ func scopeGivenForLater(fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
 }
 
 // scopeOnlyLater reports whether every use of v is in a function given to
-// t.Cleanup or deferred. A parameter that a literal captures is kept in a
+// t.Cleanup. A parameter that a literal captures is kept in a
 // variable first.
 func scopeOnlyLater(v ssa.Value) bool {
 	used := false
@@ -181,7 +196,9 @@ func scopeOnlyLater(v ssa.Value) bool {
 			}
 			used = true
 		case *ssa.MakeClosure:
-			if !scopeDeferred(ref) {
+			// A defer in the helper runs when the helper returns, inside
+			// the transaction. Only t.Cleanup runs after it.
+			if !scopeCleanedUp(ref) {
 				return false
 			}
 			used = true
@@ -190,6 +207,17 @@ func scopeOnlyLater(v ssa.Value) bool {
 		}
 	}
 	return used
+}
+
+// scopeCleanedUp reports whether mc is used only by t.Cleanup.
+func scopeCleanedUp(mc *ssa.MakeClosure) bool {
+	return !slices.ContainsFunc(*mc.Referrers(), func(ref ssa.Instruction) bool {
+		if _, ok := ref.(*ssa.DebugRef); ok {
+			return false
+		}
+		call, ok := ref.(*ssa.Call)
+		return !ok || !program.Cleanup(call.Common())
+	})
 }
 
 // scopeValueBound reports whether v, or a variable it is kept in, is the
@@ -246,8 +274,9 @@ func scopeMetadata(info *types.Info, e ast.Expr) bool {
 	if ptr, ok := recv.(*types.Pointer); ok {
 		recv = ptr.Elem()
 	}
+	// A method of the universe, as error's Error, belongs to no package.
 	named, ok := types.Unalias(recv).(*types.Named)
-	return ok && scopeMetadataMethods[[3]string{fn.Pkg().Path(), named.Obj().Name(), fn.Name()}]
+	return ok && fn.Pkg() != nil && scopeMetadataMethods[[3]string{fn.Pkg().Path(), named.Obj().Name(), fn.Name()}]
 }
 
 // scopeInert reports whether e only reads a value of the handle that runs
@@ -617,7 +646,12 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if scopeChainsOn(e, exempt) || !c.paths.Of(x.X).With(path).Within(outer) {
 			return true
 		}
-		if c.scopeChainBound(s, x.Parent(), e, stack) || r == rule.OuterContext && !scopeAsContext(info, e.(*ast.SelectorExpr)) {
+		sel := e.(*ast.SelectorExpr)
+		if scopeInertType(info.TypeOf(sel.X)) {
+			// A method of an error the handle gave, as err.Error().
+			return true
+		}
+		if c.scopeChainBound(s, x.Parent(), e, stack) || r == rule.OuterContext && !scopeAsContext(info, sel) && !scopeYieldsContext(info, e, stack) {
 			return false
 		}
 		if !scopeMetadata(info, e) {

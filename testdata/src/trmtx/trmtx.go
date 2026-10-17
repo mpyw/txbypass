@@ -55,6 +55,8 @@ func Handler(c *gin.Context, m *manager.Manager) error {
 			return err
 		}
 		_ = c.Value("user") // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
+		_ = save(c.Request.Context()) // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
+		_ = len(c.Copy().Param("id"))
 		c.JSON(201, gin.H{"id": id})
 		return nil
 	})
