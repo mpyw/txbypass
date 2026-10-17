@@ -63,6 +63,21 @@ func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bo
 	return c.paths.Of(ref.X).With(promoted), true
 }
 
+// scopeBindsBoth reports whether e is an argument of a call that takes the
+// transaction too, as a constructor newStore(s.db, tx) of a store bound to
+// it does. Such a call keeps the handle beside the transaction, as the
+// composite literal &Store{db: s.db, tx: tx} does, which is no use either.
+func (c *checker) scopeBindsBoth(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
+	call, ok := stack[len(stack)-1].(*ast.CallExpr)
+	if !ok || !slices.Contains(call.Args, e) {
+		return false
+	}
+	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+		ref, ok := c.prog.Ref(fn, arg)
+		return ok && slices.ContainsFunc(s.txs, c.paths.Of(ref.X).Within)
+	})
+}
+
 // scopeMetadataMethods are the methods of a pool that read or set the pool
 // itself, by package, type and name. A transaction has none of them, so
 // "use the transaction" is no fix, and they run no statement.
@@ -438,6 +453,9 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		}
 		if !c.paths.Of(ref.X).Within(outer) || scopeInert(info, e, stack) {
 			return true
+		}
+		if c.scopeBindsBoth(s, ref.Parent(), e, stack) {
+			return false
 		}
 		if !scopeMetadata(info, e) {
 			c.reportScopeUse(s, e, stack, outer, r, use)
