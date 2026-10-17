@@ -224,7 +224,7 @@ func scopeBase(e ast.Expr) *ast.Ident {
 }
 
 // scopeWrites reports whether code that runs inside the transaction of s
-// stores to the handle outer, or to a variable or a field that holds it.
+// rebinds the handle outer, as scopeRebinds says.
 // In a region, only the stores inside the region count, and the stores of
 // the function literals it makes there.
 func (c *checker) scopeWrites(s txScope, outer handle.Path) bool {
@@ -232,7 +232,7 @@ func (c *checker) scopeWrites(s txScope, outer handle.Path) bool {
 		for _, b := range fn.Blocks {
 			for _, instr := range b.Instrs {
 				st, ok := instr.(*ssa.Store)
-				if ok && outer.Stored(c.paths.Address(st.Addr)) && (fn != s.fn || s.region == nil || s.region.Inside(st)) {
+				if ok && c.scopeRebinds(s, outer, st) && (fn != s.fn || s.region == nil || s.region.Inside(st)) {
 					return true
 				}
 			}
@@ -253,6 +253,19 @@ func (c *checker) scopeWrites(s txScope, outer handle.Path) bool {
 		return false
 	}
 	return within(s.fn)
+}
+
+// scopeRebinds reports whether st stores to the handle outer, or to a
+// variable or a field that holds it. A store into a field of outer of a
+// value taken from the transaction counts too. gorm's own
+// base.Statement.ConnPool = tx.Statement.ConnPool makes base run its
+// statements on the transaction.
+func (c *checker) scopeRebinds(s txScope, outer handle.Path, st *ssa.Store) bool {
+	addr := c.paths.Address(st.Addr)
+	if outer.Stored(addr) {
+		return true
+	}
+	return addr.Within(outer) && slices.ContainsFunc(s.txs, c.paths.Of(st.Val).Within)
 }
 
 // scopeDeferred reports whether the literal that made makes runs only when

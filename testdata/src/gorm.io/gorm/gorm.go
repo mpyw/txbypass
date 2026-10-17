@@ -14,7 +14,18 @@ import (
 
 // DB is a handle, a session, or a transaction.
 type DB struct {
-	Error error
+	Error     error
+	Statement *Statement
+}
+
+// Statement is the statement a DB builds, and the pool it runs on.
+type Statement struct {
+	ConnPool ConnPool
+}
+
+// ConnPool is what a statement runs on: a pool or a transaction.
+type ConnPool interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
 // Session is the configuration of a new session.
