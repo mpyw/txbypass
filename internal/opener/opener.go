@@ -304,11 +304,14 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 // IsBegin reports whether call is a call of a begin.
 func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	sel, ok := methodSelector(info, call)
-	if !ok {
-		return false
-	}
-	_, _, known := lookup(info, call, knownBegins)
-	return known || entBegin(info.Selections[sel].Obj().(*types.Func))
+	return ok && IsBeginFunc(info.Selections[sel].Obj().(*types.Func))
+}
+
+// IsBeginFunc reports whether fn is a begin. A begin gives a new handle, the
+// transaction, even when it has the receiver's type, as gorm's Begin does.
+func IsBeginFunc(fn *types.Func) bool {
+	_, known := lookupFunc(fn, knownBegins)
+	return known || entBegin(fn)
 }
 
 // entBegin reports whether fn is the Tx or BeginTx method of a client that
@@ -348,16 +351,26 @@ func methodSelector(info *types.Info, call *ast.CallExpr) (*ast.SelectorExpr, bo
 // lookup finds the entry of table that call is a call of.
 func lookup(info *types.Info, call *ast.CallExpr, table []known) (*types.Func, known, bool) {
 	fn, ok := typeutil.Callee(info, call).(*types.Func)
-	if !ok || fn.Pkg() == nil {
+	if !ok {
 		return nil, known{}, false
+	}
+	k, ok := lookupFunc(fn, table)
+	return fn, k, ok
+}
+
+// lookupFunc finds the entry of table for fn. A method of the universe, as
+// error's, belongs to no package and has none.
+func lookupFunc(fn *types.Func, table []known) (known, bool) {
+	if fn.Pkg() == nil {
+		return known{}, false
 	}
 	recv := recvName(fn)
 	for _, k := range table {
 		if k.pkg == fn.Pkg().Path() && k.name == fn.Name() && k.recv == recv {
-			return fn, k, true
+			return k, true
 		}
 	}
-	return nil, known{}, false
+	return known{}, false
 }
 
 // displayName is how a message names fn: a method by its name, a function

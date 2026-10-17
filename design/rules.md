@@ -127,7 +127,7 @@ A handle is a root value and the fields selected from it. The root is what the S
 | A variable a function literal captures, written by one store | The value stored |
 | A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
 | A method value, as `db.Create` | Its receiver |
-| A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver. `WithTx` is the exception: see [sqlc's `WithTx`](#sqlcs-withtx) |
+| A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver. A [begin](#begins), as gorm's `db.Begin()`, is an exception: it gives the transaction. So is `WithTx`: see [sqlc's `WithTx`](#sqlcs-withtx) |
 | A conversion, a conversion to an interface, or an assertion that panics when it fails | What it converts |
 | A phi whose edges all give one handle | That handle. An edge back to the phi, around a loop, gives nothing |
 | A free variable of a literal | What the closure binds it to |
