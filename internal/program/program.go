@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/types/typeutil"
 )
 
 // Program is one package's SSA form, and the ways to reach it from the
@@ -173,6 +174,26 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 		}
 	}
 	return nil, false
+}
+
+// Cleanup reports whether call registers a function to run after the test,
+// as t.Cleanup(f) does. The function runs as a deferred call of the test
+// does, after the test returns.
+func Cleanup(call *ssa.CallCommon) bool {
+	var fn *types.Func
+	if call.IsInvoke() {
+		fn = call.Method
+	} else if callee := call.StaticCallee(); callee != nil {
+		fn, _ = callee.Object().(*types.Func)
+	}
+	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == "testing" && fn.Name() == "Cleanup"
+}
+
+// CleanupCall reports whether call, in the syntax, registers a function to
+// run after the test, as Cleanup says.
+func CleanupCall(info *types.Info, call *ast.CallExpr) bool {
+	fn, ok := typeutil.Callee(info, call).(*types.Func)
+	return ok && fn.Pkg() != nil && fn.Pkg().Path() == "testing" && fn.Name() == "Cleanup"
 }
 
 // runs reports whether instr is a call, a go or a defer, which runs what it

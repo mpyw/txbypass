@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"testing"
 	"time"
 
 	"txhelper"
@@ -552,4 +553,40 @@ func RequireOtherFails(t require.TestingT, db *sql.DB, other error) {
 	require.ErrorIs(t, other, err)
 	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	tx.Commit()
+}
+
+// t.Cleanup runs the rollback after the test returns, as a defer does, so
+// the transaction is open after it.
+func CleanupRollback(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tx.Rollback() })
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+}
+
+// Not reported: a cleanup that uses the handle runs after the test.
+func CleanupUsesHandle(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM ledger") })
+	tx.Commit()
+}
+
+func rollbackLater(t testing.TB, tx *sql.Tx) {
+	t.Cleanup(func() { tx.Rollback() })
+}
+
+// The helper registers the rollback for after the test, so the transaction
+// is open after it.
+func CleanupInHelper(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollbackLater(t, tx)
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 }

@@ -89,6 +89,12 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 			if s.region != nil && !slices.ContainsFunc(stack, scopeIsLiteral) {
 				return false
 			}
+		case *ast.CallExpr:
+			// t.Cleanup runs its function after the test returns, as the
+			// function's deferred calls run.
+			if s.region != nil && !slices.ContainsFunc(stack, scopeIsLiteral) && program.CleanupCall(c.pass.TypesInfo, n) {
+				return false
+			}
 		case *ast.FuncLit:
 			if hooks[n] {
 				return false
@@ -263,10 +269,10 @@ func (c *checker) scopeRebinds(s txScope, outer handle.Path, st *ssa.Store) bool
 }
 
 // scopeDeferred reports whether the literal that made makes runs only when
-// the function returns: made is a defer of it, or a closure that only a
-// defer uses.
+// the function returns: made is a defer of it or a t.Cleanup of it, or a
+// closure that only those use.
 func scopeDeferred(made ssa.Instruction) bool {
-	if _, ok := made.(*ssa.Defer); ok {
+	if scopeDefers(made) {
 		return true
 	}
 	mc, ok := made.(*ssa.MakeClosure)
@@ -274,13 +280,22 @@ func scopeDeferred(made ssa.Instruction) bool {
 		return false
 	}
 	for _, ref := range *mc.Referrers() {
-		switch ref.(type) {
-		case *ssa.Defer, *ssa.DebugRef:
-		default:
+		if _, ok := ref.(*ssa.DebugRef); !ok && !scopeDefers(ref) {
 			return false
 		}
 	}
 	return true
+}
+
+// scopeDefers reports whether instr is a defer, or a t.Cleanup.
+func scopeDefers(instr ssa.Instruction) bool {
+	switch instr := instr.(type) {
+	case *ssa.Defer:
+		return true
+	case *ssa.Call:
+		return program.Cleanup(instr.Common())
+	}
+	return false
 }
 
 // scopeInside reports whether ref is evaluated inside the transaction of s.
