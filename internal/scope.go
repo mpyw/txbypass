@@ -1159,11 +1159,15 @@ func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
 	})
 }
 
-// scopeCallee is the function that call calls. An interface method
-// gives none: no opener or begin that nests is one.
+// scopeCallee is the function, or the interface method, that call calls.
+// go-rel's Repository and go-transaction-manager's trm.Manager are
+// interfaces.
 //
 //declscope:shared // outer_handle.go asks what a begin calls through it
 func scopeCallee(call *ssa.CallCommon) (*types.Func, bool) {
+	if call.IsInvoke() {
+		return call.Method, true
+	}
 	if fn := call.StaticCallee(); fn != nil {
 		obj, ok := fn.Object().(*types.Func)
 		return obj, ok
