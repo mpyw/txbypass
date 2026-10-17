@@ -294,6 +294,8 @@ In the callback of an opener that carries the transaction in its context, each e
 
 The handle the opener is called on is not reported there. With MongoDB, `coll.InsertOne(sc, doc)` runs in the transaction, because `sc` carries it.
 
+The outer context is reported where it is used as a context: given to a call, or with a method of `context.Context` called on it. A web framework's context, as gin's `*gin.Context`, has methods and fields of its own, as `c.JSON(...)` and `c.Request`. They run no statement, and the inner context has none of them, so they are not reported.
+
 ## Messages
 
 Every message has one shape:
@@ -362,4 +364,4 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one dedicated connection |
 | A savepoint on a gorm transaction this analysis does not know as one, as a `*gorm.DB` parameter of a declared function | It is reported. The type does not say that the handle is a transaction |
 | A helper given the handle and the transaction, as `audit(db, tx)` | Not reported. A call given both keeps the handle beside the transaction, as a constructor does |
-| A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |
+| A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies. A field of the outer context, or a method `context.Context` lacks, as gin's `c.JSON(...)`, is not reported: the inner context has none of them |
