@@ -87,6 +87,11 @@ func (c *checker) scopeChainBound(s txScope, fn *ssa.Function, e ast.Expr, stack
 	// start at a call given the handle, as sqlc's New(pool).WithTx(tx).
 	cur, i := e, len(stack)-1
 	if call, ok := stack[i].(*ast.CallExpr); ok && slices.Contains(call.Args, e) {
+		// The call's result may be kept, as q := New(pool), and rebound
+		// later, as q.WithTx(tx).
+		if ref, ok := c.prog.Ref(fn, call); ok && c.scopeValueBound(s, ref.X) {
+			return true
+		}
 		cur, i = call, i-1
 	}
 	for ; ; i-- {
@@ -134,6 +139,30 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	}
 	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
+}
+
+// scopeValueBound reports whether v, or a variable it is kept in, is the
+// receiver of a call given the transaction, as q in q.WithTx(tx).
+func (c *checker) scopeValueBound(s txScope, v ssa.Value) bool {
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case ssa.CallInstruction:
+			args := ref.Common().Args
+			if len(args) > 0 && args[0] == v && slices.ContainsFunc(args[1:], func(arg ssa.Value) bool {
+				return slices.ContainsFunc(s.txs, c.paths.Of(arg).Within)
+			}) {
+				return true
+			}
+		case *ssa.Store:
+			if addr, ok := ref.Addr.(*ssa.Alloc); ok && ref.Val == v && slices.ContainsFunc(*addr.Referrers(), func(load ssa.Instruction) bool {
+				u, ok := load.(*ssa.UnOp)
+				return ok && c.scopeValueBound(s, u)
+			}) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // scopeMetadataMethods are the methods of a pool that read or set the pool
@@ -511,6 +540,11 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 			return !exempt[e]
 		}
 		if !c.paths.Of(ref.X).Within(outer) || scopeInert(info, e, stack) {
+			return true
+		}
+		// The call that makes the handle, as New(pool) for q, is no use of
+		// it. What it is given is read.
+		if _, ok := e.(*ast.CallExpr); ok && ref.X == outer.Root() {
 			return true
 		}
 		if r == rule.OuterContext && !scopeContextUse(info, e, stack, c.paths.Of(ref.X).Depth() > outer.Depth()) {

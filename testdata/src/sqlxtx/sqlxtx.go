@@ -6,6 +6,8 @@ import (
 	"database/sql"
 
 	"github.com/jmoiron/sqlx"
+
+	"sqltx"
 )
 
 type User struct{ Name string }
@@ -92,6 +94,22 @@ func Sqlc(ctx context.Context, db *sqlx.DB, q *Queries) error {
 		return err
 	}
 	if err := q.CreateUser(ctx, "b"); err != nil { // want `^q bypasses the transaction opened with BeginTxx; use qtx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit()
+}
+
+// Not reported: sqlc's queries from another package, kept in q and rebound
+// to the transaction before they run.
+func OtherPackageNewThenWithTx(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := sqltx.New(db)
+	qtx := q.WithTx(tx)
+	if err := qtx.CreateUser(ctx, "a"); err != nil {
 		return err
 	}
 	return tx.Commit()
