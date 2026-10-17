@@ -216,3 +216,58 @@ func CommitGoesOnThenUseInRangeFunc(db *sql.DB, rows iter.Seq[int]) error {
 	}
 	return nil
 }
+
+// Not reported: a goto out of the body, after a rollback, to code that has
+// no other way in.
+func RollbackGotoInRangeFunc(db *sql.DB, rows iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for r := range rows {
+		if _, err := tx.Exec("INSERT", r); err != nil {
+			tx.Rollback()
+			goto failed
+		}
+	}
+	return tx.Commit()
+failed:
+	db.Exec("UPDATE imports SET failed = true")
+	return nil
+}
+
+// Not reported: the labeled break is the only way out of the outer loop.
+func RollbackBreaksForeverInRangeFunc(db *sql.DB, pages func() iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+outer:
+	for {
+		for r := range pages() {
+			if _, err := tx.Exec("INSERT", r); err != nil {
+				tx.Rollback()
+				break outer
+			}
+		}
+	}
+	db.Exec("UPDATE imports SET failed = true")
+	return nil
+}
+
+// A return with a deferred call still returns.
+func RollbackReturnsWithDeferInRangeFunc(db *sql.DB, rows iter.Seq[int]) (err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = err }()
+	for r := range rows {
+		if _, err = tx.Exec("INSERT", r); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	db.Ping() // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}
