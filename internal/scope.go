@@ -141,6 +141,57 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
 }
 
+// scopeGivenForLater reports whether e is given to a function of the
+// package that uses it only in a function it gives to t.Cleanup, as a test
+// helper that drops a table after the test. The use runs after the test,
+// when the transaction has ended.
+func scopeGivenForLater(fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
+	call, ok := stack[len(stack)-1].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	i := slices.Index(call.Args, e)
+	ssaCall, ok := program.Call(fn, call)
+	if i < 0 || !ok {
+		return false
+	}
+	callee := ssaCall.Common().StaticCallee()
+	if callee == nil || callee.Blocks == nil || callee.Signature.Recv() != nil || callee.Signature.Variadic() && i >= len(callee.Params)-1 {
+		return false
+	}
+	return scopeOnlyLater(callee.Params[i])
+}
+
+// scopeOnlyLater reports whether every use of v is in a function given to
+// t.Cleanup or deferred. A parameter that a literal captures is kept in a
+// variable first.
+func scopeOnlyLater(v ssa.Value) bool {
+	used := false
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.DebugRef:
+		case *ssa.Store:
+			if ref.Addr == v {
+				// The variable that v is, written.
+				continue
+			}
+			addr, ok := ref.Addr.(*ssa.Alloc)
+			if !ok || !scopeOnlyLater(addr) {
+				return false
+			}
+			used = true
+		case *ssa.MakeClosure:
+			if !scopeDeferred(ref) {
+				return false
+			}
+			used = true
+		default:
+			return false
+		}
+	}
+	return used
+}
+
 // scopeValueBound reports whether v, or a variable it is kept in, is the
 // receiver of a call given the transaction, as q in q.WithTx(tx).
 func (c *checker) scopeValueBound(s txScope, v ssa.Value) bool {
@@ -550,7 +601,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if r == rule.OuterContext && !scopeContextUse(info, e, stack, c.paths.Of(ref.X).Depth() > outer.Depth()) {
 			return false
 		}
-		if c.scopeBindsBoth(s, ref.Parent(), e, stack) || c.scopeChainBound(s, ref.Parent(), e, stack) {
+		if c.scopeBindsBoth(s, ref.Parent(), e, stack) || c.scopeChainBound(s, ref.Parent(), e, stack) || scopeGivenForLater(ref.Parent(), e, stack) {
 			return false
 		}
 		if !scopeMetadata(info, e) {
