@@ -22,6 +22,14 @@ func (s *Session) WithTransaction(ctx context.Context, fn func(ctx context.Conte
 	return nil, nil
 }
 
+func (s *Session) StartTransaction() error { return nil }
+
+func (s *Session) CommitTransaction(ctx context.Context) error { return nil }
+
+func (s *Session) AbortTransaction(ctx context.Context) error { return nil }
+
+func (s *Session) EndSession(ctx context.Context) {}
+
 func WithSession(ctx context.Context, sess *Session, fn func(context.Context) error) error {
 	return nil
 }

@@ -19,6 +19,10 @@ type SessionContext interface {
 // Session is a session.
 type Session interface {
 	WithTransaction(ctx context.Context, fn func(ctx SessionContext) (interface{}, error)) (interface{}, error)
+	StartTransaction() error
+	CommitTransaction(ctx context.Context) error
+	AbortTransaction(ctx context.Context) error
+	EndSession(ctx context.Context)
 }
 
 func (coll *Collection) InsertOne(ctx context.Context, document interface{}) (interface{}, error) {

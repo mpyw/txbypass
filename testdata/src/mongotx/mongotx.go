@@ -138,3 +138,21 @@ func TransactionInSessionOuter(ctx context.Context, sess *mongo.Session, coll *m
 		return err
 	})
 }
+
+// ===== A transaction started by hand in a session callback =====
+
+// Not reported: the session's own methods that end the transaction take
+// the context only for its deadline. The insert with ctx is reported.
+func StartedByHand(ctx context.Context, client *mongo.Client, sess *mongo.Session, coll *mongo.Collection) error {
+	return mongo.WithSession(ctx, sess, func(sc context.Context) error {
+		if err := sess.StartTransaction(); err != nil {
+			return err
+		}
+		if _, err := coll.InsertOne(ctx, "doc"); err != nil { // want `^ctx bypasses the transaction opened with mongo\.WithSession; use sc instead \[outer-context\]$`
+			_ = sess.AbortTransaction(ctx)
+			return err
+		}
+		defer sess.EndSession(ctx)
+		return sess.CommitTransaction(ctx)
+	})
+}
