@@ -20,6 +20,11 @@ type Pool struct{}
 
 func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) { return nil, nil }
 
+// Stat is a snapshot of the pool's statistics.
+type Stat struct{}
+
+func (p *Pool) Stat() *Stat { return &Stat{} }
+
 func (p *Pool) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
 	return nil, nil
 }

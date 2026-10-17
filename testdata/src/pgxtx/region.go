@@ -85,3 +85,14 @@ func SqlcUnnamed(ctx context.Context, pool *pgxpool.Pool, q *Queries) error {
 		return q.CreateUser(ctx, "b")
 	})
 }
+
+// Not reported: the pool's statistics are the pool's own. The transaction
+// has none, and reading them runs no statement.
+func PoolStat(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	_ = pool.Stat()
+	return tx.Commit(ctx)
+}
