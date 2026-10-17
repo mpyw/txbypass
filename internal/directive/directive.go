@@ -200,13 +200,14 @@ func (ig *ignore) covers(r rule.Name) bool {
 	return len(ig.rules) == 0 || slices.Contains(ig.rules, r)
 }
 
-// Unused lists the ignore comments that silenced nothing. An ignore whose
-// every rule is off is left out: switching a flag should not make it a
-// report.
+// Unused lists the ignore comments that silenced nothing. An ignore that
+// covers a rule that is off is left out: the rule did not run, so whether
+// the ignore silences its report is not known. Switching a flag should not
+// make it a report. A bare ignore covers every rule.
 func (s *Set) Unused(on func(rule.Name) bool) []token.Pos {
 	var out []token.Pos
 	for _, ig := range s.all {
-		if ig.used || !ig.anyOn(on) {
+		if ig.used || !ig.allOn(on) {
 			continue
 		}
 		out = append(out, ig.pos)
@@ -214,16 +215,12 @@ func (s *Set) Unused(on func(rule.Name) bool) []token.Pos {
 	return out
 }
 
-func (ig *ignore) anyOn(on func(rule.Name) bool) bool {
-	if len(ig.rules) == 0 {
-		return true
+func (ig *ignore) allOn(on func(rule.Name) bool) bool {
+	rules := ig.rules
+	if len(rules) == 0 {
+		rules = rule.All
 	}
-	for _, n := range ig.rules {
-		if on(n) {
-			return true
-		}
-	}
-	return false
+	return !slices.ContainsFunc(rules, func(n rule.Name) bool { return !on(n) })
 }
 
 // Problems lists the directives that are malformed or unknown.

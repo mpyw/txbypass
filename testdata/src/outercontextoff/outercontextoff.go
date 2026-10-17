@@ -16,3 +16,14 @@ func Do(ctx context.Context, m *manager.Manager) error {
 		return save(ctx)
 	})
 }
+
+// Not reported: an ignore that covers outer-context, which is off, is not
+// unused. A bare ignore covers every rule.
+func Ignored(ctx context.Context, m *manager.Manager) error {
+	return m.Do(ctx, func(txCtx context.Context) error {
+		//txbypass:ignore // the audit entry must survive a rollback
+		_ = save(ctx)
+		//txbypass:ignore outer-handle, outer-context // the audit entry must survive a rollback
+		return save(ctx)
+	})
+}
