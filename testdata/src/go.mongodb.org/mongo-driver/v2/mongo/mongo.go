@@ -25,3 +25,16 @@ func (s *Session) WithTransaction(ctx context.Context, fn func(ctx context.Conte
 func WithSession(ctx context.Context, sess *Session, fn func(context.Context) error) error {
 	return nil
 }
+
+// Client is a client. UseSessionWithOptions takes an
+// *options.SessionOptionsBuilder, which the stub keeps in this package.
+type Client struct{}
+
+// SessionOptionsBuilder stands in for options.SessionOptionsBuilder.
+type SessionOptionsBuilder struct{}
+
+func (c *Client) UseSession(ctx context.Context, fn func(context.Context) error) error { return nil }
+
+func (c *Client) UseSessionWithOptions(ctx context.Context, opts *SessionOptionsBuilder, fn func(context.Context) error) error {
+	return nil
+}

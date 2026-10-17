@@ -76,3 +76,33 @@ func Fresh(sess *mongo.Session, coll *mongo.Collection, u *User) error {
 	})
 	return err
 }
+
+// ===== UseSession, as MongoDB's transaction examples use =====
+
+func UseSession(ctx context.Context, client *mongo.Client, coll *mongo.Collection, u *User) error {
+	return client.UseSession(ctx, func(sc context.Context) error {
+		_, err := coll.InsertOne(ctx, u) // want `^ctx bypasses the transaction opened with UseSession; use sc instead \[outer-context\]$`
+		return err
+	})
+}
+
+func UseSessionWithOptions(ctx context.Context, client *mongo.Client, coll *mongo.Collection, u *User) error {
+	return client.UseSessionWithOptions(ctx, nil, func(sc context.Context) error {
+		_, err := coll.InsertOne(ctx, u) // want `^ctx bypasses the transaction opened with UseSessionWithOptions; use sc instead \[outer-context\]$`
+		return err
+	})
+}
+
+func UseSessionV1(ctx context.Context, client *mongo1.Client, coll *mongo.Collection, u *User) error {
+	return client.UseSession(ctx, func(sc mongo1.SessionContext) error {
+		_, err := coll.InsertOne(sc, u)
+		return err
+	})
+}
+
+func UseSessionWithOptionsV1(ctx context.Context, client *mongo1.Client, coll *mongo.Collection, u *User) error {
+	return client.UseSessionWithOptions(ctx, nil, func(sc mongo1.SessionContext) error {
+		_, err := coll.InsertOne(ctx, u) // want `^ctx bypasses the transaction opened with UseSessionWithOptions; use sc instead \[outer-context\]$`
+		return err
+	})
+}
