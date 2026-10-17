@@ -89,24 +89,25 @@ func (p *Program) Ref(fn *ssa.Function, e ast.Expr) (*ssa.DebugRef, bool) {
 
 // Call is the SSA call of call, in fn. A call whose results are assigned
 // to several variables has no debug reference, so it is found by its
-// position, which is the call's opening parenthesis.
-func Call(fn *ssa.Function, call *ast.CallExpr) *ssa.Call {
+// position, which is the call's opening parenthesis. A call in code that
+// no path reaches has none: the builder deletes its block.
+func Call(fn *ssa.Function, call *ast.CallExpr) (*ssa.Call, bool) {
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if c, ok := instr.(*ssa.Call); ok && c.Pos() == call.Lparen {
-				return c
+				return c, true
 			}
 		}
 	}
-	// Unreachable: a begin is called where it is written, so its function
-	// holds the call.
-	panic("program: no call at the position of a begin")
+	return nil, false
 }
 
 // Creation is the instruction of fn's parent that makes fn: the closure
 // that binds its free variables, or, for a literal with none, the
-// instruction that names it.
-func Creation(fn *ssa.Function) ssa.Instruction {
+// instruction that names it. A literal in code that no path reaches, or
+// assigned to the blank identifier, is made by none: it never runs. A
+// closure that nothing uses but a debug reference does not count.
+func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 	var rands []*ssa.Value
 	for _, b := range fn.Parent().Blocks {
 		for _, instr := range b.Instrs {
@@ -114,13 +115,27 @@ func Creation(fn *ssa.Function) ssa.Instruction {
 				continue
 			}
 			for _, r := range instr.Operands(rands[:0]) {
-				if *r == fn {
-					return instr
+				if *r == fn && used(instr) {
+					return instr, true
 				}
 			}
 		}
 	}
-	// Unreachable: a literal is always named by its parent. The builder made
-	// fn from that expression.
-	panic("program: no instruction makes " + fn.Name())
+	return nil, false
+}
+
+// used reports whether instr is used by anything but a debug reference. An
+// instruction that is not a value, such as a call that names a literal, is
+// a use in itself.
+func used(instr ssa.Instruction) bool {
+	v, ok := instr.(ssa.Value)
+	if !ok {
+		return true
+	}
+	for _, ref := range *v.Referrers() {
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return true
+		}
+	}
+	return false
 }

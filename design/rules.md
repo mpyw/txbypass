@@ -70,6 +70,7 @@ A call is not a callback opener for txbypass when:
 | --- | --- |
 | The callback is not a function literal | Its body is not read |
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
+| The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
 
 A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
 
@@ -143,6 +144,8 @@ A scope is the code that runs inside one transaction. Each use of the outer hand
 | --- | --- |
 | A callback opener | The callback's body, with its own function literals |
 | A begin | The region where the transaction is open. See [Regions](#regions) |
+
+Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`.
 
 Once an expression is reported, nothing inside it is read again. A position is reported once for each rule. A use inside two transactions opened on the same handle is reported for the first one that reads it.
 

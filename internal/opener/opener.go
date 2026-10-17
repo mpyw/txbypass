@@ -175,7 +175,9 @@ var knownOpeners = []known{
 // here to read.
 func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	fn, k, ok := lookup(info, call, knownOpeners)
-	if !ok {
+	// The arguments may be one call with several results, as in
+	// pgx.BeginFunc(args()). Then there is no literal to read.
+	if !ok || len(call.Args) <= max(k.outer, k.callback) {
 		return Opener{}, false
 	}
 	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds}
