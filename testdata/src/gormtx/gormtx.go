@@ -362,3 +362,18 @@ func SaveEmbedded[T interface{ Keyed }](db *gorm.DB, id int) error {
 	db.Create(&User{}) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit().Error
 }
+
+// ScopedRepo has a generic method that returns its receiver.
+type ScopedRepo struct{ db *gorm.DB }
+
+func (r *ScopedRepo) Scoped[T any]() *ScopedRepo { return r }
+
+func (r *ScopedRepo) Pair[K, V any]() *ScopedRepo { return r }
+
+// A generic method called with type arguments is spelled by its receiver.
+func (r *ScopedRepo) Save(u *User) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		r.Pair[int, User]().db.Create(u)           // want `^r\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		return r.Scoped[User]().db.Create(u).Error // want `^r\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}

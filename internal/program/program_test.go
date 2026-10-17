@@ -84,3 +84,41 @@ func f[
 		t.Errorf("Core(Plain) = %v, want Row's struct", core(0))
 	}
 }
+
+// TestChanElem reads the element type of a channel, or of a type parameter
+// whose channels differ only in direction.
+func TestChanElem(t *testing.T) {
+	const src = `package p
+
+func f[
+	Both interface{ chan int | chan<- int },
+	Mixed interface{ chan int | chan string },
+	Not interface{ []int },
+	Any any,
+]() {}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tparams := pkg.Scope().Lookup("f").Type().(*types.Signature).TypeParams()
+	if elem, ok := ChanElem(tparams.At(0)); !ok || !types.Identical(elem, types.Typ[types.Int]) {
+		t.Errorf("ChanElem(Both) = %v, %v, want int", elem, ok)
+	}
+	for i := 1; i < tparams.Len(); i++ {
+		if elem, ok := ChanElem(tparams.At(i)); ok {
+			t.Errorf("ChanElem(%s) = %v, want none", tparams.At(i), elem)
+		}
+	}
+	if elem, ok := ChanElem(types.NewChan(types.SendOnly, types.Typ[types.Int])); !ok || !types.Identical(elem, types.Typ[types.Int]) {
+		t.Errorf("ChanElem(chan<- int) = %v, %v, want int", elem, ok)
+	}
+	if _, ok := ChanElem(types.Typ[types.Int]); ok {
+		t.Error("ChanElem(int) gave an element")
+	}
+}

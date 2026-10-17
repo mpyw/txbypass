@@ -119,3 +119,21 @@ func GenericSlots[S ~[]context.Context, M ~map[string]context.Context, C ~chan c
 		return save(txCtx)
 	})
 }
+
+// job holds a context in its first field.
+type job struct {
+	ctx context.Context
+	n   int
+}
+
+// A send on a type parameter whose channels differ in direction, and an
+// element literal with its & left out.
+func MixedSlots[C interface {
+	chan *gin.Context | chan<- *gin.Context
+}](c *gin.Context, m *manager.Manager, ch C) error {
+	return m.Do(c, func(txCtx context.Context) error {
+		ch <- c
+		_ = []*job{{c, 2}} // want `^c bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		return save(txCtx)
+	})
+}
