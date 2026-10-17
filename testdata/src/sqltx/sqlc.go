@@ -84,3 +84,17 @@ func OtherType(ctx context.Context, db *sql.DB) error {
 	use(o)
 	return tx.Commit()
 }
+
+// Querier is an interface with a WithTx: what it holds is not known.
+type Querier interface {
+	WithTx(tx *sql.Tx) Querier
+	CreateUser(ctx context.Context, name string) error
+}
+
+// Not reported: an interface's WithTx says nothing of what the value holds.
+func InterfaceWithTx(ctx context.Context, db *sql.DB, q Querier) error {
+	tx, _ := db.BeginTx(ctx, nil)
+	q.WithTx(tx).CreateUser(ctx, "a")
+	q.CreateUser(ctx, "b")
+	return tx.Commit()
+}
