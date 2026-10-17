@@ -102,3 +102,21 @@ func BeginFuncOnTx(ctx context.Context, tx pgx.Tx) error {
 		return err
 	})
 }
+
+// Store begins, so pgx's BeginFunc takes it, and has a generic method.
+type Store struct{ pool *pgxpool.Pool }
+
+func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) { return s.pool.Begin(ctx) }
+
+func (s *Store) Get[T any](ctx context.Context, id int) (T, error) {
+	var zero T
+	return zero, nil
+}
+
+// A generic method of the handle, called with type arguments.
+func GenericMethod(ctx context.Context, s *Store) error {
+	return pgx.BeginFunc(ctx, s, func(tx pgx.Tx) error {
+		_, err := s.Get[int](ctx, 1) // want `^s bypasses the transaction opened with pgx\.BeginFunc; use tx instead \[outer-handle\]$`
+		return err
+	})
+}

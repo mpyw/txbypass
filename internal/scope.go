@@ -260,11 +260,20 @@ func scopeContextArg(info *types.Info, call *ast.CallExpr, e ast.Expr) bool {
 	// A conversion has no signature, and gives e as a context. A generic
 	// function is read in its origin, where a type parameter constrained by
 	// context.Context is an interface.
+	// A method expression, as (*Repo).Save(r, ctx), takes its receiver
+	// as its first argument, which its type spells as a parameter.
 	sig, ok := info.TypeOf(call.Fun).Underlying().(*types.Signature)
-	if fn, isFunc := typeutil.Callee(info, call).(*types.Func); isFunc {
+	if fn, isFunc := typeutil.Callee(info, call).(*types.Func); isFunc && !scopeMethodExpr(info, call.Fun) {
 		sig = fn.Origin().Signature()
 	}
 	return !ok || scopeFitsContext(scopeParam(sig, slices.Index(call.Args, e)))
+}
+
+// scopeMethodExpr reports whether fun is a method expression, as
+// (*Repo).Save.
+func scopeMethodExpr(info *types.Info, fun ast.Expr) bool {
+	sel, ok := ast.Unparen(fun).(*ast.SelectorExpr)
+	return ok && info.Selections[sel] != nil && info.Selections[sel].Kind() == types.MethodExpr
 }
 
 // scopeParam is the type of the parameter that argument i of a call of sig
@@ -373,9 +382,15 @@ func scopeCleanedUp(mc *ssa.MakeClosure) bool {
 // &dst) is when q was built with q.Transaction(tx). The client runs the
 // query in the transaction it carries.
 func (c *checker) scopeRunsBound(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
-	// A method of the handle with no value of its own is called.
-	call := stack[len(stack)-1].(*ast.CallExpr)
-	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+	// A method of the handle with no value of its own is called, with type
+	// arguments between, as s.Get[User](ctx, q), when it is generic.
+	i := len(stack) - 1
+	switch stack[i].(type) {
+	case *ast.IndexExpr, *ast.IndexListExpr:
+		i--
+	}
+	call, ok := stack[i].(*ast.CallExpr)
+	return ok && slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
 		ref, ok := c.prog.Ref(fn, arg)
 		return ok && c.scopeMadeBound(s, ref.X, make(scopeWalk))
 	})
