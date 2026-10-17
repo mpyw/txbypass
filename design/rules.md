@@ -126,10 +126,11 @@ A handle is a root value and the fields selected from it. The root is what the S
 | --- | --- |
 | A copy, as `d := db` | What it copies. The SSA form makes them one value |
 | A variable a function literal captures, written by one store | The value stored |
-| A variable in memory written by more than one store, or whose address goes where something else may write it | No handle: it is the same handle as nothing |
+| A variable in memory written by more than one store, all in its own function | The variable itself. A callback runs while it holds one value. In a region, see below |
+| A variable written by a function literal that captures it, through a field of it, or through an address that goes elsewhere | No handle: it is the same handle as nothing |
 | A load of a field, `x.f`, or a field of a struct value | The handle of `x`, then `f` |
 | A method value, as `db.Create` | Its receiver |
-| A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver. A [begin](#begins), as gorm's `db.Begin()`, is an exception: it gives the transaction. So is `WithTx`: see [sqlc's `WithTx`](#sqlcs-withtx) |
+| A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver, with three exceptions. A [begin](#begins), as gorm's `db.Begin()`, gives the transaction. `WithTx` gives queries bound to it: see [sqlc's `WithTx`](#sqlcs-withtx). A method that takes a value of the receiver's type binds a new value to it, as `repo.Using(tx)` does. So does one that takes a value with a method that ends a transaction |
 | A conversion, a conversion to an interface, or an assertion that panics when it fails | What it converts |
 | A phi whose edges all give one handle | That handle. An edge back to the phi, around a loop, gives nothing |
 | A free variable of a literal | What the closure binds it to |
@@ -138,7 +139,7 @@ A handle is a root value and the fields selected from it. The root is what the S
 
 Two values are the same handle when they have the same root and the same fields. A use reaches the outer handle when it is the outer handle, or a field selected from it: reading `db.Error` reads `db`. A method or a field promoted from an embedded handle reaches it through the embedded field, as `s.Create(u)` reaches `s.DB`.
 
-A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A variable assigned twice holds no known handle, so `db = tx` inside the callback makes `db` no use of the outer `db`.
+A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A scope that writes the outer handle, or a variable or a field that holds it, reports no use of it. After the write, it may hold another value. So `db = tx` or `s.db = tx` inside the callback makes `db` or `s.db` no use. In a region, only the writes inside the region count.
 
 What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds.
 
@@ -173,7 +174,7 @@ An instruction is in the region when the transaction is open there on every path
 | A call of `Commit`, `Rollback`, `CommitContext` or `RollbackContext` on the transaction, a copy of it, or a field of it, that takes no function | Closed after it. pop commits through `tx.TX.Commit()`. pop's `Rollback(fn)` takes a function, and opens a transaction of its own |
 | A call of a function that ends a parameter it is given the transaction in | Closed after it. See [Helpers](#helpers) |
 | A call of a function literal that ends a variable it captures | Closed after it |
-| A store of the transaction into anything but a variable of the function, an insert of it into a map, or a send of it on a channel | Closed after it. Code this analysis does not read may end it |
+| A store of the transaction anywhere but in a variable of the function. An insert of it into a map, or a send of it on a channel | Closed after it. Code this analysis does not read may end it |
 | A function literal that ends the transaction, made and given to anything but a call or a `defer` | Closed after it, for the same reason. A literal nothing uses, as one assigned to `_`, never runs and ends nothing |
 | The edge where the begin's error is set | Closed. See below |
 | A call that never returns, as `log.Fatal` or `os.Exit`, or a panic | The path ends. It takes no part |
@@ -289,7 +290,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |
-| A captured variable assigned again, then used before the new value | It holds no known handle, so neither use is read |
+| A scope that writes the outer handle, then uses it before the write | No use of it in the scope is read |
 | A begin whose result is kept in a field, or is not kept | The region follows the begin's value |
 | A transaction ended through a function value or an interface method | Its body is not known, so the transaction stays open, and a use after it is reported |
 | A helper that stores the transaction somewhere, and code elsewhere ends it | Only an end the helper writes counts. A use after the helper is reported |
