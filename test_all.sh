@@ -22,7 +22,8 @@ run_test() {
     fi
 }
 
-run_test "test" go test ./...
+# -count=1: the test cache does not see a change to a fixture alone.
+run_test "test" go test -count=1 ./...
 run_test "lint" golangci-lint run ./...
 # shrink goes first: a declaration it would unexport becomes private to its
 # file, and the analyzer then judges that narrower scope.

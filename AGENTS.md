@@ -4,7 +4,7 @@ txbypass is a Go analyzer that reports a database handle used inside a transacti
 
 When a rule changes, change `design/rules.md` first, then its fixtures under `testdata/src/`, then the code. An opener or a begin goes into its table in `internal/opener`. Its library gets a stub under `testdata/src/`, and a row in the tables of the README and `design/rules.md`. A new fixture package goes into the list in `analyzer_test.go`: a package left out is never run, and its `want` comments pass unchecked. Keep the README and `skills/txbypass-authoring/SKILL.md` in sync with the rules. The skill is installed by `txbypass skill install`, so a stale one misleads every agent that reads it. A release bumps the version in the README's install instructions and the skill's "Written against" line together. `skills_test.go` fails when they differ.
 
-Run `go test ./...` for Go changes and `mise x -- ./test_all.sh` before claiming the full repository gate passes. It runs golangci-lint, `declscope shrink`, declscope, and the coverage gate.
+Run `go test -count=1 ./...` for Go changes. The test cache does not see a change to a fixture alone, since analysistest reads fixtures through `go list`. Run `mise x -- ./test_all.sh` before claiming the full repository gate passes. It runs golangci-lint, `declscope shrink`, declscope, and the coverage gate.
 
 Every statement stays covered. A block that no input can reach says why, in a comment right above its first statement that starts with `Unreachable:`. `coverage.sh` fails on any other uncovered block. Do not mark a block unreachable to pass the gate: write the fixture that reaches it, or delete the code.
 

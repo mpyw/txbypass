@@ -97,21 +97,25 @@ func runTakesTx(sig *types.Signature) bool {
 	return false
 }
 
-// runFile runs the rules over the functions of f.
+// runFile runs the rules over the declarations of f: its functions, and
+// the package-level declarations, whose code the package initializer runs.
 func (c *checker) runFile(f *ast.File) {
 	for _, decl := range f.Decls {
-		decl, ok := decl.(*ast.FuncDecl)
-		if !ok || decl.Body == nil {
-			continue
+		outer := c.prog.Init()
+		if fd, ok := decl.(*ast.FuncDecl); ok {
+			if fd.Body == nil {
+				continue
+			}
+			outer = c.prog.Func(fd)
 		}
 		ast.PreorderStack(decl, nil, func(n ast.Node, stack []ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.FuncDecl:
-				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
+				c.checkOuterHandleBegins(outer, n.Body)
 			case *ast.FuncLit:
 				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
 			case *ast.CallExpr:
-				c.runCall(n, c.runEnclosing(decl, stack))
+				c.runCall(n, c.runEnclosing(outer, stack))
 			}
 			return true
 		})
@@ -119,14 +123,14 @@ func (c *checker) runFile(f *ast.File) {
 }
 
 // runEnclosing is the function the innermost literal in stack makes, or
-// decl's.
-func (c *checker) runEnclosing(decl *ast.FuncDecl, stack []ast.Node) *ssa.Function {
+// outer.
+func (c *checker) runEnclosing(outer *ssa.Function, stack []ast.Node) *ssa.Function {
 	for _, n := range slices.Backward(stack) {
 		if lit, ok := n.(*ast.FuncLit); ok {
 			return c.prog.Func(lit)
 		}
 	}
-	return c.prog.Func(decl)
+	return outer
 }
 
 // runCall runs the rule of the callback opener that call is, in fn.

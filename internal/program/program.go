@@ -18,6 +18,9 @@ import (
 // Program is one package's SSA form, and the ways to reach it from the
 // syntax.
 type Program struct {
+	// init is the package initializer. It runs the initializers of the
+	// package-level variables, and makes the literals in them.
+	init *ssa.Function
 	// funcs maps each function declaration and literal to its function.
 	funcs map[ast.Node]*ssa.Function
 	// refs maps each function's expressions to their debug references.
@@ -34,7 +37,7 @@ func Build(pass *analysis.Pass, noReturn func(*types.Func) bool) *Program {
 	}
 	pkg := prog.CreatePackage(pass.Pkg, pass.Files, pass.TypesInfo, false)
 	pkg.Build()
-	p := &Program{funcs: make(map[ast.Node]*ssa.Function), refs: make(map[*ssa.Function]map[ast.Expr]*ssa.DebugRef)}
+	p := &Program{init: pkg.Func("init"), funcs: make(map[ast.Node]*ssa.Function), refs: make(map[*ssa.Function]map[ast.Expr]*ssa.DebugRef)}
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
 			if decl, ok := decl.(*ast.FuncDecl); ok {
@@ -42,7 +45,16 @@ func Build(pass *analysis.Pass, noReturn func(*types.Func) bool) *Program {
 			}
 		}
 	}
+	for _, anon := range p.init.AnonFuncs {
+		p.addFunc(anon)
+	}
 	return p
+}
+
+// Init is the package initializer, which holds the code of the
+// package-level declarations.
+func (p *Program) Init() *ssa.Function {
+	return p.init
 }
 
 // addFunc records fn and the literals inside it.
