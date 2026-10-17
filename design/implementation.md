@@ -111,6 +111,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | The state before each instruction is computed once | A rule asks about every use in the region. Stepping from the block's entry for each made the time grow with the square of the block |
 | A deferred statement is outside | It runs at the return, after the commit that usually precedes it |
 | A use in a function literal is placed where the literal is made | That is where a goroutine starts, or where a literal called on the spot runs |
+| A use in the body of a range over a function is read in the body | The body runs in the loop. An end earlier in the same iteration closes it there. The body's entry is open on the first iteration, and closed when an iteration may end the transaction and go on |
 | A transaction stored, sent, or given away inside a literal ends the region | Code this analysis does not read may end it. A miss is better than a false report |
 | A transaction given to a function value or an interface method does not end it | Repository interfaces take the transaction all the time. Ending the region there would end most regions early |
 

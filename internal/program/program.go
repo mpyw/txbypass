@@ -176,6 +176,12 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 	return nil, false
 }
 
+// Yield reports whether fn is the function the builder makes of the body
+// of a range over a function.
+func Yield(fn *ssa.Function) bool {
+	return fn.Synthetic == "range-over-func yield"
+}
+
 // Cleanup reports whether call registers a function to run after the test,
 // as t.Cleanup(f) does. The function runs as a deferred call of the test
 // does, after the test returns.
