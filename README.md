@@ -51,7 +51,7 @@ The callback receives the transaction as `tx`. `r.db` is the pool the transactio
 
 The code compiles. A test where nothing fails passes too. txbypass finds it from the source.
 
-Every report ends with the name of its rule. That name is what `//txbypass:ignore` takes.
+Every report of a rule ends with the rule's name. That name is what `//txbypass:ignore` takes. A report about a directive itself names no rule, and no ignore silences it.
 
 ## Install
 
@@ -944,7 +944,7 @@ db.Create(&AuditLog{Action: "failed"})
 | `//txbypass:ignore // reason` | Silences every rule |
 | No reason | Reported, and silences nothing |
 | An unknown rule name | Reported |
-| An ignore that silences nothing | Reported as unused, unless every rule it names is turned off |
+| An ignore that silences nothing | Reported as unused, unless a rule it covers is turned off. A bare ignore covers every rule |
 
 ## Limits
 

@@ -93,20 +93,27 @@ func TestUnusedWhenOff(t *testing.T) {
 //txbypass:ignore outer-handle // the rule is off
 func f() {}
 
-//txbypass:ignore // names no rule, so no flag turns it off
+//txbypass:ignore // covers every rule, one of which is off
 func g() {}
+
+//txbypass:ignore outer-handle, outer-context // names a rule that is off
+func h() {}
 `
 	fset, _, s := scanSource(t, "p.go", src)
 	off := func(rule.Name) bool { return false }
-	if u := s.Unused(off); len(u) != 1 || fset.Position(u[0]).Line != 6 {
-		t.Errorf("Unused() with the rule off = %v, want the ignore on line 6", u)
+	if u := s.Unused(off); len(u) != 0 {
+		t.Errorf("Unused() with every rule off = %v, want none", u)
+	}
+	contextOff := func(n rule.Name) bool { return n != rule.OuterContext }
+	if u := s.Unused(contextOff); len(u) != 1 || fset.Position(u[0]).Line != 3 {
+		t.Errorf("Unused() with outer-context off = %v, want the ignore on line 3", u)
 	}
 	var lines []int
 	for _, pos := range s.Unused(allOn) {
 		lines = append(lines, fset.Position(pos).Line)
 	}
-	if !slices.Equal(lines, []int{3, 6}) {
-		t.Errorf("unused on lines %v, want [3 6]", lines)
+	if !slices.Equal(lines, []int{3, 6, 9}) {
+		t.Errorf("unused on lines %v, want [3 6 9]", lines)
 	}
 }
 

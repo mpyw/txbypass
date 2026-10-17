@@ -296,7 +296,7 @@ The handle the opener is called on is not reported there. With MongoDB, `coll.In
 
 ## Messages
 
-Every message has one shape:
+Every report of a rule has one shape. A report about a directive has its own, listed in [Directives](#directives):
 
 ```text
 <use> bypasses the transaction opened with <opener>; use <instead> instead [<rule>]
@@ -330,7 +330,7 @@ A use is reported at the start of the expression that names the handle. For `r.d
 | No reason after `//` | Reported: `txbypass:ignore needs a reason after //` |
 | An unknown rule name | Reported: `unknown rule x in txbypass:ignore`. The known rules beside it still apply. An ignore whose rules are all unknown is not also reported as unused |
 | An empty rule name, as in `outer-handle, // reason` | Reported: `empty rule name in txbypass:ignore`. The known rules beside it still apply |
-| An ignore that silences nothing | Reported: `unused txbypass:ignore directive`. An ignore whose every rule is turned off by a flag is not reported |
+| An ignore that silences nothing | Reported: `unused txbypass:ignore directive`. An ignore that covers a rule turned off by a flag is not reported: that rule did not run. A bare ignore covers every rule |
 | Any other `//txbypass:` directive | Reported: `unknown directive txbypass:x` |
 
 A directive in a generated file is not read.
@@ -355,7 +355,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
 | A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |
-| A use that runs no statement, such as reading the handle's dialect | It is reported, unless it reads a basic value or an error. The transaction gives the same answer, so the fix still applies. A pool's own settings and statistics are not reported: see [Scopes](#scopes) |
+| A use that runs no statement, such as reading the handle's dialect | It is reported, unless it reads a basic value or an error. The transaction gives the same answer, so the fix still applies. A pool's own settings and statistics are not reported: see [Handles](#handles) |
 | A hook kept for after the callback, but called inside it too | The literal is not read |
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
