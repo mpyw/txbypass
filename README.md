@@ -657,7 +657,7 @@ if err := q.CreateUser(ctx, b); err != nil {
 return tx.Commit()
 ```
 
-Any method named `WithTx` qualifies, when it takes the transaction and returns its receiver's type. The transaction may be a field of it, as `q.WithTx(tx.Tx)` with sqlx or bun. The method may be promoted, as from the `*Queries` that sqlc's `Store` embeds. Its receiver must hold nothing but the database, as sqlc's `Queries` does. A repository that holds more, as metrics or a logger, is not rebound: its other members run no statement.
+Any method named `WithTx` qualifies, when it takes the transaction and returns its receiver's type. The transaction may be a field of it, as `q.WithTx(tx.Tx)` with sqlx or bun. The method may be promoted, as from the `*Queries` that sqlc's `Store` embeds. Its receiver must hold nothing but the database, as sqlc's `Queries` does. The statements sqlc prepares with `emit_prepared_queries` count as the database. A repository that holds more, as metrics or a logger, is not rebound: its other members run no statement.
 
 > [!TIP]
 > Some writes must survive a rollback, such as an audit log of a failed attempt. Write an ignore with the reason:

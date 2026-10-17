@@ -131,3 +131,58 @@ func FunctionWithTx(ctx context.Context, db *sql.DB, q *Queries) error {
 	q.CreateUser(ctx, "b")
 	return tx.Commit()
 }
+
+// PreparedQueries is sqlc's Queries with emit_prepared_queries: a statement
+// per query, which runs on the transaction after WithTx.
+type PreparedQueries struct {
+	db               DBTX
+	tx               *sql.Tx
+	createAuthorStmt *sql.Stmt
+}
+
+func (q *PreparedQueries) WithTx(tx *sql.Tx) *PreparedQueries {
+	return &PreparedQueries{db: tx, tx: tx, createAuthorStmt: q.createAuthorStmt}
+}
+
+func (q *PreparedQueries) CreateAuthor(ctx context.Context, name string) error {
+	_, err := q.db.ExecContext(ctx, "insert", name)
+	return err
+}
+
+func PreparedWithTx(ctx context.Context, db *sql.DB, q *PreparedQueries) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	qtx := q.WithTx(tx)
+	if err := qtx.CreateAuthor(ctx, "a"); err != nil {
+		return err
+	}
+	if err := q.CreateAuthor(ctx, "b"); err != nil { // want `^q bypasses the transaction opened with Begin; use qtx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit()
+}
+
+// NamedQueries holds a name besides its database, so WithTx rebinds
+// nothing: a use of the name is no use of the transaction.
+type NamedQueries struct {
+	db   DBTX
+	name string
+}
+
+func (q *NamedQueries) WithTx(tx *sql.Tx) *NamedQueries { return &NamedQueries{db: tx, name: q.name} }
+
+func (q *NamedQueries) Name() string { return q.name }
+
+func NamedWithTx(ctx context.Context, db *sql.DB, q *NamedQueries) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_ = q.WithTx(tx)
+	_ = q.Name()
+	return tx.Commit()
+}
