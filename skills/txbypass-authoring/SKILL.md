@@ -58,6 +58,7 @@ A helper parameter that takes either the handle or the transaction:
 | Move the statement into a helper that reads `r.db` itself | Only the transaction's own code is read for uses. The report stops, and the bug stays |
 | Keep the transaction in a field, as `r.tx, err = db.Begin()` | Only a begin kept in a variable opens a region, so nothing is read. The bug stays |
 | Store the transaction somewhere, so that the region ends | Storing it counts as a possible end, so the report stops, and the bug stays |
+| Pass the transaction beside the handle, as `audit(db, tx)` | A call given both keeps the handle beside the transaction, as a constructor does. The report stops, and the bug stays if the helper uses `db` |
 | Commit in a branch, then go on with the handle | Code after a branch that may commit is not read. Commit where the function ends |
 | Build a Firestore reference into a variable, then run it outside the transaction | `ref := client.Doc(p)` then `ref.Set(ctx, v)` is not read, and still runs outside |
 | Write an ignore without saying why the statement must run outside | The next reader cannot tell a decision from a shortcut |
@@ -92,6 +93,7 @@ A clean run does not prove that no statement bypasses a transaction:
 | A function the transaction's code calls | `r.audit(ctx)`, where `audit` uses `r.db` |
 | A transaction kept in a field | `r.tx, err = db.Begin()` |
 | A transaction stored, or sent away | `h.tx = tx`, `ch <- tx` |
+| A call given the transaction too | `audit(db, tx)`, `newStore(s.db, tx)` |
 | A library or a call txbypass does not know | A begin helper of your own, sqlboiler's global executor |
 
 Write such code as if txbypass read it.

@@ -40,6 +40,14 @@ type InsertQuery struct{}
 
 func (q *InsertQuery) Model(model interface{}) *InsertQuery { return q }
 
+// IConn is what a query runs on: a database, a connection or a transaction.
+type IConn interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+// Conn makes the query run on db.
+func (q *InsertQuery) Conn(db IConn) *InsertQuery { return q }
+
 func (q *InsertQuery) Exec(ctx context.Context, dest ...interface{}) (sql.Result, error) {
 	return nil, nil
 }
@@ -49,6 +57,10 @@ func (db *DB) NewInsert() *InsertQuery { return &InsertQuery{} }
 func (c Conn) NewInsert() *InsertQuery { return &InsertQuery{} }
 
 func (tx Tx) NewInsert() *InsertQuery { return &InsertQuery{} }
+
+func (tx Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return nil, nil
+}
 
 func (db *DB) RunInTx(
 	ctx context.Context, opts *sql.TxOptions, fn func(ctx context.Context, tx Tx) error,
