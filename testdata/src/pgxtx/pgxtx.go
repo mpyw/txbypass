@@ -23,7 +23,8 @@ func Begin(ctx context.Context, pool *pgxpool.Pool) error {
 
 func BeginTx(ctx context.Context, conn *pgx.Conn) error {
 	return pgx.BeginTxFunc(ctx, conn, pgx.TxOptions{IsoLevel: "serializable"}, func(pgx.Tx) error {
-		_, err := conn.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with pgx\.BeginTxFunc; use the callback's transaction instead \[outer-handle\]$`
+		// Not reported: the connection is the one the transaction runs on.
+		_, err := conn.Exec(ctx, "INSERT INTO ledger VALUES (1)")
 		return err
 	})
 }

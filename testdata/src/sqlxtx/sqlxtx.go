@@ -49,7 +49,8 @@ func OnConn(ctx context.Context, conn *sqlx.Conn) error {
 	if err != nil {
 		return err
 	}
-	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with BeginTxx; use tx instead \[outer-handle\]$`
+	// Not reported: the connection is the one the transaction runs on.
+	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)")
 	return tx.Commit()
 }
 

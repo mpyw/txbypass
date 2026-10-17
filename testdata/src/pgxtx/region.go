@@ -31,7 +31,8 @@ func ConnBegin(ctx context.Context, conn *pgx.Conn) error {
 	if err != nil {
 		return err
 	}
-	conn.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
+	// Not reported: the connection is the one the transaction runs on.
+	conn.Exec(ctx, "INSERT INTO ledger VALUES (1)")
 	return tx.Commit(ctx)
 }
 
@@ -44,7 +45,8 @@ func Acquired(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	c.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^c bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	// Not reported: the connection is the one the transaction runs on.
+	c.Exec(ctx, "INSERT INTO ledger VALUES (1)")
 	return tx.Commit(ctx)
 }
 

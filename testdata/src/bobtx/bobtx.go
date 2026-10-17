@@ -24,7 +24,8 @@ func Region(ctx context.Context, db bob.DB, conn bob.Conn) error {
 		return err
 	}
 	ctx2, _ := conn.BeginTx(ctx, nil)
-	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with BeginTx; use ctx2 instead \[outer-handle\]$`
+	// Not reported: the connection is the one the transaction runs on.
+	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)")
 	return ctx2.Rollback(ctx)
 }
 
@@ -39,6 +40,7 @@ func Begin(ctx context.Context, db bob.DB, conn bob.Conn) error {
 		return err
 	}
 	tx2, _ := conn.Begin(ctx)
-	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with Begin; use tx2 instead \[outer-handle\]$`
+	// Not reported: the connection is the one the transaction runs on.
+	conn.ExecContext(ctx, "INSERT INTO ledger VALUES (1)")
 	return tx2.Rollback(ctx)
 }
