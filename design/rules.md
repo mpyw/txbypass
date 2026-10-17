@@ -180,6 +180,8 @@ A struct that embeds the handle is not the handle. It may hold other things, as 
 
 A read of a field of the handle that holds a basic value or an error is no use, nor is a variable that holds one. In gorm, `db.Create(x).Error` is reported once, at the statement. Reading the error or `RowsAffected` afterwards runs nothing, and an ignore on the statement leaves no report behind.
 
+A chain of calls on the handle that is given the transaction runs on it, as bun's `db.NewInsert().Model(u).Conn(tx).Exec(ctx)` does. The handle there is no use.
+
 The handle given to a call that takes the transaction too is no use. A constructor such as `newStore(s.db, tx)` keeps the handle beside the transaction, as the composite literal `&Store{db: s.db, tx: tx}` does.
 
 A call of a method that reads or sets the pool itself is no use. The transaction has no such method, and the call runs no statement:
@@ -359,4 +361,5 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
 | A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one dedicated connection |
 | A savepoint on a gorm transaction this analysis does not know as one, as a `*gorm.DB` parameter of a declared function | It is reported. The type does not say that the handle is a transaction |
+| A helper given the handle and the transaction, as `audit(db, tx)` | Not reported. A call given both keeps the handle beside the transaction, as a constructor does |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |

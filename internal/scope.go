@@ -78,6 +78,34 @@ func (c *checker) scopeBindsBoth(s txScope, fn *ssa.Function, e ast.Expr, stack 
 	})
 }
 
+// scopeChainBound reports whether a chain of calls on e is given the
+// transaction, as bun's db.NewInsert().Model(u).Conn(tx).Exec(ctx) is. The
+// query is built on the handle, and runs on the transaction.
+func (c *checker) scopeChainBound(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
+	// The scope's root is a block, which ends the walk up.
+	cur := e
+	for i := len(stack) - 1; ; i-- {
+		switch n := stack[i].(type) {
+		case *ast.SelectorExpr:
+			// cur is what n selects from: a handle is never the name after
+			// the dot.
+		case *ast.CallExpr:
+			if n.Fun != cur {
+				return false
+			}
+			if slices.ContainsFunc(n.Args, func(arg ast.Expr) bool {
+				ref, ok := c.prog.Ref(fn, arg)
+				return ok && slices.ContainsFunc(s.txs, c.paths.Of(ref.X).Within)
+			}) {
+				return true
+			}
+		default:
+			return false
+		}
+		cur = stack[i].(ast.Expr)
+	}
+}
+
 // scopeMetadataMethods are the methods of a pool that read or set the pool
 // itself, by package, type and name. A transaction has none of them, so
 // "use the transaction" is no fix, and they run no statement.
@@ -455,7 +483,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if !c.paths.Of(ref.X).Within(outer) || scopeInert(info, e, stack) {
 			return true
 		}
-		if c.scopeBindsBoth(s, ref.Parent(), e, stack) {
+		if c.scopeBindsBoth(s, ref.Parent(), e, stack) || c.scopeChainBound(s, ref.Parent(), e, stack) {
 			return false
 		}
 		if !scopeMetadata(info, e) {
@@ -470,6 +498,9 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		path := handle.Promoted(info.Selections[e.(*ast.SelectorExpr)])
 		if scopeChainsOn(e, exempt) || !c.paths.Of(x.X).With(path).Within(outer) {
 			return true
+		}
+		if c.scopeChainBound(s, x.Parent(), e, stack) {
+			return false
 		}
 		if !scopeMetadata(info, e) {
 			c.reportScopeUse(s, e, stack, outer, r, use)

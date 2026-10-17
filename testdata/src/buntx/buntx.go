@@ -106,3 +106,20 @@ func Clean(ctx context.Context, db *bun.DB, u *User) error {
 		return err
 	})
 }
+
+// Not reported: the query is built on db, and Conn makes it run on the
+// transaction.
+func QueryOnTx(ctx context.Context, db *bun.DB, u *User) error {
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := db.NewInsert().Model(u).Conn(tx).Exec(ctx)
+		return err
+	})
+}
+
+// A query built on db and run on it is a use.
+func QueryOnDB(ctx context.Context, db *bun.DB, u *User) error {
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := db.NewInsert().Model(u).Conn(db).Exec(ctx) // want `^db bypasses the transaction opened with RunInTx; use tx instead \[outer-handle\]$` `^db bypasses the transaction opened with RunInTx; use tx instead \[outer-handle\]$`
+		return err
+	})
+}

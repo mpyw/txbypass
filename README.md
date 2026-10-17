@@ -400,6 +400,55 @@ tx.Transaction(func(sp *gorm.DB) error {
 <td>
 
 ```go
+//txbypass:ignore outer-handle // must survive a rollback
+res := db.Create(&log)
+if res.Error != nil {
+	return res.Error
+}
+```
+
+</td>
+<td>✅</td>
+<td>The statement is reported once. Reading its error or <code>RowsAffected</code> runs nothing</td>
+</tr>
+<tr>
+<td>
+
+```go
+db.Transaction(func(tx *gorm.DB) error {
+	t.Cleanup(func() { db.Delete(&u) })
+	return tx.Create(&u).Error
+})
+```
+
+</td>
+<td>✅</td>
+<td>A function given to <code>t.Cleanup</code> runs after the test, when the transaction has ended</td>
+</tr>
+<tr>
+<td>
+
+```go
+db.RunInTx(ctx, nil, func(
+	ctx context.Context,
+	tx bun.Tx,
+) error {
+	_, err := db.NewInsert().
+		Model(u).
+		Conn(tx).
+		Exec(ctx)
+	return err
+})
+```
+
+</td>
+<td>✅</td>
+<td>bun's <code>Conn(tx)</code> runs the query built on <code>db</code> on the transaction</td>
+</tr>
+<tr>
+<td>
+
+```go
 db.Transaction(func(tx *gorm.DB) error {
 	return logs.Create(u).Error
 })
@@ -1018,6 +1067,19 @@ db.MustExec(audit)
 </td>
 <td>⚠️</td>
 <td>A method expression takes its receiver as an argument</td>
+</tr>
+<tr>
+<td>
+
+```go
+db.Transaction(func(tx *gorm.DB) error {
+	return audit(db, tx)
+})
+```
+
+</td>
+<td>⚠️</td>
+<td>A call given the transaction too keeps the handle beside it, as a constructor <code>newStore(db, tx)</code> does. What the call does with the handle is not read</td>
 </tr>
 </tbody>
 </table>
