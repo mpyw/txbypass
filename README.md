@@ -20,19 +20,25 @@ import (
 	"gorm.io/gorm"
 )
 
-func (r *OrderRepo) Place(ctx context.Context, o *Order) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(o).Error; err != nil {
-			return err
-		}
-		return r.db.Create(&AuditLog{OrderID: o.ID}).Error
-	})
+func (r *OrderRepo) Place(
+	ctx context.Context,
+	o *Order,
+) error {
+	return r.db.WithContext(ctx).Transaction(
+		func(tx *gorm.DB) error {
+			if err := tx.Create(o).Error; err != nil {
+				return err
+			}
+			log := &AuditLog{OrderID: o.ID}
+			return r.db.Create(log).Error
+		},
+	)
 }
 ```
 
 ```console
 $ txbypass ./...
-order.go:14:10: r.db bypasses the transaction opened with Transaction; use tx instead [outer-handle]
+order.go:19:11: r.db bypasses the transaction opened with Transaction; use tx instead [outer-handle]
 ```
 
 The callback receives the transaction as `tx`. `r.db` is the pool the transaction came from, so the audit log is written outside the transaction.
@@ -94,8 +100,10 @@ From a release archive, verified against the published checksums:
 
 ```bash
 VERSION=0.1.0
-curl -LO "https://github.com/mpyw/txbypass/releases/download/v${VERSION}/txbypass_${VERSION}_darwin_arm64.tar.gz"
-curl -LO "https://github.com/mpyw/txbypass/releases/download/v${VERSION}/checksums.txt"
+REPO=https://github.com/mpyw/txbypass
+BASE="${REPO}/releases/download/v${VERSION}"
+curl -LO "${BASE}/txbypass_${VERSION}_darwin_arm64.tar.gz"
+curl -LO "${BASE}/checksums.txt"
 shasum -a 256 -c checksums.txt --ignore-missing
 tar xzf "txbypass_${VERSION}_darwin_arm64.tar.gz"
 ```
@@ -121,7 +129,7 @@ linters:
     custom:
       txbypass:
         type: module
-        description: Reports a database handle used inside a transaction it opened.
+        description: Transaction bypass linter
         settings:
           outer-handle: true
 ```
@@ -145,7 +153,8 @@ golangci-lint custom  # writes ./custom-gcl
 Each rule has a flag of its name:
 
 ```bash
-txbypass -outer-context=false ./...  # every rule except outer-context
+# every rule except outer-context
+txbypass -outer-context=false ./...
 ```
 
 Nothing is reported in a generated file. Test files are checked like any other file.
@@ -203,7 +212,8 @@ return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, debit); err != nil {
 		return err
 	}
-	// pool bypasses the transaction opened with pgx.BeginFunc; use tx instead
+	// pool bypasses the transaction opened with
+	// pgx.BeginFunc; use tx instead
 	_, err := pool.Exec(ctx, credit)
 	return err
 })
@@ -225,7 +235,8 @@ defer tx.Rollback()
 if _, err := tx.ExecContext(ctx, debit); err != nil {
 	return err
 }
-// db bypasses the transaction opened with BeginTx; use tx instead
+// db bypasses the transaction opened with
+// BeginTx; use tx instead
 if _, err := db.ExecContext(ctx, credit); err != nil {
 	return err
 }
@@ -638,7 +649,9 @@ qtx := q.WithTx(tx)
 if err := qtx.CreateUser(ctx, a); err != nil {
 	return err
 }
-if err := q.CreateUser(ctx, b); err != nil { // q bypasses the transaction opened with BeginTx; use qtx instead
+// q bypasses the transaction opened with
+// BeginTx; use qtx instead
+if err := q.CreateUser(ctx, b); err != nil {
 	return err
 }
 return tx.Commit()
@@ -650,7 +663,7 @@ Any method named `WithTx` qualifies, when it takes the transaction and returns i
 > Some writes must survive a rollback, such as an audit log of a failed attempt. Write an ignore with the reason:
 >
 > ```go
-> //txbypass:ignore outer-handle // the audit log must survive a rollback
+> //txbypass:ignore outer-handle // must survive a rollback
 > db.Create(&AuditLog{Action: "failed"})
 > ```
 
@@ -659,12 +672,14 @@ Any method named `WithTx` qualifies, when it takes the transaction and returns i
 Use the transaction:
 
 ```go
-return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-	if err := tx.Create(o).Error; err != nil {
-		return err
-	}
-	return tx.Create(&AuditLog{OrderID: o.ID}).Error
-})
+return r.db.WithContext(ctx).Transaction(
+	func(tx *gorm.DB) error {
+		if err := tx.Create(o).Error; err != nil {
+			return err
+		}
+		return tx.Create(&AuditLog{OrderID: o.ID}).Error
+	},
+)
 ```
 
 A helper that takes the handle takes the transaction instead:
@@ -681,9 +696,21 @@ A helper that takes the handle takes the transaction instead:
 ```go
 // *sql.DB and *sql.Tx both have these.
 type DBTX interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(
+		ctx context.Context,
+		query string,
+		args ...any,
+	) (sql.Result, error)
+	QueryContext(
+		ctx context.Context,
+		query string,
+		args ...any,
+	) (*sql.Rows, error)
+	QueryRowContext(
+		ctx context.Context,
+		query string,
+		args ...any,
+	) *sql.Row
 }
 ```
 
@@ -704,9 +731,21 @@ type DBTX interface {
 ```go
 // A pool, a connection and a transaction all have these.
 type DBTX interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(
+		ctx context.Context,
+		sql string,
+		args ...any,
+	) (pgconn.CommandTag, error)
+	Query(
+		ctx context.Context,
+		sql string,
+		args ...any,
+	) (pgx.Rows, error)
+	QueryRow(
+		ctx context.Context,
+		sql string,
+		args ...any,
+	) pgx.Row
 }
 ```
 
@@ -724,12 +763,17 @@ type DBTX interface {
 Some openers carry the transaction in the callback's context, not in a value. A statement run with the outer context runs outside the transaction:
 
 ```go
-_, err := sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
-	if _, err := orders.InsertOne(sc, o); err != nil {
-		return nil, err
-	}
-	return audits.InsertOne(ctx, a) // ctx bypasses the transaction opened with WithTransaction; use sc instead
-})
+_, err := sess.WithTransaction(
+	ctx,
+	func(sc context.Context) (any, error) {
+		if _, err := orders.InsertOne(sc, o); err != nil {
+			return nil, err
+		}
+		// ctx bypasses the transaction opened with
+		// WithTransaction; use sc instead
+		return audits.InsertOne(ctx, a)
+	},
+)
 ```
 
 <table>
@@ -741,9 +785,12 @@ _, err := sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
 <td>
 
 ```go
-sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
-	return coll.InsertOne(ctx, doc)
-})
+sess.WithTransaction(
+	ctx,
+	func(sc context.Context) (any, error) {
+		return coll.InsertOne(ctx, doc)
+	},
+)
 ```
 
 </td>
@@ -754,9 +801,12 @@ sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
 <td>
 
 ```go
-sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
-	return coll.InsertOne(sc, doc)
-})
+sess.WithTransaction(
+	ctx,
+	func(sc context.Context) (any, error) {
+		return coll.InsertOne(sc, doc)
+	},
+)
 ```
 
 </td>
@@ -767,9 +817,12 @@ sess.WithTransaction(ctx, func(sc context.Context) (any, error) {
 <td>
 
 ```go
-sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
-	return coll.InsertOne(ctx, doc)
-})
+sess.WithTransaction(
+	ctx,
+	func(ctx context.Context) (any, error) {
+		return coll.InsertOne(ctx, doc)
+	},
+)
 ```
 
 </td>
@@ -797,12 +850,15 @@ repo.Transaction(ctx, func(txCtx context.Context) error {
 Use the callback's context. Name it as the outer one, so the outer one cannot be reached:
 
 ```go
-_, err := sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
-	if _, err := orders.InsertOne(ctx, o); err != nil {
-		return nil, err
-	}
-	return audits.InsertOne(ctx, a)
-})
+_, err := sess.WithTransaction(
+	ctx,
+	func(ctx context.Context) (any, error) {
+		if _, err := orders.InsertOne(ctx, o); err != nil {
+			return nil, err
+		}
+		return audits.InsertOne(ctx, a)
+	},
+)
 ```
 
 ## Agent skill
@@ -810,9 +866,11 @@ _, err := sess.WithTransaction(ctx, func(ctx context.Context) (any, error) {
 [`skills/txbypass-authoring`](skills/txbypass-authoring/SKILL.md) is a skill for an AI agent writing code under txbypass. It says how to fix each report, which fixes only hide a problem, and when an ignore is right. The binary carries it:
 
 ```bash
-txbypass skill install                                # the agents already set up in this project
+# the agents already set up in this project
+txbypass skill install
 txbypass skill install --agent claude-code --scope user
-txbypass skill list                                   # where it is, and whether it is current
+# where it is, and whether it is current
+txbypass skill list
 ```
 
 Without the binary, `gh skill install mpyw/txbypass txbypass-authoring --agent claude-code` writes to the same directories. The installer is [go-skill-embed](https://github.com/mpyw/go-skill-embed).
@@ -822,7 +880,7 @@ Without the binary, `gh skill install mpyw/txbypass txbypass-authoring --agent c
 Write `//txbypass:ignore` with the rules to silence and a reason after `//`.
 
 ```go
-//txbypass:ignore outer-handle // the audit log must survive a rollback
+//txbypass:ignore outer-handle // must survive a rollback
 db.Create(&AuditLog{Action: "failed"})
 ```
 
@@ -905,11 +963,17 @@ db.Exec(audit)
 <td>
 
 ```go
-client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-	ref := client.Doc(p)
-	_, err := ref.Set(ctx, v)
-	return err
-})
+client.RunTransaction(
+	ctx,
+	func(
+		ctx context.Context,
+		tx *firestore.Transaction,
+	) error {
+		ref := client.Doc(p)
+		_, err := ref.Set(ctx, v)
+		return err
+	},
+)
 ```
 
 </td>
