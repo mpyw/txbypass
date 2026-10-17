@@ -65,16 +65,30 @@ func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bo
 	return c.paths.Of(ref.X).With(promoted), true
 }
 
-// scopeBindsBoth reports whether e is an argument of a call that takes the
-// transaction too, as a constructor newStore(s.db, tx) of a store bound to
-// it does. Such a call keeps the handle beside the transaction, as the
-// composite literal &Store{db: s.db, tx: tx} does, which is no use either.
+// scopeBindsBoth reports whether e is an argument of a call, or a field of
+// a literal, that takes the transaction too. A constructor newStore(s.db,
+// tx), or a literal &Store{db: s.db, tx: tx}, keeps the handle beside the
+// transaction, which is no use of it.
 func (c *checker) scopeBindsBoth(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
-	call, ok := stack[len(stack)-1].(*ast.CallExpr)
-	if !ok || !slices.Contains(call.Args, e) {
-		return false
+	var beside []ast.Expr
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.CallExpr:
+		if slices.Contains(parent.Args, e) {
+			beside = parent.Args
+		}
+	case *ast.KeyValueExpr:
+		// A field of a literal, as &Store{db: s.db, tx: tx}.
+		if lit, ok := stack[len(stack)-2].(*ast.CompositeLit); ok && parent.Value == e {
+			for _, elt := range lit.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					beside = append(beside, kv.Value)
+				}
+			}
+		}
+	case *ast.CompositeLit:
+		beside = parent.Elts
 	}
-	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+	return slices.ContainsFunc(beside, func(arg ast.Expr) bool {
 		ref, ok := c.prog.Ref(fn, arg)
 		return ok && slices.ContainsFunc(s.txs, c.paths.Of(ref.X).Within)
 	})
@@ -139,24 +153,63 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	if field {
 		return false
 	}
-	switch parent := stack[len(stack)-1].(type) {
-	case *ast.CallExpr:
-		return scopeContextArg(info, parent, e)
-	case *ast.KeyValueExpr:
-		// A field of a struct the literal builds, as audit{c: c}.
-		if key, ok := parent.Key.(*ast.Ident); ok && parent.Value == e {
-			if f, ok := info.Uses[key].(*types.Var); ok && f.IsField() {
-				return scopeFitsContext(f.Type())
-			}
-		}
-	case *ast.CompositeLit:
-		// An element of a slice or an array, as []*gin.Context{c}.
-		if elems, ok := info.TypeOf(parent).Underlying().(interface{ Elem() types.Type }); ok {
-			return scopeFitsContext(elems.Elem())
-		}
+	if call, ok := stack[len(stack)-1].(*ast.CallExpr); ok {
+		return scopeContextArg(info, call, e)
+	}
+	if t, ok := scopeSlot(info, e, stack); ok {
+		return scopeFitsContext(t)
 	}
 	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
+}
+
+// scopeSlot is the type of the place e is put in: a field or an element of
+// a literal, keyed or not, a value sent on a channel, or a variable it is
+// assigned to.
+func scopeSlot(info *types.Info, e ast.Expr, stack []ast.Node) (types.Type, bool) {
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.KeyValueExpr:
+		// A key of a map literal is no slot of a value.
+		if parent.Value != e {
+			return nil, false
+		}
+		if key, ok := parent.Key.(*ast.Ident); ok {
+			if f, ok := info.Uses[key].(*types.Var); ok && f.IsField() {
+				return f.Type(), true
+			}
+		}
+		// The parent of a key and a value is a literal.
+		return scopeElem(info.TypeOf(stack[len(stack)-2].(*ast.CompositeLit)), 0), true
+	case *ast.CompositeLit:
+		return scopeElem(info.TypeOf(parent), slices.Index(parent.Elts, e)), true
+	case *ast.SendStmt:
+		// A channel's operand is a channel: it has nothing else to send on.
+		return info.TypeOf(parent.Chan).Underlying().(*types.Chan).Elem(), parent.Value == e
+	case *ast.AssignStmt:
+		// The blank identifier has no type: it takes e as itself, as does
+		// an index on the left, as m[k] in m[k] = v.
+		slot := e
+		if i := slices.Index(parent.Rhs, e); i >= 0 {
+			slot = parent.Lhs[i]
+		}
+		if t := info.TypeOf(slot); t != nil {
+			return t, true
+		}
+		return info.TypeOf(e), true
+	case *ast.ValueSpec:
+		// What a declaration names is written, not read, so e is a value.
+		return info.TypeOf(parent.Names[slices.Index(parent.Values, e)]), true
+	}
+	return nil, false
+}
+
+// scopeElem is the type of element i of a literal of type t: the field of
+// a struct, or the element of a slice, an array or a map.
+func scopeElem(t types.Type, i int) types.Type {
+	if st, ok := t.Underlying().(*types.Struct); ok {
+		return st.Field(i).Type()
+	}
+	return t.Underlying().(interface{ Elem() types.Type }).Elem()
 }
 
 // scopeFitsContext reports whether a value of type t can be a plain

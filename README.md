@@ -974,6 +974,20 @@ func (r *Repo) place(tx *gorm.DB) error {
 <td>
 
 ```go
+s.withTx(ctx, func(tx *sql.Tx) error {
+	_, err := s.db.ExecContext(ctx, q)
+	return err
+})
+```
+
+</td>
+<td>⚠️</td>
+<td>A literal given to a transaction helper of your own is not read. Only a call of a known opener opens a scope. Inside the helper, the callback is a function value</td>
+</tr>
+<tr>
+<td>
+
+```go
 db.Transaction(func(tx *gorm.DB) error {
 	return r.audit(ctx) // audit uses r.db
 })

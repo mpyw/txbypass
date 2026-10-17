@@ -90,6 +90,7 @@ A clean run does not prove that no statement bypasses a transaction:
 | Not seen | Example |
 | --- | --- |
 | A callback that is not a function literal | `db.Transaction(r.place)` |
+| A callback given to a transaction helper of your own | `s.withTx(ctx, func(tx *sql.Tx) error { ... })` |
 | A function the transaction's code calls | `r.audit(ctx)`, where `audit` uses `r.db` |
 | A transaction kept in a field | `r.tx, err = db.Begin()` |
 | A transaction stored, or sent away | `h.tx = tx`, `ch <- tx` |
