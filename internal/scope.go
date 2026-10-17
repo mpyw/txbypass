@@ -461,8 +461,28 @@ func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (
 	}
 	recv, ok := c.prog.Ref(fn, sel.X)
 	info := c.pass.TypesInfo
-	if !ok || !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) {
+	if !ok || !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) || !scopeHoldsOnly(info.TypeOf(sel.X), info.TypeOf(call.Args[0])) {
 		return scopeQueries{}, false
 	}
 	return scopeQueries{outer: handle.Of(recv.X), use: types.ExprString(call)}, true
+}
+
+// scopeHoldsOnly reports whether every field of the struct that t is, or
+// points to, can hold a transaction of type tx, as sqlc's Queries holds only
+// its DBTX. A struct that holds more, as a logger or metrics, is not only a
+// database: a use of its other members is no use of the transaction.
+func scopeHoldsOnly(t, tx types.Type) bool {
+	if ptr, ok := t.Underlying().(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	for f := range st.Fields() {
+		if !types.AssignableTo(tx, f.Type()) {
+			return false
+		}
+	}
+	return true
 }
