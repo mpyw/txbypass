@@ -63,6 +63,49 @@ func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bo
 	return c.paths.Of(ref.X).With(promoted), true
 }
 
+// scopeMetadataMethods are the methods of a pool that read or set the pool
+// itself, by package, type and name. A transaction has none of them, so
+// "use the transaction" is no fix, and they run no statement.
+var scopeMetadataMethods = map[[3]string]bool{
+	{"database/sql", "DB", "Stats"}:                       true,
+	{"database/sql", "DB", "Driver"}:                      true,
+	{"database/sql", "DB", "SetMaxOpenConns"}:             true,
+	{"database/sql", "DB", "SetMaxIdleConns"}:             true,
+	{"database/sql", "DB", "SetConnMaxLifetime"}:          true,
+	{"database/sql", "DB", "SetConnMaxIdleTime"}:          true,
+	{"github.com/jackc/pgx/v5/pgxpool", "Pool", "Stat"}:   true,
+	{"github.com/jackc/pgx/v5/pgxpool", "Pool", "Config"}: true,
+	{"github.com/jackc/pgx/v4/pgxpool", "Pool", "Stat"}:   true,
+	{"github.com/jackc/pgx/v4/pgxpool", "Pool", "Config"}: true,
+	{"github.com/uptrace/bun", "DB", "DBStats"}:           true,
+}
+
+// scopeMetadata reports whether e selects one of scopeMetadataMethods. A
+// method call is read at its selector, which has no value of its own, so
+// the handle under it is not read again.
+func scopeMetadata(info *types.Info, e ast.Expr) bool {
+	selection := scopeMethod(info, e)
+	if selection == nil {
+		return false
+	}
+	fn := selection.Obj().(*types.Func)
+	recv := types.Unalias(fn.Signature().Recv().Type())
+	if ptr, ok := recv.(*types.Pointer); ok {
+		recv = ptr.Elem()
+	}
+	named, ok := types.Unalias(recv).(*types.Named)
+	return ok && scopeMetadataMethods[[3]string{fn.Pkg().Path(), named.Obj().Name(), fn.Name()}]
+}
+
+// scopeMethod is the selection of the method that e selects, or nil.
+func scopeMethod(info *types.Info, e ast.Expr) *types.Selection {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok || info.Selections[sel] == nil || info.Selections[sel].Kind() != types.MethodVal {
+		return nil
+	}
+	return info.Selections[sel]
+}
+
 // scopeVisit is called for each expression of a scope that has a value
 // inside the transaction. It reports whether to read inside the expression.
 type scopeVisit func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool
@@ -337,7 +380,9 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if !c.paths.Of(ref.X).Within(outer) {
 			return true
 		}
-		c.reportScopeUse(s, e, stack, outer, r, use)
+		if !scopeMetadata(info, e) {
+			c.reportScopeUse(s, e, stack, outer, r, use)
+		}
 		return false
 	}
 	// A method promoted from an embedded handle selects it with no
@@ -348,7 +393,9 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if scopeChainsOn(e, exempt) || !c.paths.Of(x.X).With(path).Within(outer) {
 			return true
 		}
-		c.reportScopeUse(s, e, stack, outer, r, use)
+		if !scopeMetadata(info, e) {
+			c.reportScopeUse(s, e, stack, outer, r, use)
+		}
 		return false
 	}
 	c.walkScope(s, visit, promoted)
