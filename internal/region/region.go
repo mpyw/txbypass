@@ -16,6 +16,7 @@ package region
 
 import (
 	"go/token"
+	"slices"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -127,8 +128,9 @@ func (r *Region) failed(p, b *ssa.BasicBlock) bool {
 }
 
 // isErr reports whether v is the begin's error, compared with nil. A
-// variable in memory that holds the error is it when loaded right after the
-// begin, in the begin's block.
+// variable in memory that holds the error, as a named result a deferred
+// literal reads, is it when every path to the load last stored the begin's
+// error there.
 func (r *Region) isErr(v, other ssa.Value) bool {
 	if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
 		return false
@@ -137,25 +139,34 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 		return true
 	}
 	load, ok := v.(*ssa.UnOp)
-	if !ok || load.Op != token.MUL || load.Block() != r.begin.Block() {
-		return false
-	}
-	return storedBefore(load, r.err)
+	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.err, make(map[*ssa.BasicBlock]bool))
 }
 
-// storedBefore reports whether the last store to load's address before load,
-// in its block, writes v.
-func storedBefore(load *ssa.UnOp, v ssa.Value) bool {
-	var last ssa.Value
-	for _, instr := range load.Block().Instrs {
-		if instr == load {
-			break
-		}
-		if st, ok := instr.(*ssa.Store); ok && st.Addr == load.X {
-			last = st.Val
+// lastStored reports whether every path to instruction at of b last stores
+// v to addr. A path that reaches the entry with no store to addr does not.
+// A block met again around a loop leaves the answer to the other paths.
+func lastStored(b *ssa.BasicBlock, at int, addr, v ssa.Value, seen map[*ssa.BasicBlock]bool) bool {
+	for i := at - 1; i >= 0; i-- {
+		if st, ok := b.Instrs[i].(*ssa.Store); ok && st.Addr == addr {
+			return st.Val == v
 		}
 	}
-	return last == v
+	if len(b.Preds) == 0 {
+		// Unreachable: failed asks only where the region is open, so every
+		// path to the check passes the begin, which stores its error right
+		// after the call. The walk back stops there.
+		return false
+	}
+	if seen[b] {
+		return true
+	}
+	seen[b] = true
+	for _, p := range b.Preds {
+		if !lastStored(p, len(p.Instrs), addr, v, seen) {
+			return false
+		}
+	}
+	return true
 }
 
 // Inside reports whether the transaction is open at instr, on every path.

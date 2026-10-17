@@ -367,3 +367,55 @@ func UseCyclePasses(db *sql.DB) error {
 	_, err = db.Exec("after the helpers")
 	return err
 }
+
+// The begin's error is a named result read by a deferred literal, and a
+// branch sits between the begin and its check. The check is still the
+// begin's.
+func NamedErrBranch(ctx context.Context, db *sql.DB, debug bool) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if debug {
+		log.Println("begin")
+	}
+	if err != nil {
+		db.ExecContext(ctx, "INSERT INTO failures VALUES (1)")
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
+	db.ExecContext(ctx, "inside") // want `^db bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
+	_, err = tx.ExecContext(ctx, "UPDATE accounts SET n = n + 1")
+	return err
+}
+
+// When another error is stored on one path, the check is not the begin's.
+func NamedErrOther(ctx context.Context, db *sql.DB, check func() error, strict bool) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if strict {
+		err = check()
+	}
+	defer func() { _ = err }()
+	if err != nil {
+		db.ExecContext(ctx, "maybe inside") // want `^db bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit()
+}
+
+// The check of a named error inside a loop is still the begin's, when the
+// loop stores no other error.
+func NamedErrLoop(db *sql.DB, n int) (err error) {
+	tx, err := db.Begin()
+	defer func() { _ = err }()
+	for range n {
+		if err != nil {
+			db.Exec("INSERT INTO failures VALUES (1)")
+			return err
+		}
+	}
+	return tx.Commit()
+}
