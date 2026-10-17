@@ -23,13 +23,12 @@ func TxContext(ctx context.Context, sess db.Session, u *User) error {
 	}, nil)
 }
 
-// Not reported: a transaction opened on the callback's transaction runs on
-// its connection. The opener is an interface method here.
+// upper/db's Tx on a transaction begins another one on the pool, so the
+// outer transaction is not the nested one's connection.
 func Nested(sess db.Session, u *User) error {
 	return sess.Tx(func(tx db.Session) error {
 		return tx.Tx(func(inner db.Session) error {
-			// Not reported: it runs on the transaction's connection.
-			_, err := tx.Collection("users").Insert(u)
+			_, err := tx.Collection("users").Insert(u) // want `^tx bypasses the transaction opened with Tx; use inner instead \[outer-handle\]$`
 			return err
 		})
 	})
