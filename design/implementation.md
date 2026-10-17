@@ -80,6 +80,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | Count the stores inside the literals that capture the variable too | A literal can assign it, through its free variable |
 | A phi is a handle only when every edge gives it | Two handles meeting is neither. A loop edge back to the phi adds nothing |
 | One `handle.Paths` per pass remembers every answer | The SSA form does not change during a pass. A handle in memory is read through every use of it, and a rule asks about every use in a region. Without the memory, a region of 3000 statements took 35 s |
+| An address given to a function of the package gives no handle | A repository's `Bind(tx)` writes the field the transaction was opened on. Reading that it does would mean reading the callee, and a miss is better than a false report |
 | A variable already on the way is itself | `q = q.Where(c)` stores a call on `q`, which gives `q` back. Pointers copied back and forth lead back to one variable too. Without the guard, the analysis recursed until the stack overflowed |
 | A free variable of a synthetic function is a root | The wrapper of a bound method value has no parent to find its closure in |
 | `WithTx` does not give its receiver back | `qtx := q.WithTx(tx)` is another handle, bound to the transaction |
