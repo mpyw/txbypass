@@ -139,12 +139,41 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	if field {
 		return false
 	}
-	parent := stack[len(stack)-1]
-	if call, ok := parent.(*ast.CallExpr); ok {
-		return scopeContextArg(info, call, e)
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.CallExpr:
+		return scopeContextArg(info, parent, e)
+	case *ast.KeyValueExpr:
+		// A field of a struct the literal builds, as audit{c: c}.
+		if key, ok := parent.Key.(*ast.Ident); ok && parent.Value == e {
+			if f, ok := info.Uses[key].(*types.Var); ok && f.IsField() {
+				return scopeFitsContext(f.Type())
+			}
+		}
+	case *ast.CompositeLit:
+		// An element of a slice or an array, as []*gin.Context{c}.
+		if elems, ok := info.TypeOf(parent).Underlying().(interface{ Elem() types.Type }); ok {
+			return scopeFitsContext(elems.Elem())
+		}
 	}
-	sel, ok := parent.(*ast.SelectorExpr)
+	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
+}
+
+// scopeFitsContext reports whether a value of type t can be a plain
+// context.Context: an interface with no method but the context's, as
+// context.Context itself or any. A framework's context interface, as fiber
+// v3's fiber.Ctx, has more, so the inner context does not fit there.
+func scopeFitsContext(t types.Type) bool {
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return false
+	}
+	for m := range iface.Methods() {
+		if !scopeContextMethods[m.Name()] {
+			return false
+		}
+	}
+	return true
 }
 
 // scopeSessionEnds are the methods of MongoDB's session that end it or its
@@ -168,7 +197,7 @@ func scopeContextArg(info *types.Info, call *ast.CallExpr, e ast.Expr) bool {
 	if fn, isFunc := typeutil.Callee(info, call).(*types.Func); isFunc {
 		sig = fn.Origin().Signature()
 	}
-	return !ok || types.IsInterface(scopeParam(sig, slices.Index(call.Args, e)))
+	return !ok || scopeFitsContext(scopeParam(sig, slices.Index(call.Args, e)))
 }
 
 // scopeParam is the type of the parameter that argument i of a call of sig
@@ -286,8 +315,8 @@ func (c *checker) scopeRunsBound(s txScope, fn *ssa.Function, e ast.Expr, stack 
 }
 
 // scopeMadeBound reports whether v was built by a chain of methods one of
-// which was given the transaction, as q.Ancestor(k).Transaction(tx). Each
-// method of the chain is a builder: it returns its receiver's type. A
+// which was given the transaction, as q.Ancestor(k).Transaction(tx). The
+// method given it is a builder: it returns its receiver's type. A
 // function given the transaction, as context.WithValue(ctx, key, tx),
 // binds nothing it returns to it. A variable is bound when every value
 // written to it is, and a phi when every edge is.
@@ -313,14 +342,17 @@ func (c *checker) scopeMadeBoundRead(s txScope, v ssa.Value, w scopeWalk) bool {
 	switch v := v.(type) {
 	case *ssa.Call:
 		common := v.Common()
-		if common.Signature().Recv() == nil || len(common.Args) == 0 || !types.Identical(v.Type(), common.Args[0].Type()) {
+		if common.Signature().Recv() == nil || len(common.Args) == 0 {
 			return false
 		}
-		if slices.ContainsFunc(common.Args[1:], func(arg ssa.Value) bool {
+		builder := types.Identical(v.Type(), common.Args[0].Type())
+		if builder && slices.ContainsFunc(common.Args[1:], func(arg ssa.Value) bool {
 			return slices.ContainsFunc(s.txs, c.paths.Of(arg).Within)
 		}) {
 			return true
 		}
+		// A method of a bound value gives a value bound too, as Datastore's
+		// q.NewAggregationQuery() of a query bound with q.Transaction(tx).
 		return c.scopeMadeBound(s, common.Args[0], w)
 	case *ssa.UnOp:
 		addr, ok := v.X.(*ssa.Alloc)

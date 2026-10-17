@@ -64,3 +64,24 @@ func QueryFilteredOnBranch(ctx context.Context, client *datastore.Client, list *
 	})
 	return err
 }
+
+// Not reported: the aggregation is built from a query bound to the
+// transaction, so it runs inside it.
+func CountInTransaction(ctx context.Context, client *datastore.Client) error {
+	_, err := client.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
+		aq := datastore.NewQuery("Task").Transaction(tx).NewAggregationQuery().WithCount("n")
+		_, err := client.RunAggregationQuery(ctx, aq)
+		return err
+	})
+	return err
+}
+
+// An aggregation over an unbound query runs outside.
+func CountOutside(ctx context.Context, client *datastore.Client) error {
+	_, err := client.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
+		aq := datastore.NewQuery("Task").NewAggregationQuery().WithCount("n")
+		_, err := client.RunAggregationQuery(ctx, aq) // want `^client bypasses the transaction opened with RunInTransaction; use tx instead \[outer-handle\]$`
+		return err
+	})
+	return err
+}
