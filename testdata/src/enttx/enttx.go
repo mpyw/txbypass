@@ -7,6 +7,7 @@ import (
 
 	"enttx/ent"
 	"enttx/noback"
+	"enttx/nocommit"
 	"enttx/twoback"
 	"enttx/value"
 )
@@ -55,4 +56,14 @@ func Other(ctx context.Context, c *Client, pool *Pool, v *value.Client, n *nobac
 	t.Tx(ctx)
 	pool.Tx(ctx)
 	return tx.Commit()
+}
+
+// Not reported: a Tx with no Commit or Rollback is no transaction.
+func NotATransaction(ctx context.Context, c *nocommit.Client) error {
+	tx, err := c.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	_ = tx
+	return c.Ping(ctx)
 }

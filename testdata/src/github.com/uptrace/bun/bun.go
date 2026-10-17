@@ -17,6 +17,7 @@ import (
 type IDB interface {
 	NewInsert() *InsertQuery
 	RunInTx(ctx context.Context, opts *sql.TxOptions, f func(ctx context.Context, tx Tx) error) error
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error)
 }
 
 // DB is a pool of connections.
@@ -72,3 +73,7 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { re
 func (c Conn) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return Tx{}, nil }
 
 func (tx Tx) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return tx, nil }
+
+func (db *DB) Begin() (Tx, error) { return db.BeginTx(context.Background(), nil) }
+
+func (tx Tx) Begin() (Tx, error) { return tx.BeginTx(context.Background(), nil) }

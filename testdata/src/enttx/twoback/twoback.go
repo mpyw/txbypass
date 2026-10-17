@@ -11,3 +11,5 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) { return &Tx{}, nil }
 
 // Client gives two results.
 func (tx *Tx) Client() (*Client, error) { return nil, nil }
+
+func (tx *Tx) Commit() error { return nil }

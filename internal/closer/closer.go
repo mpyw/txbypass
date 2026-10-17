@@ -27,26 +27,9 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
 )
-
-// methods are the names of the methods that end a transaction. go-pg's take
-// a context as CommitContext and RollbackContext.
-var methods = map[string]bool{"Commit": true, "Rollback": true, "CommitContext": true, "RollbackContext": true}
-
-// Holds reports whether a value of type t has a method that ends a
-// transaction, directly or through a pointer to it.
-func Holds(t types.Type) bool {
-	for _, mt := range []types.Type{t, types.NewPointer(t)} {
-		ms := types.NewMethodSet(mt)
-		for i := range ms.Len() {
-			if methods[ms.At(i).Obj().Name()] {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 // Fact says which parameters a function ends, before it returns or by
 // letting them go. The receiver of a method is parameter 0.
@@ -115,7 +98,7 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 
 // callEnds reports whether a call may end the transaction.
 func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
-	if recv, name, ok := receiver(call); ok && methods[name] && !takesFunc(call.Signature()) && within(recv, txs) {
+	if recv, name, ok := receiver(call); ok && opener.Ending(name) && !takesFunc(call.Signature()) && within(recv, txs) {
 		return true
 	}
 	fn := call.StaticCallee()
@@ -123,7 +106,7 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 		return false
 	}
 	for i, arg := range call.Args {
-		if within(arg, txs) && Holds(arg.Type()) && c.paramEnds(fn, i) {
+		if within(arg, txs) && opener.Holds(arg.Type()) && c.paramEnds(fn, i) {
 			return true
 		}
 	}
@@ -245,7 +228,7 @@ func (c *Closer) Export(prog *program.Program) {
 		}
 		var params []int
 		for i, p := range fn.Params {
-			if Holds(p.Type()) && c.rootEnds(fn, p) {
+			if opener.Holds(p.Type()) && c.rootEnds(fn, p) {
 				params = append(params, i)
 			}
 		}

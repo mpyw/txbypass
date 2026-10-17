@@ -86,11 +86,11 @@ func runNeedsProgram(pass *analysis.Pass) bool {
 // runTakesTx reports whether a function of signature sig takes a value that
 // has a method that ends a transaction, as its receiver or a parameter.
 func runTakesTx(sig *types.Signature) bool {
-	if sig.Recv() != nil && closer.Holds(sig.Recv().Type()) {
+	if sig.Recv() != nil && opener.Holds(sig.Recv().Type()) {
 		return true
 	}
 	for p := range sig.Params().Variables() {
-		if closer.Holds(p.Type()) {
+		if opener.Holds(p.Type()) {
 			return true
 		}
 	}

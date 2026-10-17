@@ -87,7 +87,8 @@ A begin is a method recognized as a callback opener is. It returns the transacti
 | pgx v5, v4 | The same | `Tx` | `Begin` |
 | pgx v5, v4 | Their `pgxpool` packages | `*Pool`, `*Conn` | `Begin`, `BeginTx` |
 | gorm | `gorm.io/gorm` | `*DB` | `Begin` |
-| bun | `github.com/uptrace/bun` | `*DB`, `Conn`, `Tx` | `BeginTx` |
+| bun | `github.com/uptrace/bun` | `*DB`, `Tx` | `Begin`, `BeginTx` |
+| bun | `github.com/uptrace/bun` | `Conn`, `IDB` | `BeginTx` |
 | bob | `github.com/stephenafamo/bob` | `DB`, `Conn` | `Begin`, `BeginTx` |
 | goqu | `github.com/doug-martin/goqu/v9` | `*Database` | `Begin`, `BeginTx` |
 | go-pg | `github.com/go-pg/pg/v10` | `*baseDB`, embedded in `*DB` | `Begin`, `BeginContext` |
@@ -101,7 +102,7 @@ ent generates its client into the caller's package, so its begin is read from th
 | --- | --- |
 | Name | Be `Tx` or `BeginTx` |
 | Receiver | Be a type named `Client` |
-| Results | Be two. The first is a pointer, `*Tx` |
+| Results | Be two. The first is a pointer, `*Tx`, with a method that ends a transaction, as `Commit` |
 | The first result's `Client` method | Return one value, of the receiver's type |
 
 go-pg's `*Tx` has a `Begin` and a `RunInTransaction` too, but neither opens a transaction. `Begin` returns the same transaction, and `RunInTransaction` runs its callback on it. They are not in either table.

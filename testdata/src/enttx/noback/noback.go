@@ -9,3 +9,5 @@ type Tx struct{}
 
 // Tx has no Client method.
 func (c *Client) Tx(ctx context.Context) (*Tx, error) { return &Tx{}, nil }
+
+func (tx *Tx) Commit() error { return nil }
