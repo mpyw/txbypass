@@ -2,6 +2,8 @@ package internal
 
 import (
 	"go/ast"
+	"go/types"
+	"slices"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -21,7 +23,7 @@ import (
 //declscope:shared // run.go calls it for every callback opener
 func (c *checker) checkOuterHandle(o opener.Opener, fn *ssa.Function) {
 	outer, ok := c.scopeOuter(o, fn)
-	if !ok {
+	if !ok || !o.Queues && outerHandleSavepoint(outer) {
 		return
 	}
 	lit := c.prog.Func(o.Callback)
@@ -102,6 +104,78 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 	// The receiver of a method call is always evaluated as a value.
 	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
 	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
+	if outerHandleSavepoint(outer) {
+		return
+	}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
+}
+
+// outerHandleSavepoint reports whether outer is a transaction, so that a
+// transaction opened on it is a savepoint. The savepoint runs on the
+// transaction's connection, and so does a statement on the transaction:
+// it bypasses nothing. outer is a transaction when it is a begin's result,
+// as gorm's tx := db.Begin(), or the transaction a callback is given, as
+// gorm's tx in db.Transaction(func(tx *gorm.DB) error { ... }).
+func outerHandleSavepoint(outer handle.Path) bool {
+	switch root := outer.Root().(type) {
+	case *ssa.Extract:
+		return root.Index == 0 && outerHandleBegun(root.Tuple)
+	case *ssa.Call:
+		return outerHandleBegun(root)
+	case *ssa.Parameter:
+		return outerHandleGiven(root)
+	}
+	return false
+}
+
+// outerHandleBegun reports whether v is the call of a begin.
+func outerHandleBegun(v ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	fn, ok := outerHandleCallee(call.Common())
+	return ok && opener.IsBeginFunc(fn)
+}
+
+// outerHandleGiven reports whether p is the transaction parameter of a
+// callback that an opener runs.
+func outerHandleGiven(p *ssa.Parameter) bool {
+	lit := p.Parent()
+	if lit.Parent() == nil {
+		// A declared function is no callback this analysis reads.
+		return false
+	}
+	// A literal never made has no creation, and its body is not read.
+	made, _ := program.Creation(lit)
+	i := slices.Index(lit.Params, p)
+	var calls []ssa.CallInstruction
+	switch made := made.(type) {
+	case ssa.CallInstruction:
+		calls = append(calls, made)
+	case *ssa.MakeClosure:
+		for _, ref := range *made.Referrers() {
+			if call, ok := ref.(ssa.CallInstruction); ok {
+				calls = append(calls, call)
+			}
+		}
+	}
+	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
+		fn, ok := outerHandleCallee(call.Common())
+		return ok && opener.CallbackTx(fn, i)
+	})
+}
+
+// outerHandleCallee is the function or the interface method that call
+// calls.
+func outerHandleCallee(call *ssa.CallCommon) (*types.Func, bool) {
+	if call.IsInvoke() {
+		return call.Method, true
+	}
+	if fn := call.StaticCallee(); fn != nil {
+		obj, ok := fn.Object().(*types.Func)
+		return obj, ok
+	}
+	return nil, false
 }

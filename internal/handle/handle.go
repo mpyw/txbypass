@@ -437,6 +437,11 @@ func (p Path) Stored(q Path) bool {
 	return p.base == q.base && len(p.fields) >= len(q.fields) && slices.Equal(p.fields[:len(q.fields)], q.fields)
 }
 
+// Root is the value p selects its fields from.
+func (p Path) Root() ssa.Value {
+	return p.base
+}
+
 // Depth is the number of fields p selects from its root.
 func (p Path) Depth() int {
 	return len(p.fields)

@@ -47,6 +47,11 @@ type Opener struct {
 	// no I/O, so only a chain that ends in a call taking a context runs
 	// outside the transaction.
 	Builds bool
+	// Queues reports whether the callback queues commands rather than
+	// opening a transaction on the handle, as go-redis's TxPipelined does. A
+	// command on the handle runs at once, before the queued ones, so even
+	// a transaction's own handle bypasses it.
+	Queues bool
 }
 
 // known is one call that opens a transaction.
@@ -66,6 +71,7 @@ type known struct {
 	tx        int
 	inContext bool
 	builds    bool
+	queues    bool
 }
 
 // knownOpeners lists every callback opener. Each group names the version of
@@ -120,22 +126,22 @@ var knownOpeners = []known{
 	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "UniversalClient", name: "Watch", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "UniversalClient", name: "Watch", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
 
 	// Cloud Firestore: RunTransaction(ctx, f func(context.Context, *Transaction) error, opts...)
 	// The transaction reads and writes through references the client builds, as in
@@ -178,7 +184,7 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	if !ok || len(call.Args) <= max(k.outer, k.callback) {
 		return Opener{}, false
 	}
-	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds}
+	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds, Queues: k.queues}
 	if k.outer < 0 {
 		// A method expression, as in (*gorm.DB).Transaction(db, fn), takes
 		// its receiver as an argument, so its arguments are shifted and its
@@ -206,20 +212,26 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	return o, true
 }
 
-// dedicatedConns are the types that are one connection, not a pool, whose
-// begin or opener the tables cannot tell apart by its receiver. pgx v5's
+// dedicatedConns are the types whose begin or opener runs on one
+// connection, which the tables cannot tell apart by the receiver. pgx v5's
 // BeginFunc takes any value that begins. go-pg's Conn begins through the
-// *baseDB it embeds, as DB does.
+// *baseDB it embeds, as DB does. A transaction of pgx or bun opens a
+// savepoint, on the connection the transaction holds. The begins of a
+// transaction stay in the table of begins, so that the savepoint is a
+// handle of its own: its commit ends nothing of the outer transaction.
 var dedicatedConns = []known{
 	{pkg: "github.com/jackc/pgx/v5", name: "Conn"},
 	{pkg: "github.com/jackc/pgx/v5/pgxpool", name: "Conn"},
 	{pkg: "github.com/go-pg/pg/v10", name: "Conn"},
+	{pkg: "github.com/jackc/pgx/v5", name: "Tx"},
+	{pkg: "github.com/jackc/pgx/v4", name: "Tx"},
+	{pkg: "github.com/uptrace/bun", name: "Tx"},
 }
 
-// dedicated reports whether t is one dedicated connection. A transaction
-// begun on it runs on that connection, so a statement on the connection
-// runs inside the transaction: it is no bypass. Begins on such a type are
-// not listed at all.
+// dedicated reports whether t is one dedicated connection, or a transaction
+// that holds one. A transaction begun on it runs on that connection, so a
+// statement on the connection runs inside the transaction: it is no
+// bypass. Begins on a connection are not listed at all.
 func dedicated(t types.Type) bool {
 	if p, ok := types.Unalias(t).(*types.Pointer); ok {
 		t = p.Elem()
@@ -354,6 +366,13 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	sel, ok := methodSelector(info, call)
 	return ok && IsBeginFunc(info.Selections[sel].Obj().(*types.Func)) && !dedicated(info.TypeOf(sel.X))
+}
+
+// CallbackTx reports whether fn is a callback opener whose callback takes
+// the transaction itself as its parameter i.
+func CallbackTx(fn *types.Func, i int) bool {
+	k, ok := lookupFunc(fn, knownOpeners)
+	return ok && !k.inContext && k.tx == i
 }
 
 // IsBeginFunc reports whether fn is a begin. A begin gives a new handle, the

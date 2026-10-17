@@ -39,3 +39,33 @@ func Region(ctx context.Context, c *pop.Connection, u *User) error {
 	c.Create(u) // want `^c bypasses the transaction opened with NewTransactionContextOptions; use tx3 instead \[outer-handle\]$`
 	return tx3.TX.Rollback()
 }
+
+// Not reported: a transaction opened on a begin's transaction runs on its
+// connection.
+func NestedRegion(c *pop.Connection, u *User) error {
+	tx, err := c.NewTransaction()
+	if err != nil {
+		return err
+	}
+	inner, err := tx.NewTransaction()
+	if err != nil {
+		return err
+	}
+	// Not reported: it runs on the transaction's connection.
+	tx.Create(u)
+	if err := inner.TX.Commit(); err != nil {
+		return err
+	}
+	return tx.TX.Commit()
+}
+
+// A handle looked up in a map is no transaction, and is reported.
+func FromMap(conns map[string]*pop.Connection, u *User) error {
+	c, ok := conns["main"]
+	if !ok {
+		return nil
+	}
+	return c.Transaction(func(tx *pop.Connection) error {
+		return c.Create(u) // want `^c bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
