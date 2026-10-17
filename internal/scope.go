@@ -524,8 +524,11 @@ func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (
 
 // scopeHoldsOnly reports whether every field of the struct that t is, or
 // points to, can hold a transaction of type tx, as sqlc's Queries holds only
-// its DBTX. A struct that holds more, as a logger or metrics, is not only a
-// database: a use of its other members is no use of the transaction.
+// its DBTX, or is a statement prepared on one. With emit_prepared_queries,
+// sqlc's Queries holds a *sql.Stmt per query, and runs it on the
+// transaction after WithTx. A struct that holds more, as a logger or
+// metrics, is not only a database: a use of its other members is no use of
+// the transaction.
 func scopeHoldsOnly(t, tx types.Type) bool {
 	if ptr, ok := t.Underlying().(*types.Pointer); ok {
 		t = ptr.Elem()
@@ -535,9 +538,20 @@ func scopeHoldsOnly(t, tx types.Type) bool {
 		return false
 	}
 	for f := range st.Fields() {
-		if !types.AssignableTo(tx, f.Type()) {
+		if !types.AssignableTo(tx, f.Type()) && !scopePrepared(f.Type()) {
 			return false
 		}
 	}
 	return true
+}
+
+// scopePrepared reports whether t is database/sql's prepared statement,
+// *sql.Stmt.
+func scopePrepared(t types.Type) bool {
+	ptr, ok := types.Unalias(t).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	n, ok := types.Unalias(ptr.Elem()).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "database/sql" && n.Obj().Name() == "Stmt"
 }
