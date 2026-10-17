@@ -38,3 +38,22 @@ func (t *Transaction) Put(key *Key, src interface{}) (interface{}, error) { retu
 func (t *Transaction) Commit() (c *Commit, err error) { return nil, nil }
 
 func (t *Transaction) Rollback() (err error) { return nil }
+
+// Query is a query.
+type Query struct{}
+
+// Iterator is the result of a query.
+type Iterator struct{}
+
+func NewQuery(kind string) *Query { return &Query{} }
+
+func (q *Query) Ancestor(ancestor *Key) *Query { return q }
+
+// Transaction makes the query run in the transaction t.
+func (q *Query) Transaction(t *Transaction) *Query { return q }
+
+func (c *Client) GetAll(ctx context.Context, q *Query, dst interface{}) (keys []*Key, err error) {
+	return nil, nil
+}
+
+func (c *Client) Run(ctx context.Context, q *Query) (it *Iterator) { return nil }

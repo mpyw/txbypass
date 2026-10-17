@@ -5,8 +5,10 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
+	"strings"
 
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/opener"
@@ -137,8 +139,41 @@ func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool)
 	if field {
 		return false
 	}
-	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
+	parent := stack[len(stack)-1]
+	if call, ok := parent.(*ast.CallExpr); ok {
+		return scopeContextArg(info, call, e)
+	}
+	sel, ok := parent.(*ast.SelectorExpr)
 	return !ok || sel.X != e || scopeAsContext(info, sel)
+}
+
+// scopeSessionEnds are the methods of MongoDB's session that end it or its
+// transaction. They take a context only for its deadline: the session they
+// are called on says what they end.
+var scopeSessionEnds = map[string]bool{"CommitTransaction": true, "AbortTransaction": true, "EndSession": true}
+
+// scopeContextArg reports whether giving e to call uses it as a context.
+// A parameter of a concrete type, as a helper that takes *gin.Context,
+// takes it as that type: the inner context has none of its methods. The
+// methods of MongoDB's session that end it are given a context only for
+// its deadline.
+func scopeContextArg(info *types.Info, call *ast.CallExpr, e ast.Expr) bool {
+	if fn, ok := typeutil.Callee(info, call).(*types.Func); ok && fn.Pkg() != nil && strings.HasPrefix(fn.Pkg().Path(), "go.mongodb.org/mongo-driver") && scopeSessionEnds[fn.Name()] {
+		return false
+	}
+	// A conversion has no signature, and gives e as a context.
+	sig, ok := info.TypeOf(call.Fun).Underlying().(*types.Signature)
+	return !ok || types.IsInterface(scopeParam(sig, slices.Index(call.Args, e)))
+}
+
+// scopeParam is the type of the parameter that argument i of a call of sig
+// is given to. The variadic parameter takes every argument after it.
+func scopeParam(sig *types.Signature, i int) types.Type {
+	params := sig.Params()
+	if sig.Variadic() && i >= params.Len()-1 {
+		return params.At(params.Len() - 1).Type().(*types.Slice).Elem()
+	}
+	return params.At(i).Type()
 }
 
 // scopeYieldsContext reports whether e, a method selector on the outer
@@ -230,6 +265,46 @@ func scopeCleanedUp(mc *ssa.MakeClosure) bool {
 		call, ok := ref.(*ssa.Call)
 		return !ok || !program.Cleanup(call.Common())
 	})
+}
+
+// scopeRunsBound reports whether e, a method of the handle, is called with
+// an argument bound to the transaction, as Datastore's client.GetAll(ctx, q,
+// &dst) is when q was built with q.Transaction(tx). The client runs the
+// query in the transaction it carries.
+func (c *checker) scopeRunsBound(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
+	// A method of the handle with no value of its own is called.
+	call := stack[len(stack)-1].(*ast.CallExpr)
+	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+		ref, ok := c.prog.Ref(fn, arg)
+		return ok && c.scopeMadeBound(s, ref.X, make(map[ssa.Value]bool))
+	})
+}
+
+// scopeMadeBound reports whether v was made by a chain of calls one of
+// which was given the transaction, as q.Ancestor(k).Transaction(tx). A
+// variable written once is the value written.
+func (c *checker) scopeMadeBound(s txScope, v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return false
+	}
+	seen[v] = true
+	switch v := v.(type) {
+	case *ssa.Call:
+		args := v.Common().Args
+		if slices.ContainsFunc(args, func(arg ssa.Value) bool {
+			return slices.ContainsFunc(s.txs, c.paths.Of(arg).Within)
+		}) {
+			return true
+		}
+		return len(args) > 0 && c.scopeMadeBound(s, args[0], seen)
+	case *ssa.UnOp:
+		addr, ok := v.X.(*ssa.Alloc)
+		return ok && slices.ContainsFunc(*addr.Referrers(), func(ref ssa.Instruction) bool {
+			st, ok := ref.(*ssa.Store)
+			return ok && st.Addr == addr && c.scopeMadeBound(s, st.Val, seen)
+		})
+	}
+	return false
 }
 
 // scopeValueBound reports whether v, or a variable it is kept in, is the
@@ -663,7 +738,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 			// A method of an error the handle gave, as err.Error().
 			return true
 		}
-		if c.scopeChainBound(s, x.Parent(), e, stack) || r == rule.OuterContext && !scopeAsContext(info, sel) && !scopeYieldsContext(info, e, stack) {
+		if c.scopeChainBound(s, x.Parent(), e, stack) || c.scopeRunsBound(s, x.Parent(), e, stack) || r == rule.OuterContext && !scopeAsContext(info, sel) && !scopeYieldsContext(info, e, stack) {
 			return false
 		}
 		if !scopeMetadata(info, e) {
