@@ -2,8 +2,6 @@ package internal
 
 import (
 	"go/ast"
-	"go/types"
-	"slices"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -125,7 +123,7 @@ func outerHandleSavepoint(outer handle.Path) bool {
 	case *ssa.Call:
 		return outerHandleBegun(root)
 	case *ssa.Parameter:
-		return outerHandleGiven(root)
+		return scopeGiven(root, opener.CallbackTx)
 	}
 	return false
 }
@@ -136,44 +134,6 @@ func outerHandleBegun(v ssa.Value) bool {
 	if !ok {
 		return false
 	}
-	fn, ok := outerHandleCallee(call.Common())
+	fn, ok := scopeCallee(call.Common())
 	return ok && opener.IsBeginFunc(fn)
-}
-
-// outerHandleGiven reports whether p is the transaction parameter of a
-// callback that an opener runs.
-func outerHandleGiven(p *ssa.Parameter) bool {
-	lit := p.Parent()
-	if lit.Parent() == nil {
-		// A declared function is no callback this analysis reads.
-		return false
-	}
-	// A literal never made has no creation, and its body is not read.
-	made, _ := program.Creation(lit)
-	i := slices.Index(lit.Params, p)
-	var calls []ssa.CallInstruction
-	switch made := made.(type) {
-	case ssa.CallInstruction:
-		calls = append(calls, made)
-	case *ssa.MakeClosure:
-		for _, ref := range *made.Referrers() {
-			if call, ok := ref.(ssa.CallInstruction); ok {
-				calls = append(calls, call)
-			}
-		}
-	}
-	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
-		fn, ok := outerHandleCallee(call.Common())
-		return ok && opener.CallbackTx(fn, i)
-	})
-}
-
-// outerHandleCallee is the function that call calls. An interface method
-// gives none: no opener or begin that nests is one.
-func outerHandleCallee(call *ssa.CallCommon) (*types.Func, bool) {
-	if fn := call.StaticCallee(); fn != nil {
-		obj, ok := fn.Object().(*types.Func)
-		return obj, ok
-	}
-	return nil, false
 }

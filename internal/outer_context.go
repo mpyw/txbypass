@@ -18,6 +18,12 @@ func (c *checker) checkOuterContext(o opener.Opener, fn *ssa.Function) {
 	if !ok {
 		return
 	}
+	// The context of MongoDB's WithSession carries the session. A
+	// transaction on it, as sess.WithTransaction(sc, ...), runs with sc too:
+	// a statement on sc runs inside it.
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, opener.CallbackSession) {
+		return
+	}
 	s := txScope{root: o.Callback.Body, fn: c.prog.Func(o.Callback), opener: o.Name, tx: o.Tx, unnamed: "the callback's context"}
 	c.reportScopeUses(s, outer, rule.OuterContext, s.scopeUse(), nil)
 }

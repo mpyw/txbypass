@@ -73,6 +73,10 @@ type known struct {
 	inContext bool
 	builds    bool
 	nests     bool
+	// session reports that the callback's context carries a session, as
+	// MongoDB's WithSession gives it. A transaction on that session runs
+	// with the context too.
+	session bool
 }
 
 // knownOpeners lists every callback opener. Each group names the version of
@@ -161,14 +165,14 @@ var knownOpeners = []known{
 	// and func WithSession(ctx, sess *Session, fn func(context.Context) error) error, and
 	// UseSession(ctx, fn) and UseSessionWithOptions(ctx, opts, fn) of *Client.
 	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Session", name: "WithTransaction", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true, session: true},
+	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true, session: true},
+	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true, session: true},
 	// MongoDB v1.17: the same, with the Session interface and SessionContext.
 	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Session", name: "WithTransaction", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true, session: true},
+	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true, session: true},
+	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true, session: true},
 	// go-rel: Transaction(ctx, fn func(ctx context.Context) error) of the Repository interface.
 	{pkg: "github.com/go-rel/rel", recv: "Repository", name: "Transaction", outer: 0, callback: 1, tx: 0, inContext: true},
 	// avito-tech/go-transaction-manager v2: Do(ctx, fn) and DoWithSettings(ctx, s, fn) of the
@@ -383,6 +387,14 @@ func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 func CallbackTx(fn *types.Func, i int) bool {
 	k, ok := lookupFunc(fn, knownOpeners)
 	return ok && !k.inContext && k.tx == i
+}
+
+// CallbackSession reports whether fn is an opener whose callback takes, as
+// its parameter i, a context that carries a session, as MongoDB's
+// WithSession and UseSession do.
+func CallbackSession(fn *types.Func, i int) bool {
+	k, ok := lookupFunc(fn, knownOpeners)
+	return ok && k.session && k.tx == i
 }
 
 // IsBeginFunc reports whether fn is a begin. A begin gives a new handle, the

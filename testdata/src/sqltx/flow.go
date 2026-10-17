@@ -674,6 +674,18 @@ func dropDeferred(db *sql.DB, table string) {
 	defer func() { db.Exec("DROP TABLE " + table) }()
 }
 
+// cleanupSuite is a test suite whose helpers are methods.
+type cleanupSuite struct{ t *testing.T }
+
+func (s *cleanupSuite) dropOnCleanup(db *sql.DB, table string) {
+	s.t.Cleanup(func() { db.Exec("DROP TABLE " + table) })
+}
+
+// dropModelOnCleanup is a generic helper.
+func dropModelOnCleanup[T any](tb testing.TB, db *sql.DB) {
+	tb.Cleanup(func() { db.Exec("DROP TABLE t") })
+}
+
 // Not reported: the helper only registers a cleanup with the pool, which
 // runs after the test. A helper that uses the pool at once is reported.
 func CleanupHelper(t *testing.T, db *sql.DB) {
@@ -683,6 +695,8 @@ func CleanupHelper(t *testing.T, db *sql.DB) {
 	}
 	tx.Exec("CREATE TABLE t (id int)")
 	dropOnCleanup(t, db, "t")
+	(&cleanupSuite{t: t}).dropOnCleanup(db, "s")
+	dropModelOnCleanup[int](t, db)
 	dropNow(t, db, "u")   // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	dropSoon(db, "v")     // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	dropDeferred(db, "w") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`

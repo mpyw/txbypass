@@ -171,7 +171,19 @@ func scopeGivenForLater(fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
 		return false
 	}
 	callee := ssaCall.Common().StaticCallee()
-	if callee == nil || callee.Blocks == nil || callee.Signature.Recv() != nil || callee.Signature.Variadic() && i >= len(callee.Params)-1 {
+	if callee == nil {
+		return false
+	}
+	// A generic helper is called through an instance, which is built from
+	// its origin.
+	if origin := callee.Origin(); origin != nil {
+		callee = origin
+	}
+	// A method takes its receiver as parameter 0.
+	if callee.Signature.Recv() != nil {
+		i++
+	}
+	if callee.Blocks == nil || callee.Signature.Variadic() && i >= len(callee.Params)-1 {
 		return false
 	}
 	return scopeOnlyLater(callee.Params[i])
@@ -856,4 +868,46 @@ func scopePrepared(t types.Type) bool {
 	}
 	n, ok := types.Unalias(ptr.Elem()).(*types.Named)
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "database/sql" && n.Obj().Name() == "Stmt"
+}
+
+// scopeGiven reports whether p is the parameter of a callback that an
+// opener runs, which takes reports of the opener and p's index.
+//
+//declscope:shared // both rules ask whether a value is what an opener gives its callback
+func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
+	lit := p.Parent()
+	if lit.Parent() == nil {
+		// A declared function is no callback this analysis reads.
+		return false
+	}
+	// A literal never made has no creation, and its body is not read.
+	made, _ := program.Creation(lit)
+	i := slices.Index(lit.Params, p)
+	var calls []ssa.CallInstruction
+	switch made := made.(type) {
+	case ssa.CallInstruction:
+		calls = append(calls, made)
+	case *ssa.MakeClosure:
+		for _, ref := range *made.Referrers() {
+			if call, ok := ref.(ssa.CallInstruction); ok {
+				calls = append(calls, call)
+			}
+		}
+	}
+	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
+		fn, ok := scopeCallee(call.Common())
+		return ok && takes(fn, i)
+	})
+}
+
+// scopeCallee is the function that call calls. An interface method
+// gives none: no opener or begin that nests is one.
+//
+//declscope:shared // outer_handle.go asks what a begin calls through it
+func scopeCallee(call *ssa.CallCommon) (*types.Func, bool) {
+	if fn := call.StaticCallee(); fn != nil {
+		obj, ok := fn.Object().(*types.Func)
+		return obj, ok
+	}
+	return nil, false
 }
