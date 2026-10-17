@@ -590,3 +590,38 @@ func CleanupInHelper(t *testing.T, db *sql.DB) {
 	rollbackLater(t, tx)
 	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 }
+
+func seedRow(db *sql.DB, id int) func() {
+	db.Exec("INSERT INTO ledger VALUES ($1)", id)
+	return func() { db.Exec("DELETE FROM ledger WHERE id = $1", id) }
+}
+
+// The call that makes the cleanup runs now, inside the transaction. Only
+// the function it returns runs after the test. The same holds for a
+// deferred call.
+func CleanupOfACall(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	t.Cleanup(seedRow(db, 1)) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	defer seedRow(db, 2)()    // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	tx.Exec("UPDATE ledger SET x = 1")
+}
+
+// Not reported: a cleanup registered in a literal that runs in the region
+// runs after the test too.
+func CleanupInLiteral(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	seed := func(id int) {
+		tx.Exec("INSERT", id)
+		t.Cleanup(func() { db.Exec("DELETE", id) })
+	}
+	seed(1)
+	tx.Commit()
+}
