@@ -96,8 +96,10 @@ func (c *checker) walkScope(s txScope, visit scopeVisit) {
 				break
 			}
 		}
+		// A handle held by value is used through its address. The address
+		// is the same handle as the value it holds.
 		ref, ok := c.prog.Ref(fn, e)
-		if !ok || ref.IsAddr {
+		if !ok {
 			return true
 		}
 		if s.region != nil && !s.region.Inside(scopeAnchor(s.fn, ref)) {
@@ -107,18 +109,15 @@ func (c *checker) walkScope(s txScope, visit scopeVisit) {
 	})
 }
 
-// scopeWritten reports whether e is a variable written where it stands: on
-// the left of an assignment, or declared by one.
+// scopeWritten reports whether e is written where it stands: on the left
+// of an assignment, or a variable its declaration names.
 func scopeWritten(e ast.Expr, stack []ast.Node) bool {
-	id, ok := e.(*ast.Ident)
-	if !ok {
-		return false
-	}
 	switch parent := stack[len(stack)-1].(type) {
 	case *ast.AssignStmt:
-		return slices.Contains(parent.Lhs, ast.Expr(id))
+		return slices.Contains(parent.Lhs, e)
 	case *ast.ValueSpec:
-		return slices.Contains(parent.Names, id)
+		id, ok := e.(*ast.Ident)
+		return ok && slices.Contains(parent.Names, id)
 	}
 	return false
 }
