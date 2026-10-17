@@ -69,9 +69,13 @@ type scopeVisit func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool
 // walkScope calls visit for each expression in s that is evaluated inside
 // the transaction. A function literal in s is read as part of it. In a
 // region, a deferred statement is not read: it runs when the function
-// returns. A variable on the left of an assignment, or in its declaration,
-// is written, not used.
-func (c *checker) walkScope(s txScope, visit scopeVisit) {
+// returns. What stands on the left of an assignment, or a variable its
+// declaration names, is written, not used.
+//
+// A selector with no value of its own, as the method in s.Create(u), is
+// given to promoted, when it is not nil, with the reference of what it
+// selects from.
+func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 	ast.PreorderStack(s.root, nil, func(n ast.Node, stack []ast.Node) bool {
 		if _, ok := n.(*ast.DeferStmt); ok && s.region != nil {
 			return false
@@ -98,15 +102,21 @@ func (c *checker) walkScope(s txScope, visit scopeVisit) {
 		}
 		// A handle held by value is used through its address. The address
 		// is the same handle as the value it holds.
-		ref, ok := c.prog.Ref(fn, e)
-		if !ok {
+		if ref, ok := c.prog.Ref(fn, e); ok {
+			return s.scopeInside(ref) && visit(e, ref, stack)
+		}
+		sel, ok := e.(*ast.SelectorExpr)
+		if !ok || promoted == nil {
 			return true
 		}
-		if s.region != nil && !s.region.Inside(scopeAnchor(s.fn, ref)) {
-			return false
-		}
-		return visit(e, ref, stack)
+		x, ok := c.prog.Ref(fn, sel.X)
+		return !ok || !s.scopeInside(x) || promoted(sel, x, stack)
 	})
+}
+
+// scopeInside reports whether ref is evaluated inside the transaction of s.
+func (s txScope) scopeInside(ref *ssa.DebugRef) bool {
+	return s.region == nil || s.region.Inside(scopeAnchor(s.fn, ref))
 }
 
 // scopeWritten reports whether e is written where it stands: on the left
@@ -141,18 +151,38 @@ func scopeAnchor(fn *ssa.Function, ref *ssa.DebugRef) ssa.Instruction {
 //declscope:shared // the rules report what their scopes find through it
 func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use string, exempt map[ast.Node]bool) {
 	info := c.pass.TypesInfo
-	c.walkScope(s, func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
+	visit := func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
 		if scopeChainsOn(e, exempt) {
 			return !exempt[e]
 		}
-		if !handle.Of(ref.X).Equal(outer) {
+		if !handle.Of(ref.X).Within(outer) {
 			return true
 		}
-		if !s.builds || scopeRuns(info, e, stack) {
-			c.report(e.Pos(), r, spell.Of(info, e, c.pass.Pkg)+" bypasses the transaction opened with "+s.opener+"; use "+use+" instead")
-		}
+		c.reportScopeUse(s, e, stack, outer, r, use)
 		return false
-	})
+	}
+	// A method promoted from an embedded handle selects it with no
+	// expression of its own: s.Create(u) passes s.DB in the SSA form, but
+	// its debug reference is on s.
+	promoted := func(e ast.Expr, x *ssa.DebugRef, stack []ast.Node) bool {
+		path := handle.Promoted(info.Selections[e.(*ast.SelectorExpr)])
+		if scopeChainsOn(e, exempt) || !handle.Of(x.X).With(path).Within(outer) {
+			return true
+		}
+		c.reportScopeUse(s, e, stack, outer, r, use)
+		return false
+	}
+	c.walkScope(s, visit, promoted)
+}
+
+// reportScopeUse reports the use e of the handle outer, unless it builds a
+// reference that runs nothing.
+func (c *checker) reportScopeUse(s txScope, e ast.Expr, stack []ast.Node, outer handle.Path, r rule.Name, use string) {
+	info := c.pass.TypesInfo
+	if s.builds && !scopeRuns(info, e, stack) {
+		return
+	}
+	c.report(e.Pos(), r, spell.Of(info, e, c.pass.Pkg, outer.Depth())+" bypasses the transaction opened with "+s.opener+"; use "+use+" instead")
 }
 
 // scopeChainsOn reports whether e is an expression in exempt, or a chain of
@@ -264,7 +294,7 @@ func (c *checker) reportScopeQueries(s txScope) {
 		found = append(found, q)
 		exempt[call] = true
 		return true
-	})
+	}, nil)
 	for _, q := range found {
 		c.reportScopeUses(s, q.outer, rule.OuterHandle, q.use, exempt)
 	}

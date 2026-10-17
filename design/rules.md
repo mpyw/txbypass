@@ -134,7 +134,9 @@ A handle is a root value and the fields selected from it. The root is what the S
 | The address of a variable or a field, as the receiver of `r.db.Begin()` when `db` is held by value | The handle it holds |
 | Anything else | A root of its own |
 
-Two values are the same handle when they have the same root and the same fields. Embedded fields at the end of either are left out: a value is the handle it embeds. So `s` and `s.DB` are one handle when `s` embeds `*gorm.DB`. A parameter of the callback with the outer handle's name is another value. So is a variable assigned in two places with two handles.
+Two values are the same handle when they have the same root and the same fields. A use reaches the outer handle when it is the outer handle, or a field selected from it: reading `db.Error` reads `db`. A method or a field promoted from an embedded handle reaches it through the embedded field, as `s.Create(u)` reaches `s.DB`.
+
+A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. So is a variable assigned in two places with two handles.
 
 A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names.
 
@@ -236,7 +238,7 @@ Every message has one shape:
 
 | Part | Spelled as |
 | --- | --- |
-| `<use>` | The variable, then each field, joined by dots, without the embedded fields at the end. A variable of another package is qualified by its package's name |
+| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields at the end. A variable of another package is qualified by its package's name |
 | `<opener>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
 | `<instead>` | The transaction's variable or parameter. For a handle rebound with `WithTx`, the variable its result is assigned to, or the call as written |
 
@@ -285,5 +287,6 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A Firestore reference built in the scope, then used to run outside it. `ref := client.Doc(p)` then `ref.Set(ctx, v)` is one | `ref` is a reference, not the client |
 | An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
+| A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |
 | A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |

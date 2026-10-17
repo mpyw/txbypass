@@ -320,7 +320,26 @@ s.Transaction(func(tx *gorm.DB) error {
 
 </td>
 <td>❌</td>
-<td>A value is the handle it embeds</td>
+<td>A method promoted from an embedded handle reaches it</td>
+</tr>
+<tr>
+<td>
+
+```go
+type Store struct {
+	*gorm.DB
+	logger *log.Logger
+}
+
+s.Transaction(func(tx *gorm.DB) error {
+	s.logger.Print("saving")
+	return tx.Create(u).Error
+})
+```
+
+</td>
+<td>✅</td>
+<td>A struct that embeds the handle is not the handle. Its other fields and methods are no uses</td>
 </tr>
 <tr>
 <td>
@@ -878,6 +897,18 @@ client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) 
 </td>
 <td>⚠️</td>
 <td><code>ref</code> is a Firestore reference, not the client</td>
+</tr>
+<tr>
+<td>
+
+```go
+tx, _ := db.Begin() // db is a *sqlx.DB
+db.MustExec(audit)
+```
+
+</td>
+<td>⚠️</td>
+<td><code>Begin</code> is promoted from the embedded <code>*sql.DB</code>, and <code>db</code> is a struct that embeds it. Use sqlx's <code>Beginx</code></td>
 </tr>
 <tr>
 <td>
