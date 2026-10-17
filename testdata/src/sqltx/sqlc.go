@@ -201,3 +201,53 @@ func NewWithTx(ctx context.Context, db *sql.DB) error {
 	}
 	return tx.Commit()
 }
+
+// Not reported: the queries kept in q are rebound to the transaction
+// before they run.
+func NewThenWithTx(ctx context.Context, db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := New(db)
+	qtx := q.WithTx(tx)
+	if err := qtx.CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// The queries kept in q run on the pool too, which is reported.
+func NewThenBoth(ctx context.Context, db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := New(db)
+	qtx := q.WithTx(tx)
+	if err := qtx.CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	if err := q.CreateUser(ctx, "b"); err != nil { // want `^q bypasses the transaction opened with Begin; use qtx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit()
+}
+
+// Not reported: q lives in memory, as a deferred literal reads it, and is
+// rebound through a load of it.
+func NewKeptThenWithTx(ctx context.Context, db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := New(db)
+	defer func() { _ = q }()
+	if err := q.WithTx(tx).CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
