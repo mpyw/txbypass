@@ -124,6 +124,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Decision | Why |
 | --- | --- |
 | Firestore's client counts only when a call in its chain takes a context | `tx.Get(client.Doc(p))` is how a Firestore transaction reads. Every builder takes no context, and every call that runs takes one |
+| A callback does not read a literal it keeps in a variable declared outside it | The after-commit hook is the pattern: the callback collects work to run once the transaction is durable. The literal runs after the callback returns, and a use of the handle in it is on purpose. The syntax says where the variable is declared, which the SSA form loses for a captured variable |
 | `WithTx` rebinds only when the scope calls it with its own transaction | Then the code says that `q` belongs to the transaction. Without the call, `q` may be built on another database |
 | The `WithTx` call, and a chain on it, is not a use | `q.WithTx(tx)` returns the type of `q`, so it would otherwise read as `q` |
 

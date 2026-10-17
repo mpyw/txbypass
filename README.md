@@ -345,6 +345,21 @@ s.Transaction(func(tx *gorm.DB) error {
 <td>
 
 ```go
+var after []func()
+err := db.Transaction(func(tx *gorm.DB) error {
+	after = append(after, func() { db.Create(&Event{}) })
+	return tx.Create(u).Error
+})
+```
+
+</td>
+<td>✅</td>
+<td>A literal kept in a variable declared outside the callback is an after-commit hook. It runs after the transaction, on purpose</td>
+</tr>
+<tr>
+<td>
+
+```go
 dbs.Main.Transaction(func(tx *gorm.DB) error {
 	return dbs.Main.Create(u).Error
 })
