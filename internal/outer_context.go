@@ -24,6 +24,13 @@ func (c *checker) checkOuterContext(o opener.Opener, fn *ssa.Function) {
 	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, opener.CallbackSession) {
 		return
 	}
+	// An opener that nests, as go-transaction-manager's Do or go-rel's
+	// Transaction, given the context of another one's callback, joins that
+	// transaction or opens a savepoint in it. A statement with the outer
+	// context runs inside it.
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && o.Nests && scopeGiven(p, opener.CallbackContext) {
+		return
+	}
 	s := txScope{root: o.Callback.Body, fn: c.prog.Func(o.Callback), opener: o.Name, tx: o.Tx, unnamed: "the callback's context"}
 	c.reportScopeUses(s, outer, rule.OuterContext, s.scopeUse(), nil)
 }

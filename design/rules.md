@@ -45,7 +45,7 @@ A callback opener is recognized by the package path, the receiver's type and the
 | go-pg | `github.com/go-pg/pg/v10` | `*baseDB`, embedded in `*DB` | `RunInTransaction` | The receiver | Argument 1 | Parameter 0 |
 | xorm | `xorm.io/xorm`, `xorm.io/xorm/v2` | `*Engine` | `Transaction` | The receiver | Argument 0 | Parameter 0 |
 | go-redis | `github.com/redis/go-redis/v9`, `github.com/go-redis/redis/v8` | `*Client`, `*ClusterClient`, `*Ring`, `UniversalClient` | `Watch` | The receiver | Argument 1 | Parameter 0 |
-| go-redis | The same | `*Client`, `*Conn`, `*ClusterClient`, `*Ring`, `*Tx`, `Cmdable` | `TxPipelined` | The receiver | Argument 1 | Parameter 0 |
+| go-redis | The same | `*Client`, `*Conn`, `*ClusterClient`, `*Ring`, `Cmdable` | `TxPipelined` | The receiver | Argument 1 | Parameter 0 |
 | Firestore | `cloud.google.com/go/firestore` | `*Client` | `RunTransaction` | The receiver, which [builds references](#references) | Argument 1 | Parameter 1 |
 | Spanner | `cloud.google.com/go/spanner` | `*Client` | `ReadWriteTransaction`, `ReadWriteTransactionWithOptions` | The receiver | Argument 1 | Parameter 1 |
 | Datastore | `cloud.google.com/go/datastore` | `*Client` | `RunInTransaction` | The receiver | Argument 1 | Parameter 0 |
@@ -300,6 +300,8 @@ The handle the opener is called on is not reported there. With MongoDB, `coll.In
 
 The context of a callback that carries a session, as MongoDB's `WithSession` and `UseSession` give, is not reported inside a transaction on that session. `sess.WithTransaction(sc, ...)` runs with `sc` too, so a statement on `sc` runs inside it.
 
+A transaction manager that nests, as go-transaction-manager's `Do` and go-rel's `Transaction`, joins the transaction of the context it is given, or opens a savepoint in it. Inside one given another callback's context, that context is not reported.
+
 The outer context is reported where it is used as a context: given to a call, or with a method of `context.Context` called on it. A web framework's context, as gin's `*gin.Context`, has methods and fields of its own, as `c.JSON(...)` and `c.Request`. They run no statement, and the inner context has none of them, so they are not reported. A method of them that gives a context back is a use, as `c.Request.Context()`. Giving the outer context where a plain context does not fit is no use either. That is a parameter, a field, an element, a channel or a variable of a concrete type, as `*gin.Context`. It is also an interface with methods `context.Context` lacks, as fiber v3's `fiber.Ctx`. MongoDB's session ends with `CommitTransaction`, `AbortTransaction` and `EndSession`. They take a context only for its deadline, so giving them the outer context is no use.
 
 ## Messages
@@ -373,4 +375,5 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A savepoint on a gorm transaction this analysis does not know as one, as a `*gorm.DB` parameter of a declared function | It is reported. The type does not say that the handle is a transaction |
 | A helper given the handle and the transaction, as `audit(db, tx)` | Not reported. A call given both keeps the handle beside the transaction, as a constructor does |
 | A framework context given to a helper that takes its own type, as `saveOrder(c)` with a `*gin.Context` parameter, which runs a statement with it | Not reported. A parameter of a concrete type takes it as that type, not as a context, and the helper is not read |
+| A write on go-redis's `tx` inside `tx.TxPipelined`, in a `Watch` callback | Not reported. The optimistic pattern reads and watches keys on `tx` there on purpose, before `MULTI`. Reading the pipeline of `tx` would report those, with a fix that breaks them |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies. A field of the outer context, or a method `context.Context` lacks, as gin's `c.JSON(...)`, is not reported: the inner context has none of them |
