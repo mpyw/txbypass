@@ -187,6 +187,8 @@ A function ends its parameter when its body calls one of the ending methods on i
 | Of the package being analyzed | Directly, through the generic origin of an instance. A call of itself counts as no end |
 | Of another package | Through the fact `closes[i...]` that the analysis of that package exports. The receiver of a method is parameter 0 |
 
+A library's own methods are helpers too. go-pg's `Tx.Close` calls `RollbackContext` when the transaction has not ended, so its fact says it ends its receiver, and a region ends there.
+
 A store or a send inside a helper does not count. A library's own methods store their receiver in many places, and would seem to end it.
 
 ### References

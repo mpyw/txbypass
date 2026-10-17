@@ -16,7 +16,10 @@ type DB struct {
 }
 
 // Tx is a transaction.
-type Tx struct{}
+type Tx struct {
+	ctx  context.Context
+	done bool
+}
 
 func (db *baseDB) Exec(query interface{}, params ...interface{}) (interface{}, error) {
 	return nil, nil
@@ -41,3 +44,22 @@ func (tx *Tx) Commit() error { return nil }
 func (tx *Tx) CommitContext(ctx context.Context) error { return nil }
 
 func (tx *Tx) Rollback() error { return nil }
+
+func (tx *Tx) RollbackContext(ctx context.Context) error { return nil }
+
+// Close and CloseContext keep the bodies of go-pg v10.14.0: they roll the
+// transaction back unless it has ended.
+func (tx *Tx) Close() error {
+	return tx.CloseContext(tx.ctx)
+}
+
+// CloseContext calls Rollback if the tx has not already been committed or
+// rolled back.
+func (tx *Tx) CloseContext(ctx context.Context) error {
+	if tx.closed() {
+		return nil
+	}
+	return tx.RollbackContext(ctx)
+}
+
+func (tx *Tx) closed() bool { return tx.done }

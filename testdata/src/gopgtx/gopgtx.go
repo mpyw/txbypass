@@ -51,3 +51,12 @@ func Region(ctx context.Context, db *pg.DB) error {
 	_, err = db.Exec("INSERT INTO ledger VALUES (2)")
 	return err
 }
+
+// Close rolls back a transaction that has not ended. Its fact says it ends
+// its receiver, so nothing after it is inside.
+func Closed(db *pg.DB) {
+	tx, _ := db.Begin()
+	tx.Exec("INSERT INTO ledger VALUES (1)")
+	tx.Close()
+	db.Exec("after close")
+}
