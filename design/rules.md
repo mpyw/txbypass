@@ -235,7 +235,7 @@ An instruction is in the region when the transaction is open there on every path
 | Not in the region | Why |
 | --- | --- |
 | A deferred statement of the function that holds the begin | It runs when the function returns. A deferred statement in a function literal runs when the literal returns, so it is read |
-| A function given to `t.Cleanup`, anywhere in a scope | It runs after the test returns, as a deferred call does. A rollback in it does not end the region, and a use in it is not read. A call among the arguments of `t.Cleanup` or of a deferred call runs where it stands, so it is read |
+| A function given to `t.Cleanup`, anywhere in a scope | It runs after the test returns, as a deferred call does. A rollback in it does not end the region, and a use in it is not read. A call among the arguments of `t.Cleanup` or of a deferred call runs where it stands, so it is read. A test helper of the package may use a handle only in a function it gives to `t.Cleanup`, as one that drops a table. Giving it the handle is no use either |
 | Code after a branch that may end the transaction | Not every path leaves it open |
 
 The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. A begin with no error result, as gorm's `Begin`, reports failure in the transaction's `Error` field, so `tx.Error` is its error. That is the field of the begin's value only: `tx.Create(u).Error` is another statement's error. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.

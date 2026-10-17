@@ -650,3 +650,35 @@ func BatchLoader(db *sql.DB, rows []string) error {
 	}
 	return tx.Commit()
 }
+
+// dropOnCleanup uses db only after the test.
+func dropOnCleanup(tb testing.TB, db *sql.DB, table string) {
+	tb.Cleanup(func() {
+		db.Exec("DROP TABLE " + table)
+	})
+}
+
+// dropNow uses db at once.
+func dropNow(tb testing.TB, db *sql.DB, table string) {
+	db.Exec("DROP TABLE " + table)
+}
+
+// dropSoon uses db in a literal it runs at once.
+func dropSoon(db *sql.DB, table string) {
+	drop := func() { db.Exec("DROP TABLE " + table) }
+	drop()
+}
+
+// Not reported: the helper only registers a cleanup with the pool, which
+// runs after the test. A helper that uses the pool at once is reported.
+func CleanupHelper(t *testing.T, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Exec("CREATE TABLE t (id int)")
+	dropOnCleanup(t, db, "t")
+	dropNow(t, db, "u") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	dropSoon(db, "v")   // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	tx.Commit()
+}
