@@ -121,3 +121,48 @@ func RollbackReturnsAtOnceInRangeFunc(db *sql.DB, items iter.Seq[int]) error {
 	db.Ping() // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
+
+// Not reported: a labeled break out of the outer loop, after a rollback,
+// goes on after the loops.
+func RollbackBreaksOuterInRangeFunc(db *sql.DB, batches []iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+outer:
+	for _, batch := range batches {
+		for it := range batch {
+			if it < 0 {
+				tx.Rollback()
+				break outer
+			}
+		}
+	}
+	db.Exec("UPDATE imports SET finished = true")
+	return nil
+}
+
+// insertAll rolls the transaction back and returns when an insert fails,
+// so it ends its parameter.
+func insertAll(tx *sql.Tx, rows iter.Seq[int]) error { // want insertAll:"closes\\[0\\]"
+	for r := range rows {
+		if _, err := tx.Exec("INSERT", r); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return nil
+}
+
+// Not reported: insertAll may have rolled the transaction back.
+func ImportThroughHelper(db *sql.DB, rows iter.Seq[int]) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := insertAll(tx, rows); err != nil {
+		db.Exec("INSERT INTO import_failures VALUES (1)")
+		return err
+	}
+	return tx.Commit()
+}
