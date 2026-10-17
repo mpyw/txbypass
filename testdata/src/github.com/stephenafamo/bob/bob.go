@@ -36,11 +36,15 @@ type Tx struct {
 	*sql.Tx
 }
 
+func (d DB) Begin(ctx context.Context) (Tx, error) { return d.BeginTx(ctx, nil) }
+
 func (d DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return Tx{}, nil }
 
 func (d DB) RunInTx(ctx context.Context, txOptions *sql.TxOptions, fn func(context.Context, Transaction) error) error {
 	return nil
 }
+
+func (d Conn) Begin(ctx context.Context) (Tx, error) { return d.BeginTx(ctx, nil) }
 
 func (d Conn) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return Tx{}, nil }
 

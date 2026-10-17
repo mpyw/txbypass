@@ -30,7 +30,11 @@ func (db *baseDB) RunInTransaction(ctx context.Context, fn func(*Tx) error) erro
 
 func (tx *Tx) Exec(query interface{}, params ...interface{}) (interface{}, error) { return nil, nil }
 
-func (tx *Tx) RunInTransaction(ctx context.Context, fn func(*Tx) error) error { return nil }
+// Begin returns current transaction. It does not start new transaction.
+func (tx *Tx) Begin() (*Tx, error) { return tx, nil }
+
+// RunInTransaction runs fn on the same transaction.
+func (tx *Tx) RunInTransaction(ctx context.Context, fn func(*Tx) error) error { return fn(tx) }
 
 func (tx *Tx) Commit() error { return nil }
 

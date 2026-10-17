@@ -15,11 +15,23 @@ func Callback(ctx context.Context, db *pg.DB) error {
 	})
 }
 
-func Savepoint(ctx context.Context, tx *pg.Tx) error {
+// Not reported: Tx's RunInTransaction runs fn on the same transaction, so
+// tx and inner are one. go-pg opens no savepoint.
+func SameTx(ctx context.Context, tx *pg.Tx) error {
 	return tx.RunInTransaction(ctx, func(inner *pg.Tx) error {
-		_, err := tx.Exec("INSERT INTO ledger VALUES (1)") // want `^tx bypasses the transaction opened with RunInTransaction; use inner instead \[outer-handle\]$`
+		_, err := tx.Exec("INSERT INTO ledger VALUES (1)")
 		return err
 	})
+}
+
+// Not reported: Tx's Begin returns the same transaction.
+func SameBegin(tx *pg.Tx) error {
+	same, err := tx.Begin()
+	if err != nil {
+		return err
+	}
+	tx.Exec("INSERT INTO ledger VALUES (1)")
+	return same.Commit()
 }
 
 func Region(ctx context.Context, db *pg.DB) error {

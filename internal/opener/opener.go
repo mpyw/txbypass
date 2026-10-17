@@ -107,9 +107,9 @@ var knownOpeners = []known{
 	{pkg: "github.com/upper/db/v4", recv: "Session", name: "TxContext", outer: -1, callback: 1, tx: 0},
 
 	// go-pg v10: RunInTransaction(ctx, fn func(*Tx) error) of DB, through its embedded
-	// baseDB, and of Tx.
+	// baseDB. Tx has one too, but it runs fn on the same transaction: go-pg opens no
+	// savepoint.
 	{pkg: "github.com/go-pg/pg/v10", recv: "baseDB", name: "RunInTransaction", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-pg/pg/v10", recv: "Tx", name: "RunInTransaction", outer: -1, callback: 1, tx: 0},
 
 	// xorm v1.3 and v2: func (engine *Engine) Transaction(f func(*Session) (any, error)) (any, error)
 	{pkg: "xorm.io/xorm", recv: "Engine", name: "Transaction", outer: -1, callback: 0, tx: 0},
@@ -250,13 +250,16 @@ var knownBegins = []known{
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "BeginTx"},
 	{pkg: "github.com/uptrace/bun", recv: "Conn", name: "BeginTx"},
 	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "BeginTx"},
-	// bob
+	// bob: Begin(ctx) and BeginTx(ctx, opts) of DB and Conn.
+	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "Begin"},
 	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "BeginTx"},
+	{pkg: "github.com/stephenafamo/bob", recv: "Conn", name: "Begin"},
 	{pkg: "github.com/stephenafamo/bob", recv: "Conn", name: "BeginTx"},
 	// goqu
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "Begin"},
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "BeginTx"},
-	// go-pg, through DB's embedded baseDB.
+	// go-pg, through DB's embedded baseDB. Tx.Begin returns the same transaction, so
+	// it is no begin.
 	{pkg: "github.com/go-pg/pg/v10", recv: "baseDB", name: "Begin"},
 	{pkg: "github.com/go-pg/pg/v10", recv: "baseDB", name: "BeginContext"},
 	// pop: the transaction is a *Connection of its own.
