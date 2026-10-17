@@ -69,6 +69,32 @@ func Begin(ctx context.Context, db *bun.DB, u *User) error {
 	return tx.Commit()
 }
 
+// Begin of DB, BeginTx of the IDB interface, and Begin of Tx, a savepoint.
+func Begins(ctx context.Context, db *bun.DB, idb bun.IDB, u *User) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	db.NewInsert().Model(u).Exec(ctx) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	tx2, err := idb.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	idb.NewInsert().Model(u).Exec(ctx) // want `^idb bypasses the transaction opened with BeginTx; use tx2 instead \[outer-handle\]$`
+	sp, err := tx2.Begin()
+	if err != nil {
+		return err
+	}
+	tx2.NewInsert().Model(u).Exec(ctx) // want `^tx2 bypasses the transaction opened with Begin; use sp instead \[outer-handle\]$`
+	if err := sp.Commit(); err != nil {
+		return err
+	}
+	return tx2.Commit()
+}
+
 // ===== Not reported =====
 
 func Clean(ctx context.Context, db *bun.DB, u *User) error {

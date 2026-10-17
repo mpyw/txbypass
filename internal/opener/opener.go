@@ -202,6 +202,29 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	return o, true
 }
 
+// endings are the names of the methods that end a transaction. go-pg's take
+// a context as CommitContext and RollbackContext.
+var endings = map[string]bool{"Commit": true, "Rollback": true, "CommitContext": true, "RollbackContext": true}
+
+// Ending reports whether a method of this name ends a transaction.
+func Ending(name string) bool {
+	return endings[name]
+}
+
+// Holds reports whether a value of type t has a method that ends a
+// transaction, directly or through a pointer to it.
+func Holds(t types.Type) bool {
+	for _, mt := range []types.Type{t, types.NewPointer(t)} {
+		ms := types.NewMethodSet(mt)
+		for i := range ms.Len() {
+			if endings[ms.At(i).Obj().Name()] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Begin is one call that returns a transaction, and the variables it is
 // assigned to.
 type Begin struct {
@@ -246,10 +269,14 @@ var knownBegins = []known{
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginTx"},
 	// gorm: func (db *DB) Begin(opts ...*sql.TxOptions) *DB
 	{pkg: "gorm.io/gorm", recv: "DB", name: "Begin"},
-	// bun: BeginTx of DB, Conn, and Tx (a savepoint).
+	// bun: Begin of DB and Tx, and BeginTx of DB, Conn, Tx, and the IDB interface. On a
+	// Tx, they open a savepoint.
+	{pkg: "github.com/uptrace/bun", recv: "DB", name: "Begin"},
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "BeginTx"},
 	{pkg: "github.com/uptrace/bun", recv: "Conn", name: "BeginTx"},
+	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "Begin"},
 	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "BeginTx"},
+	{pkg: "github.com/uptrace/bun", recv: "IDB", name: "BeginTx"},
 	// bob: Begin(ctx) and BeginTx(ctx, opts) of DB and Conn.
 	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "Begin"},
 	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "BeginTx"},
@@ -317,7 +344,8 @@ func IsBeginFunc(fn *types.Func) bool {
 // entBegin reports whether fn is the Tx or BeginTx method of a client that
 // ent generated. ent writes the client into the caller's package, so it has
 // no package path to look up. Its shape does: a method of Client that
-// returns a *Tx and an error, whose Client method gives the *Client back.
+// returns a *Tx and an error. The *Tx can be committed or rolled back, and
+// its Client method gives the *Client back.
 func entBegin(fn *types.Func) bool {
 	if fn.Name() != "Tx" && fn.Name() != "BeginTx" || recvName(fn) != "Client" {
 		return false
@@ -327,7 +355,7 @@ func entBegin(fn *types.Func) bool {
 		return false
 	}
 	ptr, ok := res.At(0).Type().(*types.Pointer)
-	if !ok {
+	if !ok || !Holds(ptr) {
 		return false
 	}
 	back, _, _ := types.LookupFieldOrMethod(ptr, false, fn.Pkg(), "Client")
