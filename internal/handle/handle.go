@@ -154,9 +154,6 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 	}
 	made, ok := program.Creation(fn)
 	if !ok {
-		// Unreachable: only a literal that is made is read. walkScope skips
-		// the others. closer reads a literal that a live call names, and a
-		// closure that something uses, which program.Creation finds.
 		return nil, false
 	}
 	return made.(*ssa.MakeClosure).Bindings[slices.Index(fn.FreeVars, v)], true

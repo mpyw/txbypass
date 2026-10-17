@@ -113,6 +113,11 @@ func (c *checker) runFile(f *ast.File) {
 			case *ast.FuncDecl:
 				c.checkOuterHandleBegins(outer, n.Body)
 			case *ast.FuncLit:
+				// A literal that is never made never runs, and neither does
+				// anything inside it.
+				if _, made := program.Creation(c.prog.Func(n)); !made {
+					return false
+				}
 				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
 			case *ast.CallExpr:
 				c.runCall(n, c.runEnclosing(outer, stack))

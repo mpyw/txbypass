@@ -133,7 +133,9 @@ func Call(fn *ssa.Function, call *ast.CallExpr) (*ssa.Call, bool) {
 // that binds its free variables, or, for a literal with none, the
 // instruction that names it. A literal in code that no path reaches, or
 // assigned to the blank identifier, is made by none: it never runs. A
-// closure that nothing uses but a debug reference does not count.
+// closure that nothing uses but a debug reference does not count. A call
+// that names a literal runs it, so it counts even when its result is not
+// used.
 func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 	var rands []*ssa.Value
 	for _, b := range fn.Parent().Blocks {
@@ -142,13 +144,20 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 				continue
 			}
 			for _, r := range instr.Operands(rands[:0]) {
-				if *r == fn && Used(instr) {
+				if *r == fn && (runs(instr) || Used(instr)) {
 					return instr, true
 				}
 			}
 		}
 	}
 	return nil, false
+}
+
+// runs reports whether instr is a call, a go or a defer, which runs what it
+// names whatever becomes of its result.
+func runs(instr ssa.Instruction) bool {
+	_, ok := instr.(ssa.CallInstruction)
+	return ok
 }
 
 // Used reports whether instr is used by anything but a debug reference. An

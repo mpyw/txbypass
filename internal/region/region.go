@@ -143,7 +143,8 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 }
 
 // lastStored reports whether every path to instruction at of b last stores
-// v to addr. A path that reaches the entry with no store to addr does not.
+// v to addr. A variable stored on one path only has a path that reaches the
+// entry with no store, so it is not the begin's error.
 // A block met again around a loop leaves the answer to the other paths.
 func lastStored(b *ssa.BasicBlock, at int, addr, v ssa.Value, seen map[*ssa.BasicBlock]bool) bool {
 	for i := at - 1; i >= 0; i-- {
@@ -151,10 +152,9 @@ func lastStored(b *ssa.BasicBlock, at int, addr, v ssa.Value, seen map[*ssa.Basi
 			return st.Val == v
 		}
 	}
+	// A path that reaches the entry stored nothing to addr, so addr does not
+	// hold the begin's error there.
 	if len(b.Preds) == 0 {
-		// Unreachable: failed asks only where the region is open, so every
-		// path to the check passes the begin, which stores its error right
-		// after the call. The walk back stops there.
 		return false
 	}
 	if seen[b] {
