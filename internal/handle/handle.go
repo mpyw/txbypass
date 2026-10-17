@@ -254,7 +254,9 @@ func fieldOf(t types.Type, i int) *types.Var {
 	if ptr, ok := t.Underlying().(*types.Pointer); ok {
 		t = ptr.Elem()
 	}
-	return t.Underlying().(*types.Struct).Field(i)
+	// A literal of a type parameter, as T{id} with T ~struct{ ID int },
+	// selects a field of its core type.
+	return program.Core(t).(*types.Struct).Field(i)
 }
 
 // binding is the value that the closure making v's function binds v to. A

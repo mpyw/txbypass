@@ -719,3 +719,16 @@ func ContextCarriesTx(ctx context.Context, db *sql.DB) error {
 	db.ExecContext(ctx, "SELECT $1", countRows(tx)) // want `^db bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
+
+// A literal of a type parameter whose core type is a struct, in a region.
+func SaveGeneric[T ~struct{ ID int }](db *sql.DB, id int) (T, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	defer tx.Rollback()
+	v := T{id}
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return v, tx.Commit()
+}

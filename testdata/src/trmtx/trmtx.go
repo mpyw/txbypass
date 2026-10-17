@@ -109,3 +109,13 @@ func FrameworkInterface(c Ctx, m *manager.Manager) error {
 		return save(ctx)
 	})
 }
+
+// Literals and channels of a type parameter with a core type.
+func GenericSlots[S ~[]context.Context, M ~map[string]context.Context, C ~chan context.Context](ctx context.Context, m *manager.Manager, ch C) error {
+	return m.Do(ctx, func(txCtx context.Context) error {
+		_ = S{ctx}      // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		_ = M{"a": ctx} // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		ch <- ctx       // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		return save(txCtx)
+	})
+}

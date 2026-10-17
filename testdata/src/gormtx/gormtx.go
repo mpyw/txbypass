@@ -321,3 +321,12 @@ func KeptBeside(db *gorm.DB) *adminTX {
 	})
 	return kept
 }
+
+// A literal of a type parameter whose core type is a struct.
+func SaveGeneric[T ~struct{ ID int }](db *gorm.DB, id int) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		v := T{id}
+		_ = v
+		return db.Create(&User{}).Error // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
