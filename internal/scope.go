@@ -97,6 +97,29 @@ func scopeMetadata(info *types.Info, e ast.Expr) bool {
 	return ok && scopeMetadataMethods[[3]string{fn.Pkg().Path(), named.Obj().Name(), fn.Name()}]
 }
 
+// scopeInert reports whether e only reads a value of the handle that runs
+// nothing: a field of a basic type or an error, as gorm's
+// db.Create(x).Error or RowsAffected, or a variable that holds one. The
+// statement that set it was read where it ran. Reading it again is no
+// statement. A handle whose only use is such a read, as res in res.Error,
+// is read there too.
+func scopeInert(info *types.Info, e ast.Expr, stack []ast.Node) bool {
+	if scopeInertType(info.TypeOf(e)) {
+		return true
+	}
+	// A scope's root is a block, so an expression has a parent.
+	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
+	return ok && sel.X == e && info.Selections[sel] != nil && info.Selections[sel].Kind() == types.FieldVal && scopeInertType(info.TypeOf(sel))
+}
+
+// scopeInertType reports whether t is a basic type or error.
+func scopeInertType(t types.Type) bool {
+	if _, ok := t.Underlying().(*types.Basic); ok {
+		return true
+	}
+	return types.Identical(t, types.Universe.Lookup("error").Type())
+}
+
 // scopeMethod is the selection of the method that e selects, or nil.
 func scopeMethod(info *types.Info, e ast.Expr) *types.Selection {
 	sel, ok := e.(*ast.SelectorExpr)
@@ -413,7 +436,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if scopeChainsOn(e, exempt) {
 			return !exempt[e]
 		}
-		if !c.paths.Of(ref.X).Within(outer) {
+		if !c.paths.Of(ref.X).Within(outer) || scopeInert(info, e, stack) {
 			return true
 		}
 		if !scopeMetadata(info, e) {

@@ -39,10 +39,27 @@ func Global(u *User) error {
 	})
 }
 
-// Reading a field of the handle is a use of it.
+// Not reported: reading an error of the handle runs no statement.
 func Field(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		return db.Error // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		return db.Error
+	})
+}
+
+// The statement is reported once. Reading its error, or its result,
+// afterwards runs nothing, and an ignore on the statement leaves no report.
+func StatementResult(db *gorm.DB, u *User) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		//txbypass:ignore outer-handle // must survive a rollback
+		logErr := db.Create(u).Error
+		if logErr != nil {
+			return logErr
+		}
+		res := db.Create(u) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		if res.Error != nil || res.RowsAffected == 0 {
+			return res.Error
+		}
+		return nil
 	})
 }
 

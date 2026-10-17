@@ -14,8 +14,9 @@ import (
 
 // DB is a handle, a session, or a transaction.
 type DB struct {
-	Error     error
-	Statement *Statement
+	Error        error
+	RowsAffected int64
+	Statement    *Statement
 }
 
 // Statement is the statement a DB builds, and the pool it runs on.
