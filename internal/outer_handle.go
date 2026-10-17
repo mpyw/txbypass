@@ -67,7 +67,11 @@ func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) 
 
 // checkOuterHandleBegin reports the uses of b's handle in its region.
 func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b opener.Begin) {
-	call := program.Call(fn, b.Call)
+	call, ok := program.Call(fn, b.Call)
+	if !ok {
+		// The begin is in code that no path reaches. It never runs.
+		return
+	}
 	var tx, err ssa.Value = call, nil
 	for _, ref := range *call.Referrers() {
 		if ex, ok := ref.(*ssa.Extract); ok {

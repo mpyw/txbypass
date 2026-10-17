@@ -128,16 +128,23 @@ func fieldOf(t types.Type, i int) *types.Var {
 }
 
 // binding is the value that the closure making v's function binds v to. A
-// literal with free variables is always made by a closure. A synthetic
-// function, such as the wrapper of a bound method value, has no parent to
-// read, so its free variable is a root of its own.
+// literal with free variables is made by a closure, when it is made at all.
+// A synthetic function, such as the wrapper of a bound method value, has no
+// parent to read, and a literal that is never made binds nothing. Their
+// free variables are roots of their own.
 func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 	fn := v.Parent()
 	if fn.Parent() == nil {
 		return nil, false
 	}
-	mc := program.Creation(fn).(*ssa.MakeClosure)
-	return mc.Bindings[slices.Index(fn.FreeVars, v)], true
+	made, ok := program.Creation(fn)
+	if !ok {
+		// Unreachable: only a literal that is made is read. walkScope skips
+		// the others, and closer reads the literals that a live call or
+		// closure names.
+		return nil, false
+	}
+	return made.(*ssa.MakeClosure).Bindings[slices.Index(fn.FreeVars, v)], true
 }
 
 // onlyStore is the value a variable in memory holds, when one store writes
