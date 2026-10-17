@@ -133,6 +133,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
+| The core type is read from the whole type set | A constraint may embed an interface that holds the terms, as `Entity` embeds `Keyed`. An interface allows what all its embedded types allow, and a union what any term allows |
 
 ## Scopes that build or rebind
 

@@ -185,39 +185,51 @@ func Core(t types.Type) types.Type {
 	if !ok {
 		return t.Underlying()
 	}
-	var core types.Type
-	for term := range unionTerms(tp.Underlying().(*types.Interface)) {
-		u := term.Type().Underlying()
-		if core != nil && !types.Identical(core, u) {
-			return tp.Underlying()
-		}
-		core = u
-	}
-	if core == nil {
+	set := typeSet(tp.Constraint())
+	if set.all || len(set.types) == 0 || slices.ContainsFunc(set.types, func(u types.Type) bool { return !types.Identical(u, set.types[0]) }) {
 		return tp.Underlying()
 	}
-	return core
+	return set.types[0]
 }
 
-// unionTerms lists the terms of the types iface embeds.
-func unionTerms(iface *types.Interface) func(func(*types.Term) bool) {
-	return func(yield func(*types.Term) bool) {
-		for e := range iface.EmbeddedTypes() {
-			// A constraint that is a type, as [P Row], embeds the type. An
-			// embedded interface, as comparable, adds no term.
-			terms := []*types.Term{types.NewTerm(false, e)}
-			if union, ok := e.(*types.Union); ok {
-				terms = slices.Collect(union.Terms())
-			} else if types.IsInterface(e) {
-				terms = nil
-			}
-			for _, term := range terms {
-				if !yield(term) {
-					return
-				}
-			}
+// underlyings is a set of underlying types, or every type.
+type underlyings struct {
+	all   bool
+	types []types.Type
+}
+
+// typeSet is the set of underlying types t allows as a constraint. An
+// interface allows what all its embedded types allow, and a union what
+// any of its terms allows. Its methods narrow no underlying type.
+func typeSet(t types.Type) underlyings {
+	switch t := types.Unalias(t).(type) {
+	case *types.Union:
+		var set underlyings
+		for term := range t.Terms() {
+			s := typeSet(term.Type())
+			set.all = set.all || s.all
+			set.types = append(set.types, s.types...)
+		}
+		return set
+	}
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return underlyings{types: []types.Type{t.Underlying()}}
+	}
+	set := underlyings{all: true}
+	for e := range iface.EmbeddedTypes() {
+		s := typeSet(e)
+		switch {
+		case s.all:
+		case set.all:
+			set = s
+		default:
+			set.types = slices.DeleteFunc(set.types, func(u types.Type) bool {
+				return !slices.ContainsFunc(s.types, func(v types.Type) bool { return types.Identical(u, v) })
+			})
 		}
 	}
+	return set
 }
 
 // Yield reports whether fn is the function the builder makes of the body
