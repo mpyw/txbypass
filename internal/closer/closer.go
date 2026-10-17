@@ -274,10 +274,25 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 
 // within reports whether v is stored where one of txs is, or in a field of
 // one. A transaction kept in a variable assigned twice counts: a commit on
-// a load of it may end the one this region began.
+// a load of it may end the one this region began. So does a phi that one
+// of its edges gives the transaction to, as tx after tx, err = db.Begin()
+// in a loop that commits and begins again.
 func (c *Closer) within(v ssa.Value, txs []handle.Path) bool {
+	return c.mayHold(v, txs, make(map[*ssa.Phi]bool))
+}
+
+// mayHold is within, with the phis already read.
+func (c *Closer) mayHold(v ssa.Value, txs []handle.Path, seen map[*ssa.Phi]bool) bool {
 	p := c.paths.Of(v)
-	return slices.ContainsFunc(txs, p.Stored)
+	if slices.ContainsFunc(txs, p.Stored) {
+		return true
+	}
+	phi, ok := p.Root().(*ssa.Phi)
+	if !ok || p.Depth() > 0 || seen[phi] {
+		return false
+	}
+	seen[phi] = true
+	return slices.ContainsFunc(phi.Edges, func(e ssa.Value) bool { return c.mayHold(e, txs, seen) })
 }
 
 // Export exports the fact of each function of the package that ends a

@@ -625,3 +625,28 @@ func CleanupInLiteral(t *testing.T, db *sql.DB) {
 	seed(1)
 	tx.Commit()
 }
+
+// Not reported: a batch loader commits every thousand rows and begins
+// again. The commit on tx, which is either begin's, may end the first.
+func BatchLoader(db *sql.DB, rows []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for i, r := range rows {
+		if _, err := tx.Exec("INSERT", r); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if i%1000 == 999 {
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			tx, err = db.Begin()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
