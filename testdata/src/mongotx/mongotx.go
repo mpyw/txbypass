@@ -106,3 +106,35 @@ func UseSessionWithOptionsV1(ctx context.Context, client *mongo1.Client, coll *m
 		return err
 	})
 }
+
+// ===== A transaction on the session a callback's context carries =====
+
+// Not reported: sc carries the session, and WithTransaction runs on it, so
+// a statement on sc runs inside the transaction.
+func TransactionInSession(ctx context.Context, sess *mongo.Session, coll *mongo.Collection) error {
+	return mongo.WithSession(ctx, sess, func(sc context.Context) error {
+		_, err := sess.WithTransaction(sc, func(txc context.Context) (any, error) {
+			return coll.InsertOne(sc, "doc")
+		})
+		return err
+	})
+}
+
+func TransactionInSessionV1(ctx context.Context, session mongo1.Session, coll *mongo.Collection) error {
+	return mongo1.WithSession(ctx, session, func(sc mongo1.SessionContext) error {
+		_, err := session.WithTransaction(sc, func(tc mongo1.SessionContext) (interface{}, error) {
+			return coll.InsertOne(sc, "doc")
+		})
+		return err
+	})
+}
+
+// The context the session callback was given is still the outer one.
+func TransactionInSessionOuter(ctx context.Context, sess *mongo.Session, coll *mongo.Collection) error {
+	return mongo.WithSession(ctx, sess, func(sc context.Context) error {
+		_, err := sess.WithTransaction(sc, func(txc context.Context) (any, error) {
+			return coll.InsertOne(ctx, "doc") // want `^ctx bypasses the transaction opened with mongo\.WithSession; use sc instead \[outer-context\]$`
+		})
+		return err
+	})
+}
