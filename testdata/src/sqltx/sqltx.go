@@ -267,3 +267,41 @@ func PoolMetadata(db *sql.DB) error {
 	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
+
+// PoolStore keeps the pool beside the transaction it is bound to.
+type PoolStore struct {
+	db *sql.DB
+	tx *sql.Tx
+}
+
+func newPoolStore(db *sql.DB, tx *sql.Tx) *PoolStore { return &PoolStore{db: db, tx: tx} }
+
+// Not reported: a constructor that takes the transaction too keeps the
+// pool beside it, as the composite literal does.
+func (s *PoolStore) BeginCtor() (*PoolStore, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return newPoolStore(s.db, tx), nil
+}
+
+func (s *PoolStore) BeginLit() (*PoolStore, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return &PoolStore{db: s.db, tx: tx}, nil
+}
+
+func auditPool(db *sql.DB) {}
+
+// A call that takes the pool alone is still a use.
+func (s *PoolStore) BeginAudit() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	auditPool(s.db) // want `^s\.db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}
