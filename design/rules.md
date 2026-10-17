@@ -215,6 +215,8 @@ An instruction is in the region when the transaction is open there on every path
 
 The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. A begin with no error result, as gorm's `Begin`, reports failure in the transaction's `Error` field, so `tx.Error` is its error. That is the field of the begin's value only: `tx.Create(u).Error` is another statement's error. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
 
+A test may assert that the begin failed instead, with testify's `require.Error`, `ErrorIs`, `ErrorAs` or `ErrorContains`, or their `f` forms and the methods of `require.Assertions`. Each returns only when the error is set, so no transaction is open after it. `assert` returns either way, so it changes nothing.
+
 An error can live in memory, as a named result that a deferred literal reads. A load of it counts when every path to the load last stored the begin's error there. With gorm, that is a store of `tx.Error`, as `err = tx.Error`. A branch between the begin and the check changes nothing, but another error stored on one path does.
 
 A transaction given to a function value or an interface method, whose body is not known, stays open.

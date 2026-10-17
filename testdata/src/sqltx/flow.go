@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"txhelper"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ===== Values the transaction moves through =====
@@ -513,4 +515,41 @@ func CommitThroughRetry(db *sql.DB) error {
 	}
 	db.Exec("SELECT 1")
 	return nil
+}
+
+// Not reported: require.Error returns only when the begin failed, so no
+// transaction began where the test goes on.
+func RequireBeginFails(t require.TestingT, db *sql.DB) {
+	tx, err := db.Begin()
+	require.Error(t, err)
+	_ = tx
+	db.Exec("SELECT 1")
+}
+
+// Not reported: the same through bound assertions.
+func RequireBeginFailsBound(t require.TestingT, db *sql.DB) {
+	req := require.New(t)
+	tx, err := db.Begin()
+	req.Error(err)
+	_ = tx
+	db.Exec("SELECT 1")
+}
+
+// NoError returns when the begin succeeded, so the transaction is open.
+func RequireBeginSucceeds(t require.TestingT, db *sql.DB) {
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	tx.Commit()
+}
+
+// Another error asserted is not the begin's.
+func RequireOtherFails(t require.TestingT, db *sql.DB, other error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	require.ErrorIs(t, other, err)
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	tx.Commit()
 }
