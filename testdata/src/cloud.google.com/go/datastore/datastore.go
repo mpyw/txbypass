@@ -57,3 +57,18 @@ func (c *Client) GetAll(ctx context.Context, q *Query, dst interface{}) (keys []
 }
 
 func (c *Client) Run(ctx context.Context, q *Query) (it *Iterator) { return nil }
+
+// AggregationQuery is an aggregation over a query.
+type AggregationQuery struct{}
+
+// AggregationResult is the result of an aggregation.
+type AggregationResult map[string]interface{}
+
+// NewAggregationQuery aggregates over q, in the transaction q runs in.
+func (q *Query) NewAggregationQuery() *AggregationQuery { return &AggregationQuery{} }
+
+func (aq *AggregationQuery) WithCount(alias string) *AggregationQuery { return aq }
+
+func (c *Client) RunAggregationQuery(ctx context.Context, aq *AggregationQuery) (AggregationResult, error) {
+	return nil, nil
+}
