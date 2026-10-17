@@ -131,11 +131,12 @@ A handle is a root value and the fields selected from it. The root is what the S
 | A conversion, a conversion to an interface, or an assertion that panics when it fails | What it converts |
 | A phi whose edges all give one handle | That handle. An edge back to the phi, around a loop, gives nothing |
 | A free variable of a literal | What the closure binds it to |
+| The address of a variable or a field, as the receiver of `r.db.Begin()` when `db` is held by value | The handle it holds |
 | Anything else | A root of its own |
 
 Two values are the same handle when they have the same root and the same fields. Embedded fields at the end of either are left out: a value is the handle it embeds. So `s` and `s.DB` are one handle when `s` embeds `*gorm.DB`. A parameter of the callback with the outer handle's name is another value. So is a variable assigned in two places with two handles.
 
-A use is an expression with a value in the SSA form. A variable on the left of an assignment, or in its declaration, is written, not used.
+A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names.
 
 ## Scopes
 
@@ -187,7 +188,7 @@ A function ends its parameter when its body calls one of the ending methods on i
 | Of the package being analyzed | Directly, through the generic origin of an instance. A call of itself counts as no end |
 | Of another package | Through the fact `closes[i...]` that the analysis of that package exports. The receiver of a method is parameter 0 |
 
-A library's own methods are helpers too. go-pg's `Tx.Close` calls `RollbackContext` when the transaction has not ended, so its fact says it ends its receiver, and a region ends there.
+A library's own methods are helpers too. go-pg's `Tx.Close` calls `RollbackContext` when the transaction has not ended. So its fact says it ends its receiver, and a region ends there.
 
 A store or a send inside a helper does not count. A library's own methods store their receiver in many places, and would seem to end it.
 

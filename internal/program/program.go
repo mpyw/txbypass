@@ -67,9 +67,10 @@ func (p *Program) Funcs() []*ssa.Function {
 	return out
 }
 
-// Ref is the debug reference of e in fn: the value e evaluates to, and the
-// instruction where it does. An expression that is not evaluated as a
-// value, such as a type, or the method in a call, has none.
+// Ref is the debug reference of e in fn: the value e evaluates to, or its
+// address when e is a variable used through its address, and the
+// instruction where it does. An expression that is not evaluated, such as
+// a type, or the method in a call, has none.
 func (p *Program) Ref(fn *ssa.Function, e ast.Expr) (*ssa.DebugRef, bool) {
 	refs, ok := p.refs[fn]
 	if !ok {
@@ -83,8 +84,17 @@ func (p *Program) Ref(fn *ssa.Function, e ast.Expr) (*ssa.DebugRef, bool) {
 		}
 		p.refs[fn] = refs
 	}
-	ref, ok := refs[ast.Unparen(e)]
-	return ref, ok
+	e = ast.Unparen(e)
+	if ref, ok := refs[e]; ok {
+		return ref, true
+	}
+	// A field whose address is taken, as the receiver of r.db.Begin() when
+	// db is held by value, has its reference on the name after the dot.
+	if sel, ok := e.(*ast.SelectorExpr); ok {
+		ref, ok := refs[sel.Sel]
+		return ref, ok && ref.IsAddr
+	}
+	return nil, false
 }
 
 // Call is the SSA call of call, in fn. A call whose results are assigned
