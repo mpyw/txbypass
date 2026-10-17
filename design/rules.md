@@ -158,7 +158,7 @@ In a callback, a function literal kept for after it is not read. Such a literal 
 
 A literal given to any other call, as `after = wrap(func() {...})`, is still read: the call may run it inside the callback.
 
-Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`.
+Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`, nor a begin or an opener inside one. A literal that a call runs is made, whatever becomes of the call's result, as `func() {...}()` or `g.Go(func() error {...})`.
 
 Once an expression is reported, nothing inside it is read again. A position is reported once for each rule. A use inside two transactions opened on the same handle is reported for the first one that reads it.
 

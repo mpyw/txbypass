@@ -3,6 +3,7 @@ package sqltx
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 
 	"txhelper"
@@ -416,6 +417,24 @@ func NamedErrLoop(db *sql.DB, n int) (err error) {
 			db.Exec("INSERT INTO failures VALUES (1)")
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// A variable in memory stored on one path only, compared with nil while the
+// transaction is open, is not the begin's error.
+func StoredOnOnePath(db *sql.DB, retry bool) (err error) {
+	var last error
+	defer func() { _ = last }()
+	tx, e := db.Begin()
+	if e != nil {
+		return e
+	}
+	if retry {
+		last = errors.New("retry")
+	}
+	if last != nil {
+		db.Exec("y") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	}
 	return tx.Commit()
 }
