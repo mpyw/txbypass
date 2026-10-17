@@ -101,7 +101,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | --- | --- |
 | On every path, not on some | A transaction that may have ended gives false reports. A miss is better than a false report |
 | The begin's error is its own SSA value | `err` is reused. A later `if err != nil` checks another call's error, and the SSA form says so without a rule about where the check is |
-| An error in memory counts only when loaded in the begin's block, after the begin stored it | A named result read by a deferred literal is not lifted. Following its stores further needs the same analysis again |
+| An error in memory counts when every path to its load last stored the begin's error | A named result read by a deferred literal is not lifted. The walk back through the blocks stops at the first store on each path |
 | A deferred statement is outside | It runs at the return, after the commit that usually precedes it |
 | A use in a function literal is placed where the literal is made | That is where a goroutine starts, or where a literal called on the spot runs |
 | A transaction stored, sent, or given away inside a literal ends the region | Code this analysis does not read may end it. A miss is better than a false report |

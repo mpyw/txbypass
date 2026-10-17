@@ -186,7 +186,7 @@ An instruction is in the region when the transaction is open there on every path
 
 The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
 
-An error can live in memory, as a named result that a deferred literal reads. It counts when it is loaded in the begin's block, and the last store to it there is the begin's.
+An error can live in memory, as a named result that a deferred literal reads. A load of it counts when every path to the load last stored the begin's error there. A branch between the begin and the check changes nothing, but another error stored on one path does.
 
 A transaction given to a function value or an interface method, whose body is not known, stays open.
 
