@@ -18,13 +18,14 @@ func Pipelined(ctx context.Context, rdb *redis.Client) error {
 	return err
 }
 
-// Inside Watch, the watched connection is tx. Its pipeline is a transaction
-// too.
+// Inside Watch, the watched connection is tx. Its own pipeline is not read:
+// the optimistic pattern reads and watches keys on tx inside it, before
+// MULTI, on purpose. A write there is missed.
 func Watched(ctx context.Context, rdb *redis.Client) error {
 	return rdb.Watch(ctx, func(tx *redis.Tx) error {
 		rdb.Set(ctx, "a", 1, 0) // want `^rdb bypasses the transaction opened with Watch; use tx instead \[outer-handle\]$`
 		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			tx.Set(ctx, "b", 2, 0) // want `^tx bypasses the transaction opened with TxPipelined; use pipe instead \[outer-handle\]$`
+			tx.Set(ctx, "b", 2, 0)
 			return nil
 		})
 		return err

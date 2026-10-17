@@ -125,8 +125,9 @@ var knownOpeners = []known{
 	{pkg: "xorm.io/xorm/v2", recv: "Engine", name: "Transaction", outer: -1, callback: 0, tx: 0},
 
 	// go-redis v9, and v8 under its old path: Watch(ctx, fn func(*Tx) error, keys...) and
-	// TxPipelined(ctx, fn func(Pipeliner) error) of each client, of Tx inside Watch, and of
-	// the interfaces that declare them.
+	// TxPipelined(ctx, fn func(Pipeliner) error) of each client and of the interfaces that
+	// declare them. Tx's TxPipelined is not read: inside Watch, the optimistic pattern reads
+	// and watches keys on tx in it on purpose.
 	{pkg: "github.com/redis/go-redis/v9", recv: "Client", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "Watch", outer: -1, callback: 1, tx: 0},
@@ -135,7 +136,6 @@ var knownOpeners = []known{
 	{pkg: "github.com/redis/go-redis/v9", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
@@ -145,7 +145,6 @@ var knownOpeners = []known{
 	{pkg: "github.com/go-redis/redis/v8", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 
 	// Cloud Firestore: RunTransaction(ctx, f func(context.Context, *Transaction) error, opts...)
@@ -174,13 +173,13 @@ var knownOpeners = []known{
 	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true, session: true},
 	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true, session: true},
 	// go-rel: Transaction(ctx, fn func(ctx context.Context) error) of the Repository interface.
-	{pkg: "github.com/go-rel/rel", recv: "Repository", name: "Transaction", outer: 0, callback: 1, tx: 0, inContext: true},
+	{pkg: "github.com/go-rel/rel", recv: "Repository", name: "Transaction", outer: 0, callback: 1, tx: 0, inContext: true, nests: true},
 	// avito-tech/go-transaction-manager v2: Do(ctx, fn) and DoWithSettings(ctx, s, fn) of the
 	// trm.Manager interface and of manager.Manager.
-	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2", recv: "Manager", name: "Do", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2", recv: "Manager", name: "DoWithSettings", outer: 0, callback: 2, tx: 0, inContext: true},
-	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2/manager", recv: "Manager", name: "Do", outer: 0, callback: 1, tx: 0, inContext: true},
-	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2/manager", recv: "Manager", name: "DoWithSettings", outer: 0, callback: 2, tx: 0, inContext: true},
+	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2", recv: "Manager", name: "Do", outer: 0, callback: 1, tx: 0, inContext: true, nests: true},
+	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2", recv: "Manager", name: "DoWithSettings", outer: 0, callback: 2, tx: 0, inContext: true, nests: true},
+	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2/manager", recv: "Manager", name: "Do", outer: 0, callback: 1, tx: 0, inContext: true, nests: true},
+	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2/manager", recv: "Manager", name: "DoWithSettings", outer: 0, callback: 2, tx: 0, inContext: true, nests: true},
 }
 
 // Of reports the callback opener that call is. It reports nothing for a call
@@ -387,6 +386,13 @@ func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 func CallbackTx(fn *types.Func, i int) bool {
 	k, ok := lookupFunc(fn, knownOpeners)
 	return ok && !k.inContext && k.tx == i
+}
+
+// CallbackContext reports whether fn is an opener whose callback takes, as
+// its parameter i, the context that carries the transaction.
+func CallbackContext(fn *types.Func, i int) bool {
+	k, ok := lookupFunc(fn, knownOpeners)
+	return ok && k.inContext && k.tx == i
 }
 
 // CallbackSession reports whether fn is an opener whose callback takes, as

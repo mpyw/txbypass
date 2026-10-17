@@ -152,3 +152,32 @@ func MethodExpression(ctx context.Context, m *manager.Manager, r saver) error {
 		return save(txCtx)
 	})
 }
+
+// getter has a generic method that takes a context last.
+type getter struct{}
+
+func (getter) Get[T any](id int, ctx context.Context) (T, error) {
+	var zero T
+	return zero, nil
+}
+
+func (getter) Pair[K, V any](ctx context.Context) {}
+
+// The outer context given through a generic method expression.
+func GenericMethodExpression(ctx context.Context, m *manager.Manager, g getter) error {
+	return m.Do(ctx, func(txCtx context.Context) error {
+		_, _ = getter.Get[string](g, 1, ctx) // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		getter.Pair[int, string](g, ctx)     // want `^ctx bypasses the transaction opened with Do; use txCtx instead \[outer-context\]$`
+		return save(txCtx)
+	})
+}
+
+// Not reported: a nested Do given the outer callback's context joins its
+// transaction, so a statement with that context runs inside it.
+func NestedDo(ctx context.Context, m *manager.Manager) error {
+	return m.Do(ctx, func(outer context.Context) error {
+		return m.Do(outer, func(inner context.Context) error {
+			return save(outer)
+		})
+	})
+}

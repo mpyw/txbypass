@@ -78,3 +78,14 @@ func StatementErrorText(db *gorm.DB, u *User) string {
 	})
 	return text
 }
+
+// errRepo holds the handle in a field.
+type errRepo struct{ db *gorm.DB }
+
+// Not reported: reading the error of the handle a field holds runs no
+// statement.
+func (r *errRepo) FieldError() error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return r.db.Error
+	})
+}

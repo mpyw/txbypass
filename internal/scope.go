@@ -272,6 +272,15 @@ func scopeContextArg(info *types.Info, call *ast.CallExpr, e ast.Expr) bool {
 // scopeMethodExpr reports whether fun is a method expression, as
 // (*Repo).Save.
 func scopeMethodExpr(info *types.Info, fun ast.Expr) bool {
+	// A generic method takes its type arguments after it, as
+	// (*Repo).Get[string].
+	fun = ast.Unparen(fun)
+	switch x := fun.(type) {
+	case *ast.IndexExpr:
+		fun = x.X
+	case *ast.IndexListExpr:
+		fun = x.X
+	}
 	sel, ok := ast.Unparen(fun).(*ast.SelectorExpr)
 	return ok && info.Selections[sel] != nil && info.Selections[sel].Kind() == types.MethodExpr
 }
@@ -586,6 +595,11 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 		if later[n] {
 			return false
 		}
+		// The name after a dot is no expression of its own: the selector is
+		// read whole.
+		if sel, ok := scopeParent(stack).(*ast.SelectorExpr); ok && sel.Sel == n {
+			return false
+		}
 		switch n := n.(type) {
 		case *ast.DeferStmt:
 			// The function that holds the begin runs its deferred calls when
@@ -636,6 +650,14 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 		x, ok := c.prog.Ref(fn, sel.X)
 		return !ok || !s.scopeInside(x) || promoted(sel, x, stack)
 	})
+}
+
+// scopeParent is the innermost node of stack, or nil.
+func scopeParent(stack []ast.Node) ast.Node {
+	if len(stack) == 0 {
+		return nil
+	}
+	return stack[len(stack)-1]
 }
 
 // scopeLater adds e to later, unless it is a call, which runs where it
