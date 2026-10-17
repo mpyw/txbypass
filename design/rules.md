@@ -73,7 +73,7 @@ A call is not a callback opener for txbypass when:
 | The callback is not a function literal | Its body is not read |
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
 | The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
-| The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, or an alias of one | See [Dedicated connections](#dedicated-connections) |
+| The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, an alias of one, or a type whose `Begin` is declared on one | See [Dedicated connections](#dedicated-connections) |
 | The outer handle is a transaction | See [Savepoints](#savepoints) |
 
 A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.

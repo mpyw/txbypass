@@ -208,7 +208,7 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 		o.Outer, o.Receiver = sel, true
 	} else {
 		o.Outer = call.Args[k.outer]
-		if dedicated(info.TypeOf(o.Outer)) {
+		if t := info.TypeOf(o.Outer); dedicated(t) || dedicatedBegin(t) {
 			return Opener{}, false
 		}
 	}
@@ -253,6 +253,15 @@ func dedicated(t types.Type) bool {
 	return slices.ContainsFunc(dedicatedConns, func(k known) bool {
 		return k.pkg == n.Obj().Pkg().Path() && k.name == n.Obj().Name()
 	})
+}
+
+// dedicatedBegin reports whether the Begin method of t, which pgx v5's
+// BeginFunc calls, is declared on a dedicated type, as it is for a type
+// that embeds pgx.Tx or *pgx.Conn.
+func dedicatedBegin(t types.Type) bool {
+	m, _, _ := types.LookupFieldOrMethod(t, true, nil, "Begin")
+	fn, ok := m.(*types.Func)
+	return ok && dedicated(fn.Signature().Recv().Type())
 }
 
 // endings are the names of the methods that end a transaction. go-pg's take
