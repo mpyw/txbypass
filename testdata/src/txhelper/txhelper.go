@@ -29,3 +29,6 @@ func Later(tx *sql.Tx) {
 func Keep(tx *sql.Tx) *sql.Tx {
 	return tx
 }
+
+// WithTx is a function, not a method, named like sqlc's.
+func WithTx(tx *sql.Tx) *sql.Tx { return tx }
