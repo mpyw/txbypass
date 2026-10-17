@@ -330,3 +330,35 @@ func SaveGeneric[T ~struct{ ID int }](db *gorm.DB, id int) error {
 		return db.Create(&User{}).Error // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 	})
 }
+
+// Keyed is a constraint whose type set is one struct.
+type Keyed interface{ ~struct{ ID int } }
+
+// Entity embeds it, with a method.
+type Entity interface {
+	Keyed
+	Name() string
+}
+
+// EntityRepo is a generic repository whose methods build literals of T.
+type EntityRepo[T Entity] struct{ db *gorm.DB }
+
+func (r *EntityRepo[T]) Save(id int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		v := T{id}
+		_ = v
+		return r.db.Create(&User{}).Error // want `^r\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
+
+// A constraint that embeds the interface with the terms.
+func SaveEmbedded[T interface{ Keyed }](db *gorm.DB, id int) error {
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	v := T{id}
+	_ = v
+	db.Create(&User{}) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit().Error
+}
