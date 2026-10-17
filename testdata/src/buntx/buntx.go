@@ -24,7 +24,8 @@ func OnDB(ctx context.Context, db *bun.DB, u *User) error {
 
 func OnConn(ctx context.Context, conn bun.Conn, u *User) error {
 	return conn.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		_, err := conn.NewInsert().Model(u).Exec(ctx) // want `^conn bypasses the transaction opened with RunInTx; use tx instead \[outer-handle\]$`
+		// Not reported: the connection is the one the transaction runs on.
+		_, err := conn.NewInsert().Model(u).Exec(ctx)
 		return err
 	})
 }

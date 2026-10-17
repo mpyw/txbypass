@@ -31,16 +31,13 @@ A callback opener is recognized by the package path, the receiver's type and the
 | Library | Package | Receiver | Name | Outer handle | Callback | Transaction |
 | --- | --- | --- | --- | --- | --- | --- |
 | gorm | `gorm.io/gorm` | `*DB` | `Transaction` | The receiver | Argument 0 | Parameter 0 |
-| bun | `github.com/uptrace/bun` | `*DB`, `Conn`, `Tx`, `IDB` | `RunInTx` | The receiver | Argument 2 | Parameter 1 |
+| bun | `github.com/uptrace/bun` | `*DB`, `Tx`, `IDB` | `RunInTx` | The receiver | Argument 2 | Parameter 1 |
 | bob | `github.com/stephenafamo/bob` | `DB` | `RunInTx` | The receiver | Argument 2 | Parameter 1 |
 | pgx v5 | `github.com/jackc/pgx/v5` | None | `BeginFunc` | Argument 1 | Argument 2 | Parameter 0 |
 | pgx v5 | `github.com/jackc/pgx/v5` | None | `BeginTxFunc` | Argument 1 | Argument 3 | Parameter 0 |
-| pgx v4 | `github.com/jackc/pgx/v4` | `*Conn`, `Tx` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
-| pgx v4 | `github.com/jackc/pgx/v4` | `*Conn` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
+| pgx v4 | `github.com/jackc/pgx/v4` | `Tx` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
 | pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Pool` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
 | pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Pool` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
-| pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Conn` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
-| pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Conn` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
 | goqu | `github.com/doug-martin/goqu/v9` | `*Database` | `WithTx` | The receiver | Argument 0 | Parameter 0 |
 | pop | `github.com/gobuffalo/pop/v6` | `*Connection` | `Transaction`, `Rollback` | The receiver | Argument 0 | Parameter 0 |
 | upper/db | `github.com/upper/db/v4` | `Session` | `Tx` | The receiver | Argument 0 | Parameter 0 |
@@ -72,8 +69,23 @@ A call is not a callback opener for txbypass when:
 | The callback is not a function literal | Its body is not read |
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
 | The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
+| pgx v5's outer handle is one dedicated connection, a `*pgx.Conn` or a `*pgxpool.Conn` | See [Dedicated connections](#dedicated-connections) |
 
 A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
+
+### Dedicated connections
+
+A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. Neither table lists a receiver that is one:
+
+| Library | Type |
+| --- | --- |
+| database/sql | `*Conn` |
+| sqlx | `*Conn` |
+| pgx v5, v4 | `*Conn`, and `*Conn` of their `pgxpool` packages |
+| bun | `Conn` |
+| bob | `Conn` |
+
+go-redis's `*Conn` is listed. `TxPipelined` queues commands until the callback returns. A command run on the connection inside the callback is sent before the queued ones, outside `MULTI`.
 
 ## Begins
 
@@ -82,16 +94,13 @@ A begin is a method recognized as a callback opener is. It returns the transacti
 | Library | Package | Receiver | Name |
 | --- | --- | --- | --- |
 | database/sql | `database/sql` | `*DB` | `Begin`, `BeginTx` |
-| database/sql | `database/sql` | `*Conn` | `BeginTx` |
 | sqlx | `github.com/jmoiron/sqlx` | `*DB` | `Beginx`, `BeginTxx`, `MustBegin`, `MustBeginTx` |
-| sqlx | `github.com/jmoiron/sqlx` | `*Conn` | `BeginTxx` |
-| pgx v5, v4 | `github.com/jackc/pgx/v5`, `github.com/jackc/pgx/v4` | `*Conn` | `Begin`, `BeginTx` |
-| pgx v5, v4 | The same | `Tx` | `Begin` |
-| pgx v5, v4 | Their `pgxpool` packages | `*Pool`, `*Conn` | `Begin`, `BeginTx` |
+| pgx v5, v4 | `github.com/jackc/pgx/v5`, `github.com/jackc/pgx/v4` | `Tx` | `Begin` |
+| pgx v5, v4 | Their `pgxpool` packages | `*Pool` | `Begin`, `BeginTx` |
 | gorm | `gorm.io/gorm` | `*DB` | `Begin` |
 | bun | `github.com/uptrace/bun` | `*DB`, `Tx` | `Begin`, `BeginTx` |
-| bun | `github.com/uptrace/bun` | `Conn`, `IDB` | `BeginTx` |
-| bob | `github.com/stephenafamo/bob` | `DB`, `Conn` | `Begin`, `BeginTx` |
+| bun | `github.com/uptrace/bun` | `IDB` | `BeginTx` |
+| bob | `github.com/stephenafamo/bob` | `DB` | `Begin`, `BeginTx` |
 | goqu | `github.com/doug-martin/goqu/v9` | `*Database` | `Begin`, `BeginTx` |
 | go-pg | `github.com/go-pg/pg/v10` | `*baseDB`, embedded in `*DB` | `Begin`, `BeginContext` |
 | pop | `github.com/gobuffalo/pop/v6` | `*Connection` | `NewTransaction`, `NewTransactionContext`, `NewTransactionContextOptions` |
@@ -305,4 +314,5 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A hook kept for after the callback, but called inside it too | The literal is not read |
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
+| A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one dedicated connection |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |

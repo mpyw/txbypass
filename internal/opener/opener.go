@@ -14,6 +14,7 @@ package opener
 import (
 	"go/ast"
 	"go/types"
+	"slices"
 
 	"golang.org/x/tools/go/types/typeutil"
 )
@@ -73,10 +74,9 @@ var knownOpeners = []known{
 	// gorm v1.31: func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) error
 	{pkg: "gorm.io/gorm", recv: "DB", name: "Transaction", outer: -1, callback: 0, tx: 0},
 
-	// bun v1.3: RunInTx(ctx, opts, fn func(ctx context.Context, tx Tx) error) of DB, Conn,
-	// Tx (a savepoint), and the IDB interface they share.
+	// bun v1.3: RunInTx(ctx, opts, fn func(ctx context.Context, tx Tx) error) of DB, Tx
+	// (a savepoint), and the IDB interface. None is read on a Conn: see dedicated.
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "RunInTx", outer: -1, callback: 2, tx: 1},
-	{pkg: "github.com/uptrace/bun", recv: "Conn", name: "RunInTx", outer: -1, callback: 2, tx: 1},
 	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "RunInTx", outer: -1, callback: 2, tx: 1},
 	{pkg: "github.com/uptrace/bun", recv: "IDB", name: "RunInTx", outer: -1, callback: 2, tx: 1},
 
@@ -87,15 +87,11 @@ var knownOpeners = []known{
 	{pkg: "github.com/jackc/pgx/v5", name: "BeginFunc", outer: 1, callback: 2, tx: 0},
 	{pkg: "github.com/jackc/pgx/v5", name: "BeginTxFunc", outer: 1, callback: 3, tx: 0},
 
-	// pgx v4.18: BeginFunc(ctx, f func(Tx) error) and BeginTxFunc(ctx, txOptions, f) of Conn,
-	// of Tx (a savepoint), and of pgxpool's Pool and Conn.
-	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
+	// pgx v4.18: BeginFunc(ctx, f func(Tx) error) and BeginTxFunc(ctx, txOptions, f) of Tx
+	// (a savepoint) and of pgxpool's Pool.
 	{pkg: "github.com/jackc/pgx/v4", recv: "Tx", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
-	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
 
 	// goqu v9: func (d *Database) WithTx(fn func(*TxDatabase) error) error
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "WithTx", outer: -1, callback: 0, tx: 0},
@@ -194,6 +190,9 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 		o.Outer, o.Receiver = sel, true
 	} else {
 		o.Outer = call.Args[k.outer]
+		if dedicated(info.TypeOf(o.Outer)) {
+			return Opener{}, false
+		}
 	}
 	lit, ok := ast.Unparen(call.Args[k.callback]).(*ast.FuncLit)
 	if !ok {
@@ -202,6 +201,30 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	o.Callback = lit
 	o.Tx = paramIdent(lit, k.tx)
 	return o, true
+}
+
+// dedicatedConns are the types that are one connection, not a pool. pgx v5's
+// BeginFunc takes any value that begins, and one of these may be given.
+var dedicatedConns = []known{
+	{pkg: "github.com/jackc/pgx/v5", name: "Conn"},
+	{pkg: "github.com/jackc/pgx/v5/pgxpool", name: "Conn"},
+}
+
+// dedicated reports whether t is one dedicated connection. A transaction
+// begun on it runs on that connection, so a statement on the connection
+// runs inside the transaction: it is no bypass. Begins on such a type are
+// not listed at all.
+func dedicated(t types.Type) bool {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	n, ok := t.(*types.Named)
+	if !ok || n.Obj().Pkg() == nil {
+		return false
+	}
+	return slices.ContainsFunc(dedicatedConns, func(k known) bool {
+		return k.pkg == n.Obj().Pkg().Path() && k.name == n.Obj().Name()
+	})
 }
 
 // endings are the names of the methods that end a transaction. go-pg's take
@@ -245,47 +268,36 @@ type Begin struct {
 // knownBegins lists every begin. Each is a method that returns the
 // transaction first, and an error second when it may fail.
 var knownBegins = []known{
+	// A begin on one dedicated connection, as database/sql's Conn.BeginTx, is
+	// not listed: see dedicated.
+	//
 	// database/sql
 	{pkg: "database/sql", recv: "DB", name: "Begin"},
 	{pkg: "database/sql", recv: "DB", name: "BeginTx"},
-	{pkg: "database/sql", recv: "Conn", name: "BeginTx"},
 	// sqlx
 	{pkg: "github.com/jmoiron/sqlx", recv: "DB", name: "Beginx"},
 	{pkg: "github.com/jmoiron/sqlx", recv: "DB", name: "BeginTxx"},
 	{pkg: "github.com/jmoiron/sqlx", recv: "DB", name: "MustBegin"},
 	{pkg: "github.com/jmoiron/sqlx", recv: "DB", name: "MustBeginTx"},
-	{pkg: "github.com/jmoiron/sqlx", recv: "Conn", name: "BeginTxx"},
-	// pgx v5 and v4: Begin and BeginTx of Conn, of Tx (a savepoint), and of pgxpool's
-	// Pool and Conn.
-	{pkg: "github.com/jackc/pgx/v5", recv: "Conn", name: "Begin"},
-	{pkg: "github.com/jackc/pgx/v5", recv: "Conn", name: "BeginTx"},
+	// pgx v5 and v4: Begin and BeginTx of Tx (a savepoint), and of pgxpool's Pool.
 	{pkg: "github.com/jackc/pgx/v5", recv: "Tx", name: "Begin"},
 	{pkg: "github.com/jackc/pgx/v5/pgxpool", recv: "Pool", name: "Begin"},
 	{pkg: "github.com/jackc/pgx/v5/pgxpool", recv: "Pool", name: "BeginTx"},
-	{pkg: "github.com/jackc/pgx/v5/pgxpool", recv: "Conn", name: "Begin"},
-	{pkg: "github.com/jackc/pgx/v5/pgxpool", recv: "Conn", name: "BeginTx"},
-	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "Begin"},
-	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "BeginTx"},
 	{pkg: "github.com/jackc/pgx/v4", recv: "Tx", name: "Begin"},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "Begin"},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginTx"},
-	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "Begin"},
-	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginTx"},
 	// gorm: func (db *DB) Begin(opts ...*sql.TxOptions) *DB
 	{pkg: "gorm.io/gorm", recv: "DB", name: "Begin"},
-	// bun: Begin of DB and Tx, and BeginTx of DB, Conn, Tx, and the IDB interface. On a
-	// Tx, they open a savepoint.
+	// bun: Begin of DB and Tx, and BeginTx of DB, Tx, and the IDB interface. On a Tx,
+	// they open a savepoint.
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "Begin"},
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "BeginTx"},
-	{pkg: "github.com/uptrace/bun", recv: "Conn", name: "BeginTx"},
 	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "Begin"},
 	{pkg: "github.com/uptrace/bun", recv: "Tx", name: "BeginTx"},
 	{pkg: "github.com/uptrace/bun", recv: "IDB", name: "BeginTx"},
-	// bob: Begin(ctx) and BeginTx(ctx, opts) of DB and Conn.
+	// bob: Begin(ctx) and BeginTx(ctx, opts) of DB.
 	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "Begin"},
 	{pkg: "github.com/stephenafamo/bob", recv: "DB", name: "BeginTx"},
-	{pkg: "github.com/stephenafamo/bob", recv: "Conn", name: "Begin"},
-	{pkg: "github.com/stephenafamo/bob", recv: "Conn", name: "BeginTx"},
 	// goqu
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "Begin"},
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "BeginTx"},

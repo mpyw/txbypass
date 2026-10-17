@@ -142,6 +142,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Report every value of the handle's type inside the scope that is not the transaction | A second database, such as a log store, is a handle of the same type. It would be reported on every use |
 | Follow the callback when it is a named function or a method value | The outer handle is in the caller. Inside the function, the same field is selected from another value, the receiver |
 | End a region at any call the transaction is given to | Passing the transaction to repository helpers is how it is used. Only a helper that ends it ends the region |
+| Read a begin on one dedicated connection, as `*sql.Conn` or `*pgx.Conn` | A statement on the connection runs inside the transaction. The tests of pgx do so 29 times. A type created in the transaction is loaded through the connection, since the transaction has no method for it |
 | Report every use of Firestore's client inside the transaction | `tx.Get(client.Doc(p))` is the canonical read, and every transaction has one |
 | Treat any value with a `WithTx` method as the outer handle | A scope that never calls it may hold one built on another database |
 | Make `outer-context` read bun, bob, Spanner and Firestore callbacks too | Their transaction is a value. The outer context there only carries deadlines and values |
