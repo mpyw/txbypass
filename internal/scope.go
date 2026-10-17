@@ -78,13 +78,18 @@ func (c *checker) scopeBindsBoth(s txScope, fn *ssa.Function, e ast.Expr, stack 
 	})
 }
 
-// scopeChainBound reports whether a chain of calls on e is given the
-// transaction, as bun's db.NewInsert().Model(u).Conn(tx).Exec(ctx) is. The
-// query is built on the handle, and runs on the transaction.
+// scopeChainBound reports whether a chain of calls on e, or on a call given
+// e, is given the transaction, as bun's db.NewInsert().Conn(tx) and sqlc's
+// New(pool).WithTx(tx) are. The query is built on the handle, and runs on
+// the transaction.
 func (c *checker) scopeChainBound(s txScope, fn *ssa.Function, e ast.Expr, stack []ast.Node) bool {
-	// The scope's root is a block, which ends the walk up.
-	cur := e
-	for i := len(stack) - 1; ; i-- {
+	// The scope's root is a block, which ends the walk up. The chain may
+	// start at a call given the handle, as sqlc's New(pool).WithTx(tx).
+	cur, i := e, len(stack)-1
+	if call, ok := stack[i].(*ast.CallExpr); ok && slices.Contains(call.Args, e) {
+		cur, i = call, i-1
+	}
+	for ; ; i-- {
 		switch n := stack[i].(type) {
 		case *ast.SelectorExpr:
 			// cur is what n selects from: a handle is never the name after

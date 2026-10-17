@@ -180,7 +180,7 @@ A struct that embeds the handle is not the handle. It may hold other things, as 
 
 A read of a field of the handle that holds a basic value or an error is no use, nor is a variable that holds one. In gorm, `db.Create(x).Error` is reported once, at the statement. Reading the error or `RowsAffected` afterwards runs nothing, and an ignore on the statement leaves no report behind.
 
-A chain of calls on the handle that is given the transaction runs on it, as bun's `db.NewInsert().Model(u).Conn(tx).Exec(ctx)` does. The handle there is no use.
+A chain of calls on the handle that is given the transaction runs on it, as bun's `db.NewInsert().Model(u).Conn(tx).Exec(ctx)` does. So does a chain on a call given the handle, as sqlc's `New(pool).WithTx(tx)`. The handle there is no use.
 
 The handle given to a call that takes the transaction too is no use. A constructor such as `newStore(s.db, tx)` keeps the handle beside the transaction, as the composite literal `&Store{db: s.db, tx: tx}` does.
 
