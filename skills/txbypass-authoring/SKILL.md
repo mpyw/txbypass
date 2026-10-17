@@ -38,7 +38,6 @@ The README lists every library and call txbypass knows.
 | sqlc's `q`, in code that calls `q.WithTx(tx)` | Use the rebound queries, `qtx` |
 | A goroutine inside the transaction | Use the transaction, and make sure the goroutine ends before the commit. One that outlives it uses a closed transaction |
 | A nested transaction opened on the outer handle | Open it on the transaction, as `tx.Transaction(...)` or `tx.Begin(ctx)`. That is a savepoint |
-| The handle of an outer transaction, inside a savepoint | Use the savepoint |
 | A Firestore `client.Doc(p).Set(ctx, v)` inside `RunTransaction` | Write through the transaction: `tx.Set(client.Doc(p), v)`. Building the reference with the client is fine |
 | The outer `ctx`, inside MongoDB's, go-rel's or go-transaction-manager's callback | Use the callback's context. Name it `ctx`, so the outer one cannot be reached |
 

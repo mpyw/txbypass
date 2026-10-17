@@ -85,12 +85,13 @@ func Twice(db *gorm.DB, u *User) error {
 	})
 }
 
-// A savepoint is a transaction too: the handle of the outer transaction
-// bypasses it.
+// A savepoint runs on the connection of the transaction it is opened on, so
+// the outer transaction's handle runs inside it.
 func Savepoint(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return tx.Transaction(func(sp *gorm.DB) error {
-			tx.Create(u) // want `^tx bypasses the transaction opened with Transaction; use sp instead \[outer-handle\]$`
+			// Not reported: a savepoint runs on the transaction's connection.
+			tx.Create(u)
 			return nil
 		})
 	})
@@ -227,4 +228,64 @@ func Underlying(db *gorm.DB) error {
 		_ = sqlDB
 		return err
 	})
+}
+
+// Not reported: a savepoint opened on a begin's transaction.
+func SavepointOnBegin(db *gorm.DB, u *User) error {
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	err := tx.Transaction(func(sp *gorm.DB) error {
+		// Not reported: a savepoint runs on the transaction's connection.
+		tx.Create(u)
+		return nil
+	})
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit().Error
+}
+
+// A handle that is no transaction still opens one, and is reported.
+func NotASavepoint(db *gorm.DB, other func() *gorm.DB, u *User) error {
+	h := other()
+	return h.Transaction(func(sp *gorm.DB) error {
+		return h.Create(u).Error // want `^h bypasses the transaction opened with Transaction; use sp instead \[outer-handle\]$`
+	})
+}
+
+// Not reported: the outer callback captures nothing, so the opener's call
+// names it directly.
+func SavepointNoCapture(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		return tx.Transaction(func(sp *gorm.DB) error {
+			// Not reported: a savepoint runs on the transaction's connection.
+			return tx.Exec("SELECT 1").Error
+		})
+	})
+}
+
+// A literal given to a function value is no callback of an opener, so its
+// parameter is not known to be a transaction.
+func ParamOfFuncValue(run func(func(*gorm.DB) error) error) error {
+	return run(func(h *gorm.DB) error {
+		return h.Transaction(func(sp *gorm.DB) error {
+			return h.Exec("SELECT 1").Error // want `^h bypasses the transaction opened with Transaction; use sp instead \[outer-handle\]$`
+		})
+	})
+}
+
+// Not reported: a begin on a begin's transaction opens a savepoint.
+func BeginOnBegin(db *gorm.DB, u *User) error {
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	sp := tx.Begin()
+	// Not reported: a savepoint runs on the transaction's connection.
+	tx.Create(u)
+	sp.Commit()
+	return tx.Commit().Error
 }

@@ -22,3 +22,15 @@ func TxContext(ctx context.Context, sess db.Session, u *User) error {
 		return err
 	}, nil)
 }
+
+// Not reported: a transaction opened on the callback's transaction runs on
+// its connection. The opener is an interface method here.
+func Nested(sess db.Session, u *User) error {
+	return sess.Tx(func(tx db.Session) error {
+		return tx.Tx(func(inner db.Session) error {
+			// Not reported: it runs on the transaction's connection.
+			_, err := tx.Collection("users").Insert(u)
+			return err
+		})
+	})
+}

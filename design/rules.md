@@ -70,6 +70,7 @@ A call is not a callback opener for txbypass when:
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
 | The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
 | The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, or an alias of one | See [Dedicated connections](#dedicated-connections) |
+| The outer handle is a transaction | See [Savepoints](#savepoints) |
 
 A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
 
@@ -87,6 +88,20 @@ A transaction begun on one dedicated connection runs on that connection. A state
 | go-pg | `*Conn`. Its methods come from the `*baseDB` it embeds, as `*DB`'s do, so the type of the receiver decides |
 
 go-redis's `*Conn` is listed. `TxPipelined` queues commands until the callback returns. A command run on the connection inside the callback is sent before the queued ones, outside `MULTI`.
+
+### Savepoints
+
+A transaction opened on a transaction is a savepoint. It runs on the connection of the transaction, and so does a statement on the transaction. A use of the transaction inside the savepoint bypasses nothing, so a savepoint is not read:
+
+| The handle | Known by |
+| --- | --- |
+| pgx's `Tx`, v5 and v4, and bun's `Tx` | Its type |
+| A begin's result, as gorm's `tx := db.Begin()` | Where it comes from |
+| The transaction a callback opener gives, as gorm's `tx` in `db.Transaction(func(tx *gorm.DB) error { ... })` | Where it comes from |
+
+A savepoint's begins stay in the table of begins. Its result is then a handle of its own, so its commit ends nothing of the outer transaction.
+
+go-redis's `TxPipelined` is no savepoint. It queues commands, and a command on the handle runs at once, before the queued ones. Its callback is read on any handle.
 
 ## Begins
 
@@ -320,4 +335,5 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
 | A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one dedicated connection |
+| A savepoint on a gorm transaction this analysis does not know as one, as a `*gorm.DB` parameter of a declared function | It is reported. The type does not say that the handle is a transaction |
 | A use of the outer context for something other than the database, such as logging | It is reported. The inner context carries the same values, so the fix still applies |

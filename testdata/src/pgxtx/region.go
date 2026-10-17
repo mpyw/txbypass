@@ -56,7 +56,8 @@ func Savepoint(ctx context.Context, tx pgx.Tx) error {
 	if err != nil {
 		return err
 	}
-	tx.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^tx bypasses the transaction opened with Begin; use sp instead \[outer-handle\]$`
+	// Not reported: a savepoint runs on the transaction's connection.
+	tx.Exec(ctx, "INSERT INTO ledger VALUES (1)")
 	return sp.Commit(ctx)
 }
 

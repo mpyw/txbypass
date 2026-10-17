@@ -33,7 +33,8 @@ func OnConn(ctx context.Context, conn bun.Conn, u *User) error {
 // A savepoint is opened on a transaction.
 func OnTx(ctx context.Context, tx bun.Tx, u *User) error {
 	return tx.RunInTx(ctx, nil, func(ctx context.Context, sp bun.Tx) error {
-		_, err := tx.NewInsert().Model(u).Exec(ctx) // want `^tx bypasses the transaction opened with RunInTx; use sp instead \[outer-handle\]$`
+		// Not reported: a savepoint runs on the transaction's connection.
+		_, err := tx.NewInsert().Model(u).Exec(ctx)
 		return err
 	})
 }
@@ -89,7 +90,8 @@ func Begins(ctx context.Context, db *bun.DB, idb bun.IDB, u *User) error {
 	if err != nil {
 		return err
 	}
-	tx2.NewInsert().Model(u).Exec(ctx) // want `^tx2 bypasses the transaction opened with Begin; use sp instead \[outer-handle\]$`
+	// Not reported: a savepoint runs on the transaction's connection.
+	tx2.NewInsert().Model(u).Exec(ctx)
 	if err := sp.Commit(); err != nil {
 		return err
 	}

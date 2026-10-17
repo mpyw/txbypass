@@ -93,3 +93,12 @@ func OnConnAlias(ctx context.Context, c *ConnAlias) error {
 		return err
 	})
 }
+
+// Not reported: pgx.BeginFunc on a transaction opens a savepoint.
+func BeginFuncOnTx(ctx context.Context, tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, tx, func(sp pgx.Tx) error {
+		// Not reported: a savepoint runs on the transaction's connection.
+		_, err := tx.Exec(ctx, "select 1")
+		return err
+	})
+}

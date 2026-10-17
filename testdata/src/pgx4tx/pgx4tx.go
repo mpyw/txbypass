@@ -41,7 +41,8 @@ func PoolTxFunc(ctx context.Context, pool *pgxpool.Pool) error {
 
 func SavepointFunc(ctx context.Context, tx pgx.Tx) error {
 	return tx.BeginFunc(ctx, func(sp pgx.Tx) error {
-		_, err := tx.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^tx bypasses the transaction opened with BeginFunc; use sp instead \[outer-handle\]$`
+		// Not reported: a savepoint runs on the transaction's connection.
+		_, err := tx.Exec(ctx, "INSERT INTO ledger VALUES (1)")
 		return err
 	})
 }
