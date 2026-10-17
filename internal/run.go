@@ -41,7 +41,9 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	}
 	if runNeedsProgram(pass) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
-		c.paths = handle.NewPaths()
+		// Every driver gives a module. Its path is empty outside module
+		// mode.
+		c.paths = handle.NewPaths(pass.Module.Path)
 		c.closer = closer.New(pass, c.paths)
 		c.closer.Export(c.prog)
 		for _, f := range pass.Files {

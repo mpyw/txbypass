@@ -35,7 +35,7 @@ func f(x *int) {
 	}
 	f := pkg.Func("f")
 	fv := f.AnonFuncs[0].FreeVars[0]
-	ps := NewPaths()
+	ps := NewPaths("")
 	if !ps.Of(fv).Equal(ps.Of(fv)) {
 		t.Error("the free variable is not the same handle as itself")
 	}

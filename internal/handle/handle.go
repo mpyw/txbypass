@@ -48,11 +48,15 @@ type Path struct {
 type Paths struct {
 	known  map[ssa.Value]Path
 	stores map[*ssa.Alloc]allocStoreSet
+	// module is the path of the module of the package read, or empty
+	// outside module mode.
+	module string
 }
 
-// NewPaths is a Paths that has read nothing yet.
-func NewPaths() *Paths {
-	return &Paths{known: make(map[ssa.Value]Path), stores: make(map[*ssa.Alloc]allocStoreSet)}
+// NewPaths is a Paths that has read nothing yet, for a package of module,
+// which is empty outside module mode.
+func NewPaths(module string) *Paths {
+	return &Paths{known: make(map[ssa.Value]Path), stores: make(map[*ssa.Alloc]allocStoreSet), module: module}
 }
 
 // Of is the handle v is.
@@ -204,12 +208,13 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 // and reports whether any store writes a field of it. ok is false when
 // something this analysis does not follow may write it: a function literal
 // that captures it, or its address, or a field's, going anywhere but to a
-// load, a store to it, a debug reference, a field, a capture, or a call of
-// another package. Such a call takes it as the receiver of a method of a
-// value, as db.Begin() does on a db held by value.
+// load, a store to it, a debug reference, a field, a capture, or a call of a
+// library, as libraryCall says. Such a call takes it as the receiver of a
+// method of a value, as db.Begin() does on a db held by value.
 func (ps *Paths) allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
 	set, read := ps.stores[a]
 	if !read {
+		set.module = ps.module
 		set.ok = set.collect(a, false)
 		for _, st := range append(slices.Clip(set.whole), set.fields...) {
 			if st.Parent() != a.Parent() {
@@ -231,6 +236,8 @@ type allocStoreSet struct {
 	fields []*ssa.Store
 	// ok reports that the address goes only where allocStores allows.
 	ok bool
+	// module is Paths.module.
+	module string
 	// visited holds the variables whose loads are already walked. A pointer
 	// copied back and forth between two variables leads back to one.
 	visited map[allocStep]bool
@@ -263,7 +270,7 @@ func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 		switch ref := ref.(type) {
 		case *ssa.UnOp, *ssa.DebugRef:
 		case ssa.CallInstruction:
-			if !libraryCall(ref.Common(), v) {
+			if !libraryCall(ref.Common(), v, set.module) {
 				return false
 			}
 		case *ssa.FieldAddr:
@@ -298,13 +305,22 @@ func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 }
 
 // libraryCall reports whether call, which takes the address v, is of a
-// function of another package, as db.Begin() on a db held by value does. A function
-// of the package, as a repository's Bind(tx), may store another handle
-// there. So may a function value. A library's own method does not rebind a
-// field of the caller's struct.
-func libraryCall(call *ssa.CallCommon, v ssa.Value) bool {
+// library: a function of another module, as db.Begin() on a db held by
+// value is. A function of the module, as a repository's Bind(tx), may store
+// another handle there, in the package or in another. So may a function
+// value. A library's own method does not rebind a field of the caller's
+// struct. Outside module mode, module is empty, and another package is a
+// library.
+func libraryCall(call *ssa.CallCommon, v ssa.Value, module string) bool {
 	fn := call.StaticCallee()
-	return fn != nil && fn.Pkg != nil && fn.Pkg != v.Parent().Pkg
+	if fn == nil || fn.Pkg == nil {
+		return false
+	}
+	path := fn.Pkg.Pkg.Path()
+	if module != "" {
+		return path != module && !strings.HasPrefix(path, module+"/")
+	}
+	return fn.Pkg != v.Parent().Pkg
 }
 
 // collectLoads collects, as collect does, through every load of the
