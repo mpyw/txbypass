@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
 )
 
@@ -185,21 +186,23 @@ func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
 
 // returnedReceiver is the receiver of a method call that returns a value of
 // the receiver's own type, as db.WithContext(ctx) or db.Session(cfg) do in
-// gorm. WithTx is the exception: sqlc's q.WithTx(tx) gives queries bound to
-// the transaction, which are another handle.
+// gorm. Two kinds of method give another handle of that type: a begin, as
+// gorm's db.Begin(), gives the transaction, and sqlc's q.WithTx(tx) gives
+// queries bound to it.
 func returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 	c := call.Common()
 	var recv ssa.Value
-	var name string
+	var fn *types.Func
 	switch {
 	case c.IsInvoke():
-		recv, name = c.Value, c.Method.Name()
+		recv, fn = c.Value, c.Method
 	case c.Signature().Recv() != nil:
-		recv, name = c.Args[0], c.StaticCallee().Name()
+		recv, fn = c.Args[0], c.StaticCallee().Object().(*types.Func)
 	default:
 		return nil, false
 	}
-	return recv, name != "WithTx" && types.Identical(call.Type(), recv.Type())
+	same := types.Identical(call.Type(), recv.Type())
+	return recv, same && fn.Name() != "WithTx" && !opener.IsBeginFunc(fn)
 }
 
 // samePhi is the handle every edge of a phi gives, when they all give one.
