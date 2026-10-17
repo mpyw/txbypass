@@ -69,13 +69,13 @@ A call is not a callback opener for txbypass when:
 | The callback is not a function literal | Its body is not read |
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
 | The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
-| pgx v5's outer handle is one dedicated connection, a `*pgx.Conn` or a `*pgxpool.Conn` | See [Dedicated connections](#dedicated-connections) |
+| The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, or an alias of one | See [Dedicated connections](#dedicated-connections) |
 
 A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
 
 ### Dedicated connections
 
-A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. Neither table lists a receiver that is one:
+A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. A begin or an opener on one is not read:
 
 | Library | Type |
 | --- | --- |
@@ -84,6 +84,7 @@ A transaction begun on one dedicated connection runs on that connection. A state
 | pgx v5, v4 | `*Conn`, and `*Conn` of their `pgxpool` packages |
 | bun | `Conn` |
 | bob | `Conn` |
+| go-pg | `*Conn`. Its methods come from the `*baseDB` it embeds, as `*DB`'s do, so the type of the receiver decides |
 
 go-redis's `*Conn` is listed. `TxPipelined` queues commands until the callback returns. A command run on the connection inside the callback is sent before the queued ones, outside `MULTI`.
 

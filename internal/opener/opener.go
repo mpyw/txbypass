@@ -187,6 +187,9 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 		if !ok {
 			return Opener{}, false
 		}
+		if dedicated(info.TypeOf(sel.X)) {
+			return Opener{}, false
+		}
 		o.Outer, o.Receiver = sel, true
 	} else {
 		o.Outer = call.Args[k.outer]
@@ -203,11 +206,14 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	return o, true
 }
 
-// dedicatedConns are the types that are one connection, not a pool. pgx v5's
-// BeginFunc takes any value that begins, and one of these may be given.
+// dedicatedConns are the types that are one connection, not a pool, whose
+// begin or opener the tables cannot tell apart by its receiver. pgx v5's
+// BeginFunc takes any value that begins. go-pg's Conn begins through the
+// *baseDB it embeds, as DB does.
 var dedicatedConns = []known{
 	{pkg: "github.com/jackc/pgx/v5", name: "Conn"},
 	{pkg: "github.com/jackc/pgx/v5/pgxpool", name: "Conn"},
+	{pkg: "github.com/go-pg/pg/v10", name: "Conn"},
 }
 
 // dedicated reports whether t is one dedicated connection. A transaction
@@ -215,10 +221,10 @@ var dedicatedConns = []known{
 // runs inside the transaction: it is no bypass. Begins on such a type are
 // not listed at all.
 func dedicated(t types.Type) bool {
-	if p, ok := t.(*types.Pointer); ok {
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
 		t = p.Elem()
 	}
-	n, ok := t.(*types.Named)
+	n, ok := types.Unalias(t).(*types.Named)
 	if !ok || n.Obj().Pkg() == nil {
 		return false
 	}
@@ -347,7 +353,7 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 // IsBegin reports whether call is a call of a begin.
 func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	sel, ok := methodSelector(info, call)
-	return ok && IsBeginFunc(info.Selections[sel].Obj().(*types.Func))
+	return ok && IsBeginFunc(info.Selections[sel].Obj().(*types.Func)) && !dedicated(info.TypeOf(sel.X))
 }
 
 // IsBeginFunc reports whether fn is a begin. A begin gives a new handle, the
