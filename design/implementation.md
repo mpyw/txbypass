@@ -120,6 +120,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | --- | --- |
 | Only a parameter whose type has an ending method gets a fact | A fact for every parameter that is stored somewhere marked half of the standard library |
 | A store or a send inside a helper does not count as an end | `(*sql.Tx).ExecContext` stores its receiver in closures. With escapes counted, every statement would seem to end the transaction |
+| A literal that ends the transaction and is given away counts inside a helper too | `retry(func() error { return tx.Commit() })` commits as surely in a helper as in the begin's function. A literal is code of the helper, not a library's store |
 | The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys. A completed fixpoint is final, so a later question reads only the keys it adds |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
 | `opener.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
