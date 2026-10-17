@@ -176,7 +176,11 @@ A handle is a root value and the fields selected from it. The root is what the S
 
 Two values are the same handle when they have the same root and the same fields. A use reaches the outer handle when it is the outer handle, or a field selected from it: reading `db.Error` reads `db`. A method or a field promoted from an embedded handle reaches it through the embedded field, as `s.Create(u)` reaches `s.DB`.
 
-A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A read of a field of the handle that holds a basic value or an error is no use, nor is a variable that holds one. In gorm, `db.Create(x).Error` is reported once, at the statement. Reading the error or `RowsAffected` afterwards runs nothing, and an ignore on the statement leaves no report behind.
+A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value.
+
+A read of a field of the handle that holds a basic value or an error is no use, nor is a variable that holds one. In gorm, `db.Create(x).Error` is reported once, at the statement. Reading the error or `RowsAffected` afterwards runs nothing, and an ignore on the statement leaves no report behind.
+
+The handle given to a call that takes the transaction too is no use. A constructor such as `newStore(s.db, tx)` keeps the handle beside the transaction, as the composite literal `&Store{db: s.db, tx: tx}` does.
 
 A call of a method that reads or sets the pool itself is no use. The transaction has no such method, and the call runs no statement:
 
