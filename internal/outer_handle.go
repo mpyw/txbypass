@@ -48,13 +48,18 @@ func outerHandleParam(fn *ssa.Function, obj any) ssa.Value {
 // checkOuterHandleBegins reports each use of a handle while a transaction
 // begun on it is open, in the function fn whose body is body. A begin inside
 // a function literal in body belongs to the literal, which is checked on
-// its own.
+// its own. So does one in the body of a range over a function.
 //
 //declscope:shared // run.go calls it for every function
 func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) {
 	ast.Inspect(body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
+		switch n := n.(type) {
+		case *ast.FuncLit:
 			return false
+		case *ast.RangeStmt:
+			if c.prog.Func(n) != nil {
+				return false
+			}
 		}
 		b, ok := opener.BeginOf(c.pass.TypesInfo, n)
 		if !ok {
