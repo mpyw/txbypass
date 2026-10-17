@@ -56,3 +56,12 @@ func NeverMadeBegin(db *sql.DB, g *gorm.DB, u *User) {
 		})
 	}
 }
+
+// A deferred literal with no free variables that resets a package-level
+// handle runs after the commit.
+func DeferredGlobalReset(u *User) error {
+	tx := dbs.Main.Begin()
+	defer func() { dbs.Main = nil }()
+	dbs.Main.Create(u) // want `^dbs\.Main bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit().Error
+}
