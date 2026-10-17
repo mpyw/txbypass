@@ -44,6 +44,9 @@ func (s *Service) Run(m *manager.Manager) error {
 	})
 }
 
+// saveAs is generic over the context it saves with.
+func saveAs[C context.Context](ctx C) error { return nil }
+
 // logAll takes anything.
 func logAll(args ...any) {}
 
@@ -65,6 +68,7 @@ func Handler(c *gin.Context, m *manager.Manager) error {
 		_ = len(c.Copy().Param("id"))
 		c.JSON(201, gin.H{"id": id})
 		render(c, id)
+		_ = saveAs(c)                // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
 		_ = any(c)                   // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
 		logAll(c)                    // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
 		_ = save(context.Context(c)) // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`

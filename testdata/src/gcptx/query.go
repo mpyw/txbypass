@@ -46,3 +46,21 @@ func QueryRebuilt(ctx context.Context, client *datastore.Client, list *datastore
 	})
 	return err
 }
+
+// Not reported: the bound query is filtered on one branch, and either way
+// it carries the transaction.
+func QueryFilteredOnBranch(ctx context.Context, client *datastore.Client, list *datastore.Key, deep bool) error {
+	_, err := client.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
+		var tasks []Task
+		q := datastore.NewQuery("Task").Transaction(tx)
+		if deep {
+			q = q.Ancestor(list)
+		}
+		for range 3 {
+			q = q.Ancestor(list)
+		}
+		_, err := client.GetAll(ctx, q, &tasks)
+		return err
+	})
+	return err
+}
