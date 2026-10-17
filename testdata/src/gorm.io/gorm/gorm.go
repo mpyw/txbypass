@@ -34,6 +34,8 @@ func (db *DB) Save(value interface{}) (tx *DB) { return db }
 
 func (db *DB) First(dest interface{}, conds ...interface{}) (tx *DB) { return db }
 
+func (db *DB) Where(query interface{}, args ...interface{}) (tx *DB) { return db }
+
 func (db *DB) Exec(sql string, values ...interface{}) (tx *DB) { return db }
 
 func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) (err error) {

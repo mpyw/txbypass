@@ -104,3 +104,29 @@ func VariableAddressGiven(db *gorm.DB, u *User) error {
 		return r.db.Create(u).Error
 	})
 }
+
+// ===== Cycles that must not stop the analysis =====
+
+// Pointers copied back and forth between two captured variables.
+func CopiedBackAndForth(db *gorm.DB, u *User) error {
+	repo := &LitRepo{db: db}
+	a := repo
+	b := a
+	a = b
+	defer func() { _, _ = a, b }()
+	return repo.db.Transaction(func(tx *gorm.DB) error {
+		return repo.db.Create(u).Error // want `^repo\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
+
+// A variable whose only store is a call on itself.
+func Normalized(db *gorm.DB, conds []string) error {
+	var q *gorm.DB
+	defer func() { _ = q }()
+	for _, c := range conds {
+		q = q.Where(c)
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		return tx.Create(q).Error
+	})
+}
