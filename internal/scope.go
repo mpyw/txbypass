@@ -2,6 +2,7 @@ package internal
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"slices"
 
@@ -76,16 +77,17 @@ type scopeVisit func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool
 // given to promoted, when it is not nil, with the reference of what it
 // selects from.
 func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
-	hooks := make(map[*ast.FuncLit]bool)
+	var hooks map[*ast.FuncLit]bool
+	if s.region == nil {
+		hooks = c.scopeHooks(s.root)
+	}
 	ast.PreorderStack(s.root, nil, func(n ast.Node, stack []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.DeferStmt:
-			if s.region != nil {
+			// The function that holds the begin runs its deferred calls when
+			// it returns. A literal runs its own when it returns, inside.
+			if s.region != nil && !slices.ContainsFunc(stack, scopeIsLiteral) {
 				return false
-			}
-		case *ast.AssignStmt:
-			if s.region == nil {
-				c.scopeHooks(s.root, n, hooks)
 			}
 		case *ast.FuncLit:
 			if hooks[n] {
@@ -126,32 +128,77 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 	})
 }
 
-// scopeHooks adds to hooks the function literals that assign keeps for
-// after the callback root: assigned to a variable declared outside it, or
-// appended to one, as an after-commit hook is. Such a literal runs once the
-// callback has returned, outside the transaction, on purpose.
-func (c *checker) scopeHooks(root ast.Node, assign *ast.AssignStmt, hooks map[*ast.FuncLit]bool) {
+// scopeIsLiteral reports whether n is a function literal.
+func scopeIsLiteral(n ast.Node) bool {
+	_, ok := n.(*ast.FuncLit)
+	return ok
+}
+
+// scopeHooks finds the function literals that the callback root keeps for
+// after it returns, as an after-commit hook is. A literal is kept when it
+// is stored in a variable declared outside the callback, or in a field or
+// an element of one: assigned, appended, as a field of a composite literal,
+// converted to a named function type, or named in a local of the callback
+// that nothing else uses. Such a literal runs once the callback has
+// returned, outside the transaction, on purpose.
+func (c *checker) scopeHooks(root ast.Node) map[*ast.FuncLit]bool {
 	info := c.pass.TypesInfo
-	for i, lhs := range assign.Lhs {
-		base := scopeBase(lhs)
-		obj := info.ObjectOf(base)
-		if obj == nil || root.Pos() <= obj.Pos() && obj.Pos() < root.End() || i >= len(assign.Rhs) {
-			continue
+	locals := make(map[types.Object]*ast.FuncLit)
+	uses := make(map[types.Object]int)
+	var assigns []*ast.AssignStmt
+	ast.Inspect(root, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			assigns = append(assigns, n)
+			if lit, ok := n.Rhs[0].(*ast.FuncLit); ok && n.Tok == token.DEFINE && len(n.Lhs) == 1 {
+				locals[info.Defs[n.Lhs[0].(*ast.Ident)]] = lit
+			}
+		case *ast.Ident:
+			uses[info.Uses[n]]++
 		}
-		rhs := ast.Unparen(assign.Rhs[i])
-		if lit, ok := rhs.(*ast.FuncLit); ok {
+		return true
+	})
+	hooks := make(map[*ast.FuncLit]bool)
+	for _, assign := range assigns {
+		for i, lhs := range assign.Lhs {
+			obj := info.ObjectOf(scopeBase(lhs))
+			if obj == nil || root.Pos() <= obj.Pos() && obj.Pos() < root.End() || i >= len(assign.Rhs) {
+				continue
+			}
+			c.scopeHookLiterals(assign.Rhs[i], locals, uses, hooks)
+		}
+	}
+	return hooks
+}
+
+// scopeHookLiterals adds to hooks the literals that e stores: e itself, the
+// fields of a composite literal, the values append adds, the operand of a
+// conversion or of &, and the literal of a local used only here. A literal
+// given to any other call may run inside the callback, so it is not one.
+func (c *checker) scopeHookLiterals(e ast.Expr, locals map[types.Object]*ast.FuncLit, uses map[types.Object]int, hooks map[*ast.FuncLit]bool) {
+	info := c.pass.TypesInfo
+	switch e := ast.Unparen(e).(type) {
+	case *ast.FuncLit:
+		hooks[e] = true
+	case *ast.Ident:
+		if lit, ok := locals[info.Uses[e]]; ok && uses[info.Uses[e]] == 1 {
 			hooks[lit] = true
 		}
-		call, ok := rhs.(*ast.CallExpr)
-		if !ok {
-			continue
+	case *ast.UnaryExpr:
+		c.scopeHookLiterals(e.X, locals, uses, hooks)
+	case *ast.KeyValueExpr:
+		c.scopeHookLiterals(e.Value, locals, uses, hooks)
+	case *ast.CompositeLit:
+		for _, elt := range e.Elts {
+			c.scopeHookLiterals(elt, locals, uses, hooks)
 		}
-		if b, ok := info.Uses[scopeBase(call.Fun)].(*types.Builtin); !ok || b.Name() != "append" {
-			continue
+	case *ast.CallExpr:
+		if info.Types[e.Fun].IsType() {
+			c.scopeHookLiterals(e.Args[0], locals, uses, hooks)
 		}
-		for _, arg := range call.Args[1:] {
-			if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
-				hooks[lit] = true
+		if b, ok := info.Uses[scopeBase(e.Fun)].(*types.Builtin); ok && b.Name() == "append" {
+			for _, arg := range e.Args[1:] {
+				c.scopeHookLiterals(arg, locals, uses, hooks)
 			}
 		}
 	}

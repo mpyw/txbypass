@@ -283,3 +283,18 @@ func NeverMade(db *sql.DB) error {
 	db.Exec("still inside") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
+
+// A deferred call inside a literal runs when the literal returns, while
+// the transaction is open.
+func DeferInLiteral(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	func() {
+		defer db.Exec("inside the literal") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+		tx.Exec("x")
+	}()
+	return tx.Commit()
+}

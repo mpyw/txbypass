@@ -70,3 +70,51 @@ func HookShapes(db *gorm.DB, p *func(), m map[string]func(), h *holder, u *User)
 	_ = n
 	return err
 }
+
+// Hook is a named hook, as outbox code keeps them.
+type Hook struct {
+	Name string
+	Run  func()
+}
+
+type HookFunc func()
+
+// Not reported: the hook is a field of a struct literal, converted to a
+// named type, or named in a local used only to keep it.
+func HookWrapped(db *gorm.DB, u *User) error {
+	var after []Hook
+	var funcs []HookFunc
+	var named []func()
+	err := db.Transaction(func(tx *gorm.DB) error {
+		after = append(after, Hook{Name: "notify", Run: func() { db.Create(&Event{}) }})
+		funcs = append(funcs, HookFunc(func() { db.Create(&Event{}) }))
+		notify := func() { db.Create(&Event{}) }
+		named = append(named, notify)
+		return tx.Create(u).Error
+	})
+	return err
+}
+
+// A local used again inside the callback runs there too.
+func HookCalledToo(db *gorm.DB, u *User) error {
+	var named []func()
+	return db.Transaction(func(tx *gorm.DB) error {
+		notify := func() { db.Create(&Event{}) } // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		named = append(named, notify)
+		notify()
+		return tx.Create(u).Error
+	})
+}
+
+// A literal given to a call that is not append or a conversion may run
+// inside the callback.
+func run(f func()) func() { f(); return f }
+
+func HookThroughCall(db *gorm.DB, u *User) error {
+	var after func()
+	return db.Transaction(func(tx *gorm.DB) error {
+		after = run(func() { db.Create(&Event{}) }) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		_ = after
+		return tx.Create(u).Error
+	})
+}
