@@ -258,3 +258,28 @@ func ReassignedCaptured(db *sql.DB) error {
 	_, err = db.Exec("after the commit")
 	return err
 }
+
+// A map insert gives the transaction away, as a field store does.
+type sessions struct{ txs map[string]*sql.Tx }
+
+func (s *sessions) Open(db *sql.DB, id string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	s.txs[id] = tx
+	_, err = db.Exec("after the transaction went away")
+	return err
+}
+
+// A literal that ends the transaction but is never made ends nothing: it
+// never runs.
+func NeverMade(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	_ = func() { tx.Commit() }
+	db.Exec("still inside") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}

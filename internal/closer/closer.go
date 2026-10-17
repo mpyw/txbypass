@@ -9,8 +9,8 @@
 // binds.
 //
 // In the function that holds the begin, a transaction that goes where this
-// analysis does not follow, into a field, a channel, or a function literal
-// that is given away, may be ended by code it does not read. That counts as
+// analysis does not follow, into a field, a map, a channel, or a function
+// literal that is given away, may be ended by code it does not read. That counts as
 // an end too, so that nothing is reported after it. Inside a helper, only
 // an end the helper writes counts: a library's own methods store their
 // receiver in many places, and would otherwise seem to end it. A
@@ -105,6 +105,8 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 		return !local && within(instr.Val, txs)
 	case *ssa.Send:
 		return within(instr.X, txs)
+	case *ssa.MapUpdate:
+		return within(instr.Value, txs)
 	case *ssa.MakeClosure:
 		return c.closureGivenAway(instr, txs)
 	}
@@ -195,8 +197,12 @@ func (c *Closer) rootEnds(fn *ssa.Function, root ssa.Value) bool {
 
 // closureGivenAway reports whether mc makes a literal that ends the
 // transaction, and gives it to something other than a call of it or a
-// defer. Then it may run anywhere.
+// defer. Then it may run anywhere. A closure that nothing uses never runs,
+// so it ends nothing.
 func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
+	if !program.Used(mc) {
+		return false
+	}
 	fn := mc.Fn.(*ssa.Function)
 	ends := false
 	for i, b := range mc.Bindings {

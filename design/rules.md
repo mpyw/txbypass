@@ -170,8 +170,8 @@ An instruction is in the region when the transaction is open there on every path
 | A call of `Commit`, `Rollback`, `CommitContext` or `RollbackContext` on the transaction, a copy of it, or a field of it, that takes no function | Closed after it. pop commits through `tx.TX.Commit()`. pop's `Rollback(fn)` takes a function, and opens a transaction of its own |
 | A call of a function that ends a parameter it is given the transaction in | Closed after it. See [Helpers](#helpers) |
 | A call of a function literal that ends a variable it captures | Closed after it |
-| A store of the transaction into anything but a variable of the function, or a send of it on a channel | Closed after it. Code this analysis does not read may end it |
-| A function literal that ends the transaction, made and given to anything but a call or a `defer` | Closed after it, for the same reason |
+| A store of the transaction into anything but a variable of the function, an insert of it into a map, or a send of it on a channel | Closed after it. Code this analysis does not read may end it |
+| A function literal that ends the transaction, made and given to anything but a call or a `defer` | Closed after it, for the same reason. A literal nothing uses, as one assigned to `_`, never runs and ends nothing |
 | The edge where the begin's error is set | Closed. See below |
 | A call that never returns, as `log.Fatal` or `os.Exit`, or a panic | The path ends. It takes no part |
 
