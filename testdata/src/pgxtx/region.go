@@ -96,3 +96,21 @@ func PoolStat(ctx context.Context, pool *pgxpool.Pool) error {
 	_ = pool.Stat()
 	return tx.Commit(ctx)
 }
+
+// mockTx embeds pgx's Tx, as pgxmock's mock does.
+type mockTx struct {
+	pgx.Tx
+	calls int
+}
+
+// Not reported: Begin is pgx.Tx's, so it opens a savepoint, whatever type
+// embeds it.
+func SavepointOnEmbedded(ctx context.Context, tx *mockTx) error {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	// Not reported: a savepoint runs on the transaction's connection.
+	tx.Exec(ctx, "INSERT INTO ledger VALUES (1)")
+	return sp.Commit(ctx)
+}

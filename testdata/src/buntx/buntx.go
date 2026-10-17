@@ -123,3 +123,15 @@ func QueryOnDB(ctx context.Context, db *bun.DB, u *User) error {
 		return err
 	})
 }
+
+// wrappedTx embeds bun's Tx.
+type wrappedTx struct{ bun.Tx }
+
+// Not reported: RunInTx is bun.Tx's, so it opens a savepoint.
+func SavepointOnWrapped(ctx context.Context, tx wrappedTx, u *User) error {
+	return tx.RunInTx(ctx, nil, func(ctx context.Context, sp bun.Tx) error {
+		// Not reported: a savepoint runs on the transaction's connection.
+		_, err := tx.NewInsert().Model(u).Exec(ctx)
+		return err
+	})
+}

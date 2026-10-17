@@ -99,7 +99,7 @@ A transaction opened on a transaction is a savepoint. It runs on the connection 
 
 | The handle | Known by |
 | --- | --- |
-| pgx's `Tx`, v5 and v4, and bun's `Tx` | Its type |
+| pgx's `Tx`, v5 and v4, and bun's `Tx`, or a type that embeds one, as pgxmock's mock | Its type, or the type the method is declared on |
 | A begin's result, as gorm's `tx := db.Begin()` | Where it comes from |
 | The transaction a callback opener gives, as gorm's `tx` in `db.Transaction(func(tx *gorm.DB) error { ... })` | Where it comes from |
 
