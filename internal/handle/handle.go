@@ -40,46 +40,66 @@ type Path struct {
 	unknown bool
 }
 
+// Paths answers Of for one pass, and remembers what it reads. The SSA form
+// does not change during a pass, so neither do the answers. A rule asks
+// about every use in a scope, and a region about every instruction in it.
+// A variable in memory is read through every use of it, so without the
+// memory the time grew with the cube of a region's length.
+type Paths struct {
+	known  map[ssa.Value]Path
+	stores map[*ssa.Alloc]allocStoreSet
+}
+
+// NewPaths is a Paths that has read nothing yet.
+func NewPaths() *Paths {
+	return &Paths{known: make(map[ssa.Value]Path), stores: make(map[*ssa.Alloc]allocStoreSet)}
+}
+
 // Of is the handle v is.
-func Of(v ssa.Value) Path {
-	return of(v, make(map[ssa.Value]bool))
+func (ps *Paths) Of(v ssa.Value) Path {
+	if p, ok := ps.known[v]; ok {
+		return p
+	}
+	p := ps.of(v, make(map[ssa.Value]bool))
+	ps.known[v] = p
+	return p
 }
 
 // of is Of, with the phis and variables already on the way, so that a loop
 // of them ends. A variable stored a call on itself, as q = q.Where(c), leads
 // back to itself.
-func of(v ssa.Value, seen map[ssa.Value]bool) Path {
+func (ps *Paths) of(v ssa.Value, seen map[ssa.Value]bool) Path {
 	switch v := v.(type) {
 	case *ssa.UnOp:
 		// A load gives what its address holds. Any other operator gives a
 		// value of its own.
 		if v.Op == token.MUL {
-			return of(v.X, seen)
+			return ps.of(v.X, seen)
 		}
 	case *ssa.FieldAddr:
-		return of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+		return ps.of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
 	case *ssa.Field:
-		return of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+		return ps.of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
 	case *ssa.ChangeType:
-		return of(v.X, seen)
+		return ps.of(v.X, seen)
 	case *ssa.MakeInterface:
-		return of(v.X, seen)
+		return ps.of(v.X, seen)
 	case *ssa.ChangeInterface:
-		return of(v.X, seen)
+		return ps.of(v.X, seen)
 	case *ssa.TypeAssert:
 		// Only an assertion that panics when it fails gives the value
 		// itself. The comma-ok form gives a tuple.
 		if !v.CommaOk {
-			return of(v.X, seen)
+			return ps.of(v.X, seen)
 		}
 	case *ssa.MakeClosure:
 		// A method value, as db.Create, binds its receiver.
 		if strings.HasPrefix(v.Fn.(*ssa.Function).Synthetic, "bound method wrapper") {
-			return of(v.Bindings[0], seen)
+			return ps.of(v.Bindings[0], seen)
 		}
 	case *ssa.FreeVar:
 		if b, ok := binding(v); ok {
-			return of(b, seen)
+			return ps.of(b, seen)
 		}
 	case *ssa.Alloc:
 		// A variable written once as a whole is the value written. One
@@ -87,24 +107,24 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 		// function, is itself: a callback runs while it holds one value, and
 		// a scope checks the writes inside it (see Address). One written
 		// elsewhere is not known.
-		whole, fields, ok := allocStores(v)
+		whole, fields, ok := ps.allocStores(v)
 		switch {
 		case !ok:
 			return Path{base: v, unknown: true}
 		case len(whole) == 1 && !fields && !seen[v]:
 			seen[v] = true
 			defer delete(seen, v)
-			return of(whole[0].Val, seen)
+			return ps.of(whole[0].Val, seen)
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
-			return of(recv, seen)
+			return ps.of(recv, seen)
 		}
 	case *ssa.Phi:
 		if seen[v] {
 			return Path{base: v}
 		}
-		if p, ok := samePhi(v, seen); ok {
+		if p, ok := ps.samePhi(v, seen); ok {
 			return p
 		}
 	}
@@ -171,15 +191,20 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 // load, a store to it, a debug reference, a field, a capture, or a call. A
 // call takes it as the receiver of a method of a value, as db.Begin() does
 // on a db held by value.
-func allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
-	var set allocStoreSet
-	if !set.collect(a, false) {
-		return nil, false, false
-	}
-	for _, st := range append(slices.Clip(set.whole), set.fields...) {
-		if st.Parent() != a.Parent() {
-			return nil, false, false
+func (ps *Paths) allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
+	set, read := ps.stores[a]
+	if !read {
+		set.ok = set.collect(a, false)
+		for _, st := range append(slices.Clip(set.whole), set.fields...) {
+			if st.Parent() != a.Parent() {
+				set.ok = false
+			}
 		}
+		set.visited = nil
+		ps.stores[a] = set
+	}
+	if !set.ok {
+		return nil, false, false
 	}
 	return set.whole, len(set.fields) > 0, true
 }
@@ -188,6 +213,8 @@ func allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
 type allocStoreSet struct {
 	whole  []*ssa.Store
 	fields []*ssa.Store
+	// ok reports that the address goes only where allocStores allows.
+	ok bool
 	// visited holds the variables whose loads are already walked. A pointer
 	// copied back and forth between two variables leads back to one.
 	visited map[allocStep]bool
@@ -279,16 +306,16 @@ func (set *allocStoreSet) collectLoads(v ssa.Value, field bool) bool {
 
 // Address is the storage that a store to addr writes: a variable, or a field
 // of a handle.
-func Address(addr ssa.Value) Path {
+func (ps *Paths) Address(addr ssa.Value) Path {
 	switch a := addr.(type) {
 	case *ssa.Alloc:
 		return Path{base: a}
 	case *ssa.FreeVar:
 		if b, ok := binding(a); ok {
-			return Address(b)
+			return ps.Address(b)
 		}
 	}
-	return Of(addr)
+	return ps.Of(addr)
 }
 
 // returnedReceiver is the receiver of a method call that returns a value of
@@ -327,12 +354,12 @@ func binds(fn *types.Func, recv types.Type) bool {
 // samePhi is the handle every edge of a phi gives, when they all give one.
 // An edge that comes back to the phi itself, around a loop, gives nothing
 // new.
-func samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
+func (ps *Paths) samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
 	seen[v] = true
 	var p Path
 	found := false
 	for _, e := range v.Edges {
-		q := of(e, seen)
+		q := ps.of(e, seen)
 		if q.base == v {
 			continue
 		}

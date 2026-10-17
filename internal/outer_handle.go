@@ -27,7 +27,7 @@ func (c *checker) checkOuterHandle(o opener.Opener, fn *ssa.Function) {
 	lit := c.prog.Func(o.Callback)
 	s := txScope{root: o.Callback.Body, fn: lit, opener: o.Name, tx: o.Tx, unnamed: "the callback's transaction", builds: o.Builds}
 	if o.Tx != nil {
-		s.txs = []handle.Path{handle.Of(outerHandleParam(lit, c.pass.TypesInfo.Defs[o.Tx]))}
+		s.txs = []handle.Path{c.paths.Of(outerHandleParam(lit, c.pass.TypesInfo.Defs[o.Tx]))}
 	}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
@@ -89,14 +89,14 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 			addr, _ = st.Addr.(*ssa.Alloc)
 		}
 	}
-	r := region.New(call, tx, err, addr, c.closer)
-	s := txScope{root: body, fn: fn, region: r, opener: b.Name, tx: b.Tx, txs: []handle.Path{handle.Of(tx)}}
+	r := region.New(call, tx, err, addr, c.closer, c.paths)
+	s := txScope{root: body, fn: fn, region: r, opener: b.Name, tx: b.Tx, txs: []handle.Path{c.paths.Of(tx)}}
 	if addr != nil {
-		s.txs = append(s.txs, handle.Of(addr))
+		s.txs = append(s.txs, c.paths.Of(addr))
 	}
 	// The receiver of a method call is always evaluated as a value.
 	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
-	outer := handle.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
+	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
 }

@@ -59,16 +59,26 @@ type Region struct {
 	closer *closer.Closer
 	// entry holds the state at the entry of each block.
 	entry map[*ssa.BasicBlock]state
+	// ends remembers what closer said of each instruction. The fixpoint
+	// steps through a block once for each time its entry changes.
+	ends map[ssa.Instruction]bool
+	// at holds the state before each instruction, once the fixpoint is
+	// done. A rule asks about every use in the region.
+	at map[ssa.Instruction]state
 }
 
 // New computes the region of the transaction that begin returns, in begin's
 // function. tx is the transaction's value. err is the begin's error, or
 // nil. A transaction kept in a variable in memory is also every load of it,
-// so its address is given as txAddr, or nil.
-func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer) *Region {
-	r := &Region{begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{handle.Of(tx)}, err: err, closer: c, entry: make(map[*ssa.BasicBlock]state)}
+// so its address is given as txAddr, or nil. Handles are read through
+// paths.
+func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer, paths *handle.Paths) *Region {
+	r := &Region{
+		begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{paths.Of(tx)}, err: err, closer: c,
+		entry: make(map[*ssa.BasicBlock]state), ends: make(map[ssa.Instruction]bool), at: make(map[ssa.Instruction]state),
+	}
 	if txAddr != nil {
-		r.txs = append(r.txs, handle.Of(txAddr))
+		r.txs = append(r.txs, paths.Of(txAddr))
 	}
 	fn := begin.Parent()
 	for _, b := range fn.Blocks[1:] {
@@ -86,6 +96,13 @@ func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer
 				r.entry[b] = in
 				changed = true
 			}
+		}
+	}
+	for _, b := range fn.Blocks {
+		s := r.entry[b]
+		for _, instr := range b.Instrs {
+			r.at[instr] = s
+			s = r.step(instr, s)
 		}
 	}
 	return r
@@ -108,10 +125,20 @@ func (r *Region) step(instr ssa.Instruction, s state) state {
 	switch {
 	case instr == r.begin:
 		return open
-	case s == open && r.closer.Ends(instr, r.txs):
+	case s == open && r.endsAt(instr):
 		return closed
 	}
 	return s
+}
+
+// endsAt reports whether instr may end the transaction, as closer says.
+func (r *Region) endsAt(instr ssa.Instruction) bool {
+	ends, ok := r.ends[instr]
+	if !ok {
+		ends = r.closer.Ends(instr, r.txs)
+		r.ends[instr] = ends
+	}
+	return ends
 }
 
 // failed reports whether the edge from p to b is taken when the begin's
@@ -194,12 +221,5 @@ func lastStored(b *ssa.BasicBlock, at int, addr, v ssa.Value, seen map[*ssa.Basi
 
 // Inside reports whether the transaction is open at instr, on every path.
 func (r *Region) Inside(instr ssa.Instruction) bool {
-	s := r.entry[instr.Block()]
-	for _, i := range instr.Block().Instrs {
-		if i == instr {
-			break
-		}
-		s = r.step(i, s)
-	}
-	return s == open
+	return r.at[instr] == open
 }
