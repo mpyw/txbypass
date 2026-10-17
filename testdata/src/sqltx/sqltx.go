@@ -255,3 +255,15 @@ func Zero(db *sql.DB) {
 	db.Exec("SELECT 1")
 	use(tx)
 }
+
+// Not reported: the pool's own settings and statistics. Exec is reported.
+func PoolMetadata(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	_ = db.Stats()
+	db.SetMaxOpenConns(10)
+	db.Exec("SELECT 1") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}

@@ -176,7 +176,15 @@ A handle is a root value and the fields selected from it. The root is what the S
 
 Two values are the same handle when they have the same root and the same fields. A use reaches the outer handle when it is the outer handle, or a field selected from it: reading `db.Error` reads `db`. A method or a field promoted from an embedded handle reaches it through the embedded field, as `s.Create(u)` reaches `s.DB`.
 
-A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A scope that writes the outer handle, or a variable or a field that holds it, reports no use of it. After the write, it may hold another value. So `db = tx` or `s.db = tx` inside the callback makes `db` or `s.db` no use. A store of a value taken from the transaction into a field of the outer handle is such a write too. In gorm, `base.Statement.ConnPool = tx.Statement.ConnPool` makes `base` run on the transaction. In a region, only the writes inside the region count, and a deferred literal writes when the function returns.
+A struct that embeds the handle is not the handle. It may hold other things, as a logger, a cache, a mutex or a second handle. So `s.validate(u)`, `s.logger.Printf(...)` and `s.Lock()` are no uses of `s.DB`. A parameter of the callback with the outer handle's name is another value. A call of a method that reads or sets the pool itself is no use. The transaction has no such method, and the call runs no statement:
+
+| Library | Methods |
+| --- | --- |
+| database/sql | `Stats`, `Driver`, `SetMaxOpenConns`, `SetMaxIdleConns`, `SetConnMaxLifetime`, `SetConnMaxIdleTime` of `*DB` |
+| pgx v5, v4 | `Stat` and `Config` of `*pgxpool.Pool` |
+| bun | `DBStats` of `*DB` |
+
+A scope that writes the outer handle, or a variable or a field that holds it, reports no use of it. After the write, it may hold another value. So `db = tx` or `s.db = tx` inside the callback makes `db` or `s.db` no use. A store of a value taken from the transaction into a field of the outer handle is such a write too. In gorm, `base.Statement.ConnPool = tx.Statement.ConnPool` makes `base` run on the transaction. In a region, only the writes inside the region count, and a deferred literal writes when the function returns.
 
 What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds.
 
@@ -338,7 +346,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
 | A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |
-| A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies |
+| A use that runs no statement, such as reading the handle's dialect | It is reported. The transaction gives the same answer, so the fix still applies. A pool's own settings and statistics are not reported: see [Scopes](#scopes) |
 | A hook kept for after the callback, but called inside it too | The literal is not read |
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
