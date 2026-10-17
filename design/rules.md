@@ -109,7 +109,7 @@ Only these open a savepoint, or reuse the transaction, when called on one. The o
 | pop | `Transaction`, `Rollback`, `NewTransaction`, `NewTransactionContext`, `NewTransactionContextOptions` |
 | pgx, bun | Every one, by the type of the transaction |
 
-upper/db's `Tx` on a transaction begins another transaction on the pool. go-redis's `TxPipelined` queues commands, and a command on the handle runs at once, before the queued ones. A use of the outer transaction in either is reported.
+The `Tx` of upper/db on a transaction begins another transaction on the pool. The `TxPipelined` of go-redis queues commands, and a command on the handle runs at once, before the queued ones. A use of the outer transaction in either is reported.
 
 ## Begins
 
