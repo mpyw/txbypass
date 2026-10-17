@@ -88,12 +88,14 @@ var knownOpeners = []known{
 	{pkg: "github.com/jackc/pgx/v5", name: "BeginTxFunc", outer: 1, callback: 3, tx: 0},
 
 	// pgx v4.18: BeginFunc(ctx, f func(Tx) error) and BeginTxFunc(ctx, txOptions, f) of Conn,
-	// of Tx (a savepoint), and of pgxpool.Pool.
+	// of Tx (a savepoint), and of pgxpool's Pool and Conn.
 	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4", recv: "Conn", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4", recv: "Tx", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
+	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginFunc", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Conn", name: "BeginTxFunc", outer: -1, callback: 2, tx: 0},
 
 	// goqu v9: func (d *Database) WithTx(fn func(*TxDatabase) error) error
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "WithTx", outer: -1, callback: 0, tx: 0},

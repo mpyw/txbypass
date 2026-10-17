@@ -39,6 +39,8 @@ A callback opener is recognized by the package path, the receiver's type and the
 | pgx v4 | `github.com/jackc/pgx/v4` | `*Conn` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
 | pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Pool` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
 | pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Pool` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
+| pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Conn` | `BeginFunc` | The receiver | Argument 1 | Parameter 0 |
+| pgx v4 | `github.com/jackc/pgx/v4/pgxpool` | `*Conn` | `BeginTxFunc` | The receiver | Argument 2 | Parameter 0 |
 | goqu | `github.com/doug-martin/goqu/v9` | `*Database` | `WithTx` | The receiver | Argument 0 | Parameter 0 |
 | pop | `github.com/gobuffalo/pop/v6` | `*Connection` | `Transaction`, `Rollback` | The receiver | Argument 0 | Parameter 0 |
 | upper/db | `github.com/upper/db/v4` | `Session` | `Tx` | The receiver | Argument 0 | Parameter 0 |
@@ -143,7 +145,7 @@ A struct that embeds the handle is not the handle. It may hold other things, as 
 
 What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds.
 
-A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names.
+A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names. An index on the left is read: `m[k] = v` uses `m` and `k`.
 
 ## Scopes
 
@@ -184,7 +186,7 @@ An instruction is in the region when the transaction is open there on every path
 | A deferred statement of the function that holds the begin | It runs when the function returns. A deferred statement in a function literal runs when the literal returns, so it is read |
 | Code after a branch that may end the transaction | Not every path leaves it open |
 
-The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
+The begin's error is set on the true edge of `err != nil`, and on the false edge of `err == nil`. A begin with no error result, as gorm's `Begin`, reports failure in the transaction's `Error` field, so `tx.Error` is its error. That is the field of the begin's value only: `tx.Create(u).Error` is another statement's error. Here `err` is the begin's own error value. A later `err` that another call assigned is another value.
 
 An error can live in memory, as a named result that a deferred literal reads. A load of it counts when every path to the load last stored the begin's error there. A branch between the begin and the check changes nothing, but another error stored on one path does.
 
@@ -211,7 +213,7 @@ Firestore's client builds the references a transaction reads and writes, as in `
 | --- | --- | --- |
 | `tx.Get(client.Doc("users/a"))` | No | The chain of calls on `client` takes no context |
 | `ref := client.Collection("users").Doc("b")` | No | The same |
-| `client.Doc("users/c").Set(ctx, v)` | Yes | A call in the chain takes a context |
+| `client.Doc("users/c").Set(ctx, v)` | Yes | A call in the chain takes a context: a parameter of the method has type `context.Context`, whatever the caller passes there |
 | `save(ctx, client)` | Yes | The handle on its own is given to a function |
 
 ### sqlc's `WithTx`

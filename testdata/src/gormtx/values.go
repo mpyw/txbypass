@@ -84,3 +84,11 @@ func Interfaces(db *gorm.DB, u *User) error {
 		return nil
 	})
 }
+
+// A use inside the index on the left of an assignment runs.
+func IndexOnLeft(db *gorm.DB, u *User, seen map[error]int) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		seen[db.Create(u).Error] = 1 // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		return nil
+	})
+}

@@ -37,3 +37,13 @@ type Conn struct{}
 func (c *Conn) Begin(ctx context.Context) (pgx.Tx, error) { return nil, nil }
 
 func (c *Conn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) { return nil, nil }
+
+func (c *Conn) BeginFunc(ctx context.Context, f func(pgx.Tx) error) error { return nil }
+
+func (c *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f func(pgx.Tx) error) error {
+	return nil
+}
+
+func (c *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgx.CommandTag, error) {
+	return nil, nil
+}
