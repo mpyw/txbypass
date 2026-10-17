@@ -1,4 +1,5 @@
 <div align="center">
+  <img src=".github/assets/icon.png" alt="" width="128" height="128">
   <h1>txbypass</h1>
 
   [![CI](https://github.com/mpyw/txbypass/actions/workflows/ci.yml/badge.svg)](https://github.com/mpyw/txbypass/actions/workflows/ci.yml)
@@ -267,3 +268,5 @@ The full specification, with every limit, is [design/rules.md](design/rules.md).
 ## License
 
 [MIT](LICENSE)
+
+The Go gopher was designed by Renée French, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
