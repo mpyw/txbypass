@@ -112,3 +112,36 @@ func OptionalFilters(db *gorm.DB, f Filter) error {
 	q.First(&User{}) // want `^q bypasses the transaction opened with Begin; use t instead \[outer-handle\]$`
 	return t.Commit().Error
 }
+
+// err is a named result a deferred literal reads, so it lives in memory.
+// Its check is still the begin's: no transaction began on that branch.
+func ErrorFieldInMemory(db *gorm.DB, u *User) (err error) {
+	tx := db.Begin()
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	if err = tx.Error; err != nil {
+		db.Create(u)
+		return err
+	}
+	db.Create(u) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit().Error
+}
+
+// Another statement's error, stored in the same variable, is not the
+// begin's.
+func OtherErrorInMemory(db *gorm.DB, u *User) (err error) {
+	tx := db.Begin()
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	if err = tx.Create(u).Error; err != nil {
+		db.Create(u) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit().Error
+}

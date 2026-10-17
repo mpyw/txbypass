@@ -165,14 +165,20 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 	if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
 		return false
 	}
-	if r.err == nil {
-		return r.isErrorField(v)
-	}
-	if v == r.err {
+	if r.isBeginErr(v) {
 		return true
 	}
 	load, ok := v.(*ssa.UnOp)
-	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.err, make(map[*ssa.BasicBlock]bool))
+	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.isBeginErr, make(map[*ssa.BasicBlock]bool))
+}
+
+// isBeginErr reports whether v is the begin's error itself: its error
+// result, or for a begin with none, its Error field.
+func (r *Region) isBeginErr(v ssa.Value) bool {
+	if r.err == nil {
+		return r.isErrorField(v)
+	}
+	return v == r.err
 }
 
 // isErrorField reports whether v reads the field Error of the transaction
@@ -193,13 +199,13 @@ func (r *Region) isErrorField(v ssa.Value) bool {
 }
 
 // lastStored reports whether every path to instruction at of b last stores
-// v to addr. A variable stored on one path only has a path that reaches the
+// a value that v accepts to addr. A variable stored on one path only has a path that reaches the
 // entry with no store, so it is not the begin's error.
 // A block met again around a loop leaves the answer to the other paths.
-func lastStored(b *ssa.BasicBlock, at int, addr, v ssa.Value, seen map[*ssa.BasicBlock]bool) bool {
+func lastStored(b *ssa.BasicBlock, at int, addr ssa.Value, v func(ssa.Value) bool, seen map[*ssa.BasicBlock]bool) bool {
 	for i := at - 1; i >= 0; i-- {
 		if st, ok := b.Instrs[i].(*ssa.Store); ok && st.Addr == addr {
-			return st.Val == v
+			return v(st.Val)
 		}
 	}
 	// A path that reaches the entry stored nothing to addr, so addr does not
