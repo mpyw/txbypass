@@ -79,6 +79,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | A variable in memory written by one store is the value stored | A variable that a literal captures is not lifted. The callback's `db` is a load of it, so the parameter has to be found through the store |
 | Count the stores inside the literals that capture the variable too | A literal can assign it, through its free variable |
 | A phi is a handle only when every edge gives it | Two handles meeting is neither. A loop edge back to the phi adds nothing |
+| A phi already read gives its handle again, and only a phi still on the way is a loop | Two optional filters, as `q = q.Where(...)` under two conditions, meet one phi through two paths. Taking the second arrival for a loop made `q` a root of its own |
 | One `handle.Paths` per pass remembers every answer | The SSA form does not change during a pass. A handle in memory is read through every use of it, and a rule asks about every use in a region. Without the memory, a region of 3000 statements took 35 s |
 | An address given to a function of the package gives no handle | A repository's `Bind(tx)` writes the field the transaction was opened on. Reading that it does would mean reading the callee, and a miss is better than a false report |
 | A variable already on the way is itself | `q = q.Where(c)` stores a call on `q`, which gives `q` back. Pointers copied back and forth lead back to one variable too. Without the guard, the analysis recursed until the stack overflowed |
