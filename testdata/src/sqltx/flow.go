@@ -311,3 +311,59 @@ func ReassignedInRegion(db, other *sql.DB) error {
 	defer func() { _ = db }()
 	return tx.Commit()
 }
+
+// Helpers that call each other end the transaction through either one,
+// whichever is read first.
+func cycleA(tx *sql.Tx, n int) error { // want cycleA:"closes\\[0\\]"
+	if n > 0 {
+		return cycleB(tx, n-1)
+	}
+	return nil
+}
+
+func cycleB(tx *sql.Tx, n int) error { // want cycleB:"closes\\[0\\]"
+	if n > 0 {
+		return cycleA(tx, n-1)
+	}
+	return tx.Commit()
+}
+
+func UseCycle(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := cycleA(tx, 3); err != nil {
+		return err
+	}
+	_, err = db.Exec("after the helpers")
+	return err
+}
+
+// The same pair, with the helper that commits written first, so that it is
+// read first.
+func cycleCommits(tx *sql.Tx, n int) error { // want cycleCommits:"closes\\[0\\]"
+	if n > 0 {
+		return cyclePasses(tx, n-1)
+	}
+	return tx.Commit()
+}
+
+func cyclePasses(tx *sql.Tx, n int) error { // want cyclePasses:"closes\\[0\\]"
+	if n > 0 {
+		return cycleCommits(tx, n-1)
+	}
+	return nil
+}
+
+func UseCyclePasses(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := cyclePasses(tx, 3); err != nil {
+		return err
+	}
+	_, err = db.Exec("after the helpers")
+	return err
+}

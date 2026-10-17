@@ -47,9 +47,14 @@ type Closer struct {
 	pass *analysis.Pass
 	// memo holds what is known of each function and root: whether the
 	// function ends the transaction rooted at that parameter or free
-	// variable. A pair still being read counts as false, which ends a
-	// recursion.
+	// variable.
 	memo map[closerKey]bool
+	// reading holds the pairs being read. A pair met again while it is
+	// read counts as false, which ends a recursion. That false is not
+	// final, so a result that depended on it is not memoized.
+	reading map[closerKey]bool
+	// cycled reports that the read in progress met a pair being read.
+	cycled bool
 }
 
 // closerKey is a function, and the parameter or free variable of it that
@@ -61,7 +66,7 @@ type closerKey struct {
 
 // New is a Closer for pass.
 func New(pass *analysis.Pass) *Closer {
-	return &Closer{pass: pass, memo: make(map[closerKey]bool)}
+	return &Closer{pass: pass, memo: make(map[closerKey]bool), reading: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -160,17 +165,38 @@ func (c *Closer) paramEnds(fn *ssa.Function, i int) bool {
 // rootEnds reports whether fn ends the transaction rooted at root, one of
 // its parameters or free variables. Its deferred calls count: they run
 // before it returns.
+//
+// Helpers may call each other. A pair met again while it is read answers
+// false for now. A false that rests on such an answer is not memoized, so
+// it is read again once the cycle has been read through, and the answer
+// does not depend on which helper is read first.
 func (c *Closer) rootEnds(fn *ssa.Function, root ssa.Value) bool {
 	key := closerKey{fn, root}
 	if done, ok := c.memo[key]; ok {
 		return done
 	}
-	c.memo[key] = false
+	if c.reading[key] {
+		c.cycled = true
+		return false
+	}
+	c.reading[key] = true
+	outer := c.cycled
+	c.cycled = false
+	ends := c.rootEndsRead(fn, root)
+	delete(c.reading, key)
+	if ends || !c.cycled {
+		c.memo[key] = ends
+	}
+	c.cycled = outer || c.cycled
+	return ends
+}
+
+// rootEndsRead reads fn for a call that ends the transaction rooted at root.
+func (c *Closer) rootEndsRead(fn *ssa.Function, root ssa.Value) bool {
 	txs := []handle.Path{handle.Of(root)}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if call, ok := instr.(ssa.CallInstruction); ok && c.callEnds(call.Common(), txs) {
-				c.memo[key] = true
 				return true
 			}
 		}

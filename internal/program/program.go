@@ -8,8 +8,10 @@
 package program
 
 import (
+	"cmp"
 	"go/ast"
 	"go/types"
+	"slices"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
@@ -70,12 +72,15 @@ func (p *Program) Func(n ast.Node) *ssa.Function {
 	return p.funcs[n]
 }
 
-// Funcs lists the package's declared functions and their literals.
+// Funcs lists the package's declared functions and their literals, in the
+// order of their positions, so that a pass reads them the same way each
+// time.
 func (p *Program) Funcs() []*ssa.Function {
 	out := make([]*ssa.Function, 0, len(p.funcs))
 	for _, fn := range p.funcs {
 		out = append(out, fn)
 	}
+	slices.SortFunc(out, func(a, b *ssa.Function) int { return cmp.Compare(a.Pos(), b.Pos()) })
 	return out
 }
 
