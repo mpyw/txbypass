@@ -233,3 +233,36 @@ func NestedLoops(db *gorm.DB, fs [][]string) error {
 		return nil
 	})
 }
+
+// Two conditional filters in one loop: q is db after the loop.
+func FiltersInLoop(db *gorm.DB, fs []Filter) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		q := db // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		for _, f := range fs {
+			if f.A {
+				q = q.Where("a") // want `^q bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+			}
+			if f.B {
+				q = q.Where("b") // want `^q bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+			}
+		}
+		return q.Find(&[]User{}).Error // want `^q bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
+
+// The same before a region: the query run in it is db.
+func FiltersInLoopRegion(db *gorm.DB, fs []Filter) error {
+	q := db.Where("tenant")
+	tx := db.Begin()
+	defer tx.Rollback()
+	for _, f := range fs {
+		if f.A {
+			q = q.Where("a") // want `^q bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+		}
+		if f.B {
+			q = q.Where("b") // want `^q bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+		}
+	}
+	q.Find(&[]User{}) // want `^q bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit().Error
+}

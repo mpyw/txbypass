@@ -469,14 +469,18 @@ func binds(fn *types.Func, recv types.Type) bool {
 
 // samePhi is the handle every edge of a phi gives, when they all give one.
 // An edge that comes back around a loop, to this phi or to the phi of an
-// outer loop still on the way, gives nothing new.
+// outer loop still on the way, gives nothing new. A phi whose every edge
+// comes back is the outermost phi it comes back to.
 func (ps *Paths) samePhi(v *ssa.Phi, w *walk) (Path, bool) {
-	var p Path
+	var p, back Path
 	found := false
 	for _, e := range v.Edges {
 		q := ps.of(e, w)
 		if phi, ok := q.base.(*ssa.Phi); ok && q.Depth() == 0 {
-			if _, on := w.on[phi]; on {
+			if d, on := w.on[phi]; on {
+				if back.base == nil || d < w.on[back.base] {
+					back = q
+				}
 				continue
 			}
 		}
@@ -484,6 +488,11 @@ func (ps *Paths) samePhi(v *ssa.Phi, w *walk) (Path, bool) {
 			return Path{}, false
 		}
 		p, found = q, true
+	}
+	if !found && back.base != nil && back.base != v {
+		// Every edge comes back around a loop, as the phi of a branch in
+		// a loop body does. It is the phi it comes back to.
+		return back, true
 	}
 	return p, found
 }
