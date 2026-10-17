@@ -20,8 +20,11 @@ package closer
 
 import (
 	"fmt"
+	"go/constant"
+	"go/token"
 	"go/types"
 	"slices"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
@@ -242,8 +245,13 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 	fn := mc.Fn.(*ssa.Function)
 	ends := false
 	for i, b := range mc.Bindings {
-		if c.within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
-			ends = true
+		if !c.within(b, txs) {
+			continue
+		}
+		if fn.Synthetic == yieldSynthetic {
+			ends = ends || c.yieldEnds(mc, fn.FreeVars[i])
+		} else {
+			ends = ends || c.rootEnds(fn, fn.FreeVars[i])
 		}
 	}
 	if !ends {
@@ -289,4 +297,129 @@ func (c *Closer) Export(prog *program.Program) {
 			c.pass.ExportObjectFact(obj, &Fact{Params: params})
 		}
 	}
+}
+
+// yieldSynthetic is how the builder marks the function it makes of the body
+// of a range over a function.
+const yieldSynthetic = "range-over-func yield"
+
+// yieldEnds reports whether the body of a range over a function, which mc
+// makes, ends the transaction rooted at root and then goes on: to the next
+// iteration, or out of the loop by a break. A path that returns from the
+// function that holds the loop takes no part, as in a loop over a slice:
+// if err != nil { tx.Rollback(); return err } leaves the transaction open
+// after the loop.
+func (c *Closer) yieldEnds(mc *ssa.MakeClosure, root ssa.Value) bool {
+	fn := mc.Fn.(*ssa.Function)
+	txs := []handle.Path{c.paths.Of(root)}
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			if c.yieldStepEnds(instr, txs) && yieldGoesOn(mc, b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// yieldStepEnds reports whether instr, in the body of a range over a
+// function, ends the transaction: a call that ends it, or the body of an
+// inner loop that does.
+func (c *Closer) yieldStepEnds(instr ssa.Instruction, txs []handle.Path) bool {
+	switch instr := instr.(type) {
+	case ssa.CallInstruction:
+		return c.callEnds(instr.Common(), txs)
+	case *ssa.MakeClosure:
+		return c.closureGivenAway(instr, txs)
+	}
+	return false
+}
+
+// yieldGoesOn reports whether a path from block b of the body that mc makes
+// goes on in the loop or after it. The body returns true
+// for the next iteration. It returns false to leave the loop, with the exit
+// it takes stored in its jump variable. The function that holds the loop
+// branches on that exit: to a return for a return in the body, or past the
+// loop for a break.
+func yieldGoesOn(mc *ssa.MakeClosure, b *ssa.BasicBlock) bool {
+	seen := map[*ssa.BasicBlock]bool{b: true}
+	for work := []*ssa.BasicBlock{b}; len(work) > 0; {
+		b, work = work[len(work)-1], work[:len(work)-1]
+		ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
+		if ok && !yieldReturns(mc, b, ret) {
+			return true
+		}
+		for _, s := range b.Succs {
+			if !seen[s] {
+				seen[s] = true
+				work = append(work, s)
+			}
+		}
+	}
+	return false
+}
+
+// yieldReturns reports whether ret, at the end of block b of the body that
+// mc makes, returns from the function that holds the loop.
+func yieldReturns(mc *ssa.MakeClosure, b *ssa.BasicBlock, ret *ssa.Return) bool {
+	if done, ok := ret.Results[0].(*ssa.Const); !ok || constant.BoolVal(done.Value) {
+		return false
+	}
+	fn := mc.Fn.(*ssa.Function)
+	// The last store is the exit. A body with no branch stores that it is
+	// running first, in the same block.
+	var st *ssa.Store
+	for _, instr := range b.Instrs {
+		if yieldExit(instr) {
+			st = instr.(*ssa.Store)
+		}
+	}
+	if st == nil {
+		// Unreachable: the builder stores the exit in the jump variable
+		// before each return of false.
+		return false
+	}
+	return yieldExitReturns(mc.Parent(), mc.Bindings[slices.Index(fn.FreeVars, st.Addr.(*ssa.FreeVar))], st.Val.(*ssa.Const))
+}
+
+// yieldExit reports whether instr stores a constant exit in the jump
+// variable of the body of a range over a function.
+func yieldExit(instr ssa.Instruction) bool {
+	st, ok := instr.(*ssa.Store)
+	if !ok {
+		return false
+	}
+	fv, isFree := st.Addr.(*ssa.FreeVar)
+	_, isConst := st.Val.(*ssa.Const)
+	return isFree && isConst && strings.HasPrefix(fv.Name(), "jump$")
+}
+
+// yieldExitReturns reports whether fn, which holds the loop, returns when
+// the body leaves it by exit, which the body stored in jump. When fn is
+// itself the body of an outer loop, it returns false for a break too, so
+// its return is read as the body's own.
+func yieldExitReturns(fn *ssa.Function, jump ssa.Value, exit *ssa.Const) bool {
+	for _, b := range fn.Blocks {
+		cond, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		cmp, ok := cond.Cond.(*ssa.BinOp)
+		if !ok || cmp.Op != token.EQL {
+			continue
+		}
+		load, ok := cmp.X.(*ssa.UnOp)
+		k, isConst := cmp.Y.(*ssa.Const)
+		if ok && load.X == jump && isConst && constant.Compare(k.Value, token.EQL, exit.Value) {
+			then := b.Succs[0]
+			ret, returns := then.Instrs[len(then.Instrs)-1].(*ssa.Return)
+			if !returns || fn.Synthetic != yieldSynthetic {
+				return returns
+			}
+			made, _ := program.Creation(fn)
+			outer, ok := made.(*ssa.MakeClosure)
+			return ok && yieldReturns(outer, then, ret)
+		}
+	}
+	return false
 }
