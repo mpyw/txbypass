@@ -60,3 +60,25 @@ func Closed(db *pg.DB) {
 	tx.Close()
 	db.Exec("after close")
 }
+
+// Not reported: a transaction begun on one connection runs on it, so the
+// connection is no bypass.
+func OnConn(db *pg.DB) error {
+	conn := db.Conn()
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	// Not reported: the connection is the one the transaction runs on.
+	conn.Exec("SELECT 1")
+	return tx.Commit()
+}
+
+func OnConnCallback(ctx context.Context, db *pg.DB) error {
+	conn := db.Conn()
+	return conn.RunInTransaction(ctx, func(tx *pg.Tx) error {
+		// Not reported: the connection is the one the transaction runs on.
+		_, err := conn.Exec("SELECT 1")
+		return err
+	})
+}

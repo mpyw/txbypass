@@ -82,3 +82,14 @@ func Anonymous(ctx context.Context, db interface {
 	_, err := db.Begin(ctx)
 	return err
 }
+
+// ConnAlias names pgx's connection through an alias.
+type ConnAlias = pgx.Conn
+
+func OnConnAlias(ctx context.Context, c *ConnAlias) error {
+	return pgx.BeginFunc(ctx, c, func(tx pgx.Tx) error {
+		// Not reported: the connection is the one the transaction runs on.
+		_, err := c.Exec(ctx, "select 1")
+		return err
+	})
+}

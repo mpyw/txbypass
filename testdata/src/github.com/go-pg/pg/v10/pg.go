@@ -15,6 +15,13 @@ type DB struct {
 	*baseDB
 }
 
+// Conn is one connection. A transaction begun on it runs on it.
+type Conn struct {
+	*baseDB
+}
+
+func (db *DB) Conn() *Conn { return &Conn{} }
+
 // Tx is a transaction.
 type Tx struct {
 	ctx  context.Context
