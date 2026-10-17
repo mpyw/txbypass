@@ -80,6 +80,12 @@ func (c *checker) walkScope(s txScope, visit scopeVisit) {
 		if !ok {
 			return true
 		}
+		// A literal that is never made never runs.
+		if lit, ok := e.(*ast.FuncLit); ok {
+			if _, made := program.Creation(c.prog.Func(lit)); !made {
+				return false
+			}
+		}
 		if scopeWritten(e, stack) {
 			return false
 		}
@@ -118,11 +124,12 @@ func scopeWritten(e ast.Expr, stack []ast.Node) bool {
 }
 
 // scopeAnchor is the instruction of fn where ref is evaluated. A reference
-// in a function literal is evaluated where the literal is made.
+// in a function literal is evaluated where the literal is made. walkScope
+// reads no literal that is never made, so each one on the way is made.
 func scopeAnchor(fn *ssa.Function, ref *ssa.DebugRef) ssa.Instruction {
 	var anchor ssa.Instruction = ref
 	for f := ref.Parent(); f != fn; f = f.Parent() {
-		anchor = program.Creation(f)
+		anchor, _ = program.Creation(f)
 	}
 	return anchor
 }

@@ -1,2 +1,14 @@
 codecov:
   require_ci_to_pass: true
+
+coverage:
+  status:
+    # coverage.sh is the gate: it fails on any uncovered statement, except a
+    # block whose comment says "Unreachable:" and why. Codecov counts those
+    # blocks too, so its figures are only for reading.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
