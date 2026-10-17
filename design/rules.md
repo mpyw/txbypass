@@ -169,7 +169,7 @@ A handle is a root value and the fields selected from it. The root is what the S
 | A method value, as `db.Create` | Its receiver |
 | A call of a method whose result has the receiver's type, as `db.WithContext(ctx)` | Its receiver, with three exceptions. A [begin](#begins), as gorm's `db.Begin()`, gives the transaction. `WithTx` gives queries bound to it: see [sqlc's `WithTx`](#sqlcs-withtx). A method that takes a value of the receiver's type binds a new value to it, as `repo.Using(tx)` does. So does one that takes a value with a method that ends a transaction |
 | A conversion, a conversion to an interface, or an assertion that panics when it fails | What it converts |
-| A phi whose edges all give one handle | That handle. An edge back to the phi, around a loop, gives nothing |
+| A phi whose edges all give one handle | That handle. An edge back to the phi, or to the phi of an outer loop, gives nothing |
 | A free variable of a literal | What the closure binds it to |
 | The address of a variable or a field, as the receiver of `r.db.Begin()` when `db` is held by value | The handle it holds |
 | Anything else | A root of its own |

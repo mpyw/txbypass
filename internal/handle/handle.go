@@ -17,6 +17,7 @@ package handle
 import (
 	"go/token"
 	"go/types"
+	"math"
 	"slices"
 	"strings"
 
@@ -64,18 +65,80 @@ func (ps *Paths) Of(v ssa.Value) Path {
 	if p, ok := ps.known[v]; ok {
 		return p
 	}
-	p := ps.of(v, &walk{on: make(map[ssa.Value]bool), phis: make(map[*ssa.Phi]Path)})
+	p := ps.of(v, &walk{on: make(map[ssa.Value]int), phis: make(map[*ssa.Phi]Path), leans: make(map[*ssa.Phi]leaning), low: math.MaxInt})
 	ps.known[v] = p
 	return p
 }
 
 // walk is what one Of has read. on holds the phis and variables still on
-// the way, so that a loop of them ends. phis holds the phis already read: a
-// phi met again through another path of the blocks gives the same handle,
-// and reading it again would take time exponential in the branches.
+// the way, each with its depth, so that a loop of them ends. phis holds the
+// phis already read: a phi met again through another path of the blocks
+// gives the same handle, and reading it again would take time exponential
+// in the branches.
+//
+// A phi read while an outer one is on the way may lean on it, as the phi of
+// an inner loop leans on the phi of the outer one. Its answer holds only
+// while the outer one is on the way, so it is not kept. low is the least
+// depth met on the way since it was last reset, as Tarjan's lowlink.
 type walk struct {
-	on   map[ssa.Value]bool
+	on   map[ssa.Value]int
+	way  []ssa.Value
 	phis map[*ssa.Phi]Path
+	// leans holds the answers that lean on a phi or a variable still on the
+	// way. Each holds while that one is at the same depth, and keeps a
+	// chain of branches inside a loop linear.
+	leans map[*ssa.Phi]leaning
+	low   int
+}
+
+// leaning is an answer that holds while on is on the way at depth.
+type leaning struct {
+	path  Path
+	on    ssa.Value
+	depth int
+}
+
+// enter puts v on the way, and returns the low to restore when it leaves.
+func (w *walk) enter(v ssa.Value) int {
+	w.way = append(w.way, v)
+	w.on[v] = len(w.way)
+	low := w.low
+	w.low = math.MaxInt
+	return low
+}
+
+// leave takes v off the way. It reports whether what was read for v leans
+// on nothing still on the way, and else the depth it leans on.
+func (w *walk) leave(v ssa.Value, low int) (int, bool) {
+	lean := w.low
+	own := lean >= w.on[v]
+	delete(w.on, v)
+	w.way = w.way[:len(w.way)-1]
+	if !own {
+		low = min(low, lean)
+	}
+	w.low = low
+	return lean, own
+}
+
+// leaned is the answer kept for v, while what it leans on is still on the
+// way.
+func (w *walk) leaned(v *ssa.Phi) (Path, bool) {
+	l, ok := w.leans[v]
+	if !ok || l.depth > len(w.way) || w.way[l.depth-1] != l.on {
+		return Path{}, false
+	}
+	w.low = min(w.low, l.depth)
+	return l.path, true
+}
+
+// meet reports whether v is on the way, and notes its depth.
+func (w *walk) meet(v ssa.Value) bool {
+	d, ok := w.on[v]
+	if ok {
+		w.low = min(w.low, d)
+	}
+	return ok
 }
 
 // of is Of, with what the walk has read. A variable stored a call on itself, as q = q.Where(c), leads
@@ -123,10 +186,11 @@ func (ps *Paths) of(v ssa.Value, w *walk) Path {
 		switch {
 		case !ok:
 			return Path{base: v, unknown: true}
-		case len(whole) == 1 && !fields && !w.on[v]:
-			w.on[v] = true
-			defer delete(w.on, v)
-			return ps.of(whole[0].Val, w)
+		case len(whole) == 1 && !fields && !w.meet(v):
+			low := w.enter(v)
+			p := ps.of(whole[0].Val, w)
+			w.leave(v, low)
+			return p
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
@@ -136,16 +200,22 @@ func (ps *Paths) of(v ssa.Value, w *walk) Path {
 		if p, ok := w.phis[v]; ok {
 			return p
 		}
-		if w.on[v] {
+		if w.meet(v) {
 			return Path{base: v}
 		}
-		w.on[v] = true
+		if p, ok := w.leaned(v); ok {
+			return p
+		}
+		low := w.enter(v)
 		p, ok := ps.samePhi(v, w)
-		delete(w.on, v)
 		if !ok {
 			p = Path{base: v}
 		}
-		w.phis[v] = p
+		if lean, own := w.leave(v, low); own {
+			w.phis[v] = p
+		} else {
+			w.leans[v] = leaning{path: p, on: w.way[lean-1], depth: lean}
+		}
 		return p
 	}
 	return Path{base: v}
@@ -398,15 +468,17 @@ func binds(fn *types.Func, recv types.Type) bool {
 }
 
 // samePhi is the handle every edge of a phi gives, when they all give one.
-// An edge that comes back to the phi itself, around a loop, gives nothing
-// new.
+// An edge that comes back around a loop, to this phi or to the phi of an
+// outer loop still on the way, gives nothing new.
 func (ps *Paths) samePhi(v *ssa.Phi, w *walk) (Path, bool) {
 	var p Path
 	found := false
 	for _, e := range v.Edges {
 		q := ps.of(e, w)
-		if q.base == v {
-			continue
+		if phi, ok := q.base.(*ssa.Phi); ok && q.Depth() == 0 {
+			if _, on := w.on[phi]; on {
+				continue
+			}
 		}
 		if found && !q.Equal(p) {
 			return Path{}, false

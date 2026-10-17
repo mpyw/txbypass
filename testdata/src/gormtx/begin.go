@@ -145,3 +145,90 @@ func OtherErrorInMemory(db *gorm.DB, u *User) (err error) {
 	}
 	return tx.Commit().Error
 }
+
+// Twenty optional filters inside a loop: every branch leans on the loop's
+// phi, and the walk stays linear.
+func ManyFiltersInLoop(db *gorm.DB, fs []Filter, n int) error {
+	q := db.Where("1")
+	for range n {
+		if fs[0].A {
+			q = q.Where("f0")
+		}
+		if fs[1].A {
+			q = q.Where("f1")
+		}
+		if fs[2].A {
+			q = q.Where("f2")
+		}
+		if fs[3].A {
+			q = q.Where("f3")
+		}
+		if fs[4].A {
+			q = q.Where("f4")
+		}
+		if fs[5].A {
+			q = q.Where("f5")
+		}
+		if fs[6].A {
+			q = q.Where("f6")
+		}
+		if fs[7].A {
+			q = q.Where("f7")
+		}
+		if fs[8].A {
+			q = q.Where("f8")
+		}
+		if fs[9].A {
+			q = q.Where("f9")
+		}
+		if fs[10].A {
+			q = q.Where("f10")
+		}
+		if fs[11].A {
+			q = q.Where("f11")
+		}
+		if fs[12].A {
+			q = q.Where("f12")
+		}
+		if fs[13].A {
+			q = q.Where("f13")
+		}
+		if fs[14].A {
+			q = q.Where("f14")
+		}
+		if fs[15].A {
+			q = q.Where("f15")
+		}
+		if fs[16].A {
+			q = q.Where("f16")
+		}
+		if fs[17].A {
+			q = q.Where("f17")
+		}
+		if fs[18].A {
+			q = q.Where("f18")
+		}
+		if fs[19].A {
+			q = q.Where("f19")
+		}
+	}
+	t := db.Begin()
+	if t.Error != nil {
+		return t.Error
+	}
+	q.First(&User{}) // want `^q bypasses the transaction opened with Begin; use t instead \[outer-handle\]$`
+	return t.Commit().Error
+}
+// A query built in nested loops is db wherever it is used.
+func NestedLoops(db *gorm.DB, fs [][]string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		q := db.Debug() // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		for _, f := range fs {
+			for _, v := range f {
+				q = q.Where(v) // want `^q bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+			}
+			q.First(&User{}) // want `^q bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		}
+		return nil
+	})
+}
