@@ -9,6 +9,7 @@ import (
 
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/rule"
 )
@@ -24,6 +25,8 @@ type checker struct {
 	prog *program.Program
 	// closer says what may end a transaction.
 	closer *closer.Closer
+	// paths says which handle each SSA value is.
+	paths *handle.Paths
 	//declscope:private
 	cfg Config
 	// generated holds the files marked as generated, by name. Nothing is

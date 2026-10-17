@@ -35,10 +35,11 @@ func f(x *int) {
 	}
 	f := pkg.Func("f")
 	fv := f.AnonFuncs[0].FreeVars[0]
-	if !Of(fv).Equal(Of(fv)) {
+	ps := NewPaths()
+	if !ps.Of(fv).Equal(ps.Of(fv)) {
 		t.Error("the free variable is not the same handle as itself")
 	}
-	if Of(fv).Equal(Of(f.Params[0])) {
+	if ps.Of(fv).Equal(ps.Of(f.Params[0])) {
 		t.Error("the free variable of a literal that is never made is bound to the parameter")
 	}
 }

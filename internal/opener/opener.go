@@ -216,10 +216,12 @@ func Ending(name string) bool {
 // Holds reports whether a value of type t has a method that ends a
 // transaction, directly or through a pointer to it.
 func Holds(t types.Type) bool {
-	for _, mt := range []types.Type{t, types.NewPointer(t)} {
-		ms := types.NewMethodSet(mt)
-		for i := range ms.Len() {
-			if endings[ms.At(i).Obj().Name()] {
+	// A lookup per name, rather than the method set: a handle such as
+	// gorm's *DB has well over a hundred methods, and Holds is asked of
+	// every argument that may be a transaction.
+	for name := range endings {
+		if fn, _, _ := types.LookupFieldOrMethod(t, true, nil, name); fn != nil {
+			if _, ok := fn.(*types.Func); ok {
 				return true
 			}
 		}

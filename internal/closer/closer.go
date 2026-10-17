@@ -44,7 +44,8 @@ func (f *Fact) String() string { return fmt.Sprintf("closes%v", f.Params) }
 
 // Closer answers whether instructions end a transaction, for one pass.
 type Closer struct {
-	pass *analysis.Pass
+	pass  *analysis.Pass
+	paths *handle.Paths
 	// known holds, for each function and root that has been asked about,
 	// whether the function ends the transaction rooted at that parameter or
 	// free variable. Every answer starts false and only turns true, in a
@@ -53,6 +54,10 @@ type Closer struct {
 	// order lists the keys of known in the order they were asked about, so
 	// that the fixpoint reads them the same way each time.
 	order []closerKey
+	// settled is how many keys of order are final. A completed fixpoint
+	// leaves its keys final: a key they read was pulled into it. A later
+	// fixpoint reads only the keys after them.
+	settled int
 	// solving reports that the fixpoint is being computed. A key asked about
 	// then answers what is known so far, and is read in the same pass.
 	solving bool
@@ -65,9 +70,9 @@ type closerKey struct {
 	root ssa.Value
 }
 
-// New is a Closer for pass.
-func New(pass *analysis.Pass) *Closer {
-	return &Closer{pass: pass, known: make(map[closerKey]bool)}
+// New is a Closer for pass, which reads handles through paths.
+func New(pass *analysis.Pass, paths *handle.Paths) *Closer {
+	return &Closer{pass: pass, paths: paths, known: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -91,14 +96,14 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 		// A store into a variable of the function moves nothing out of
 		// reach. Any other store gives the transaction away.
 		_, local := instr.Addr.(*ssa.Alloc)
-		return !local && within(instr.Val, txs)
+		return !local && c.within(instr.Val, txs)
 	case *ssa.Send:
-		return within(instr.X, txs)
+		return c.within(instr.X, txs)
 	case *ssa.MapUpdate:
-		return within(instr.Key, txs) || within(instr.Value, txs)
+		return c.within(instr.Key, txs) || c.within(instr.Value, txs)
 	case *ssa.Select:
 		return slices.ContainsFunc(instr.States, func(st *ssa.SelectState) bool {
-			return st.Dir == types.SendOnly && within(st.Send, txs)
+			return st.Dir == types.SendOnly && c.within(st.Send, txs)
 		})
 	case *ssa.MakeClosure:
 		return c.closureGivenAway(instr, txs)
@@ -108,7 +113,7 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 
 // callEnds reports whether a call may end the transaction.
 func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
-	if recv, name, ok := receiver(call); ok && opener.Ending(name) && !takesFunc(call.Signature()) && within(recv, txs) {
+	if recv, name, ok := receiver(call); ok && opener.Ending(name) && !takesFunc(call.Signature()) && c.within(recv, txs) {
 		return true
 	}
 	fn := call.StaticCallee()
@@ -116,13 +121,13 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 		return false
 	}
 	for i, arg := range call.Args {
-		if within(arg, txs) && opener.Holds(arg.Type()) && c.paramEnds(fn, i) {
+		if c.within(arg, txs) && opener.Holds(arg.Type()) && c.paramEnds(fn, i) {
 			return true
 		}
 	}
 	if mc, ok := call.Value.(*ssa.MakeClosure); ok {
 		for i, b := range mc.Bindings {
-			if within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
+			if c.within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
 				return true
 			}
 		}
@@ -189,13 +194,13 @@ func (c *Closer) rootEnds(fn *ssa.Function, root ssa.Value) bool {
 	return c.known[key]
 }
 
-// solve computes the fixpoint over every key known so far, and over the keys
-// the reads ask about.
+// solve computes the fixpoint over the keys not yet settled, and over the
+// keys the reads ask about.
 func (c *Closer) solve() {
 	c.solving = true
 	for changed := true; changed; {
 		changed = false
-		for i := 0; i < len(c.order); i++ {
+		for i := c.settled; i < len(c.order); i++ {
 			key := c.order[i]
 			if !c.known[key] && c.rootEndsRead(key.fn, key.root) {
 				c.known[key] = true
@@ -203,12 +208,13 @@ func (c *Closer) solve() {
 			}
 		}
 	}
+	c.settled = len(c.order)
 	c.solving = false
 }
 
 // rootEndsRead reads fn for a call that ends the transaction rooted at root.
 func (c *Closer) rootEndsRead(fn *ssa.Function, root ssa.Value) bool {
-	txs := []handle.Path{handle.Of(root)}
+	txs := []handle.Path{c.paths.Of(root)}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if call, ok := instr.(ssa.CallInstruction); ok && c.callEnds(call.Common(), txs) {
@@ -230,7 +236,7 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 	fn := mc.Fn.(*ssa.Function)
 	ends := false
 	for i, b := range mc.Bindings {
-		if within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
+		if c.within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
 			ends = true
 		}
 	}
@@ -254,8 +260,8 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 // within reports whether v is stored where one of txs is, or in a field of
 // one. A transaction kept in a variable assigned twice counts: a commit on
 // a load of it may end the one this region began.
-func within(v ssa.Value, txs []handle.Path) bool {
-	p := handle.Of(v)
+func (c *Closer) within(v ssa.Value, txs []handle.Path) bool {
+	p := c.paths.Of(v)
 	return slices.ContainsFunc(txs, p.Stored)
 }
 

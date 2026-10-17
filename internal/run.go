@@ -18,6 +18,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
 )
@@ -41,7 +42,8 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	}
 	if runNeedsProgram(pass) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
-		c.closer = closer.New(pass)
+		c.paths = handle.NewPaths()
+		c.closer = closer.New(pass, c.paths)
 		c.closer.Export(c.prog)
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not

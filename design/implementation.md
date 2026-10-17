@@ -79,6 +79,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | A variable in memory written by one store is the value stored | A variable that a literal captures is not lifted. The callback's `db` is a load of it, so the parameter has to be found through the store |
 | Count the stores inside the literals that capture the variable too | A literal can assign it, through its free variable |
 | A phi is a handle only when every edge gives it | Two handles meeting is neither. A loop edge back to the phi adds nothing |
+| One `handle.Paths` per pass remembers every answer | The SSA form does not change during a pass. A handle in memory is read through every use of it, and a rule asks about every use in a region. Without the memory, a region of 3000 statements took 35 s |
 | A variable already on the way is itself | `q = q.Where(c)` stores a call on `q`, which gives `q` back. Pointers copied back and forth lead back to one variable too. Without the guard, the analysis recursed until the stack overflowed |
 | A free variable of a synthetic function is a root | The wrapper of a bound method value has no parent to find its closure in |
 | `WithTx` does not give its receiver back | `qtx := q.WithTx(tx)` is another handle, bound to the transaction |
@@ -103,6 +104,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | On every path, not on some | A transaction that may have ended gives false reports. A miss is better than a false report |
 | The begin's error is its own SSA value | `err` is reused. A later `if err != nil` checks another call's error, and the SSA form says so without a rule about where the check is |
 | An error in memory counts when every path to its load last stored the begin's error | A named result read by a deferred literal is not lifted. The walk back through the blocks stops at the first store on each path |
+| The state before each instruction is computed once | A rule asks about every use in the region. Stepping from the block's entry for each made the time grow with the square of the block |
 | A deferred statement is outside | It runs at the return, after the commit that usually precedes it |
 | A use in a function literal is placed where the literal is made | That is where a goroutine starts, or where a literal called on the spot runs |
 | A transaction stored, sent, or given away inside a literal ends the region | Code this analysis does not read may end it. A miss is better than a false report |
@@ -116,8 +118,9 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | --- | --- |
 | Only a parameter whose type has an ending method gets a fact | A fact for every parameter that is stored somewhere marked half of the standard library |
 | A store or a send inside a helper does not count as an end | `(*sql.Tx).ExecContext` stores its receiver in closures. With escapes counted, every statement would seem to end the transaction |
-| The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys |
+| The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys. A completed fixpoint is final, so a later question reads only the keys it adds |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
+| `opener.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 

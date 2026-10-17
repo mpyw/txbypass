@@ -60,7 +60,7 @@ func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bo
 	if !ok {
 		return handle.Path{}, false
 	}
-	return handle.Of(ref.X).With(promoted), true
+	return c.paths.Of(ref.X).With(promoted), true
 }
 
 // scopeVisit is called for each expression of a scope that has a value
@@ -227,12 +227,12 @@ func scopeBase(e ast.Expr) *ast.Ident {
 // stores to the handle outer, or to a variable or a field that holds it.
 // In a region, only the stores inside the region count, and the stores of
 // the function literals it makes there.
-func (s txScope) scopeWrites(outer handle.Path) bool {
+func (c *checker) scopeWrites(s txScope, outer handle.Path) bool {
 	writes := func(fn *ssa.Function) bool {
 		for _, b := range fn.Blocks {
 			for _, instr := range b.Instrs {
 				st, ok := instr.(*ssa.Store)
-				if ok && outer.Stored(handle.Address(st.Addr)) && (fn != s.fn || s.region == nil || s.region.Inside(st)) {
+				if ok && outer.Stored(c.paths.Address(st.Addr)) && (fn != s.fn || s.region == nil || s.region.Inside(st)) {
 					return true
 				}
 			}
@@ -320,14 +320,14 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 	// A scope that writes the handle, or what holds it, may run on another
 	// value after the write: s.db = tx makes s.db the transaction. Which
 	// handle it holds is then not known.
-	if s.scopeWrites(outer) {
+	if c.scopeWrites(s, outer) {
 		return
 	}
 	visit := func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
 		if scopeChainsOn(e, exempt) {
 			return !exempt[e]
 		}
-		if !handle.Of(ref.X).Within(outer) {
+		if !c.paths.Of(ref.X).Within(outer) {
 			return true
 		}
 		c.reportScopeUse(s, e, stack, outer, r, use)
@@ -338,7 +338,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 	// its debug reference is on s.
 	promoted := func(e ast.Expr, x *ssa.DebugRef, stack []ast.Node) bool {
 		path := handle.Promoted(info.Selections[e.(*ast.SelectorExpr)])
-		if scopeChainsOn(e, exempt) || !handle.Of(x.X).With(path).Within(outer) {
+		if scopeChainsOn(e, exempt) || !c.paths.Of(x.X).With(path).Within(outer) {
 			return true
 		}
 		c.reportScopeUse(s, e, stack, outer, r, use)
@@ -490,7 +490,7 @@ func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (
 	// The argument may be the transaction or a field of it: sqlc's WithTx
 	// takes a *sql.Tx, which sqlx's and bun's transactions embed, as tx.Tx.
 	arg, ok := c.prog.Ref(fn, call.Args[0])
-	if !ok || !slices.ContainsFunc(s.txs, handle.Of(arg.X).Within) {
+	if !ok || !slices.ContainsFunc(s.txs, c.paths.Of(arg.X).Within) {
 		return scopeQueries{}, false
 	}
 	// The method's own receiver decides, not what it is called on: WithTx
@@ -506,7 +506,7 @@ func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (
 	if !ok || !types.Identical(info.TypeOf(call), recvType) || !scopeHoldsOnly(recvType, info.TypeOf(call.Args[0])) {
 		return scopeQueries{}, false
 	}
-	return scopeQueries{outer: handle.Of(recv.X).With(handle.Promoted(selection)), use: types.ExprString(call)}, true
+	return scopeQueries{outer: c.paths.Of(recv.X).With(handle.Promoted(selection)), use: types.ExprString(call)}, true
 }
 
 // scopeHoldsOnly reports whether every field of the struct that t is, or
