@@ -23,7 +23,7 @@ import (
 //declscope:shared // run.go calls it for every callback opener
 func (c *checker) checkOuterHandle(o opener.Opener, fn *ssa.Function) {
 	outer, ok := c.scopeOuter(o, fn)
-	if !ok || !o.Queues && outerHandleSavepoint(outer) {
+	if !ok || o.Nests && outerHandleSavepoint(outer) {
 		return
 	}
 	lit := c.prog.Func(o.Callback)
@@ -104,7 +104,7 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 	// The receiver of a method call is always evaluated as a value.
 	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
 	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
-	if outerHandleSavepoint(outer) {
+	if b.Nests && outerHandleSavepoint(outer) {
 		return
 	}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
@@ -112,7 +112,8 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 }
 
 // outerHandleSavepoint reports whether outer is a transaction, so that a
-// transaction opened on it is a savepoint. The savepoint runs on the
+// transaction opened on it, by an opener or a begin that nests, is a
+// savepoint. The savepoint runs on the
 // transaction's connection, and so does a statement on the transaction:
 // it bypasses nothing. outer is a transaction when it is a begin's result,
 // as gorm's tx := db.Begin(), or the transaction a callback is given, as
@@ -167,12 +168,9 @@ func outerHandleGiven(p *ssa.Parameter) bool {
 	})
 }
 
-// outerHandleCallee is the function or the interface method that call
-// calls.
+// outerHandleCallee is the function that call calls. An interface method
+// gives none: no opener or begin that nests is one.
 func outerHandleCallee(call *ssa.CallCommon) (*types.Func, bool) {
-	if call.IsInvoke() {
-		return call.Method, true
-	}
 	if fn := call.StaticCallee(); fn != nil {
 		obj, ok := fn.Object().(*types.Func)
 		return obj, ok

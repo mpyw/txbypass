@@ -47,11 +47,12 @@ type Opener struct {
 	// no I/O, so only a chain that ends in a call taking a context runs
 	// outside the transaction.
 	Builds bool
-	// Queues reports whether the callback queues commands rather than
-	// opening a transaction on the handle, as go-redis's TxPipelined does. A
-	// command on the handle runs at once, before the queued ones, so even
-	// a transaction's own handle bypasses it.
-	Queues bool
+	// Nests reports whether the opener, called on a transaction, runs on the
+	// transaction's connection, as gorm's Transaction opens a savepoint
+	// there. upper/db's Tx begins another transaction on the pool instead,
+	// and go-redis's TxPipelined queues commands that a command on the
+	// handle runs before.
+	Nests bool
 }
 
 // known is one call that opens a transaction.
@@ -71,14 +72,14 @@ type known struct {
 	tx        int
 	inContext bool
 	builds    bool
-	queues    bool
+	nests     bool
 }
 
 // knownOpeners lists every callback opener. Each group names the version of
 // its library whose signatures it was read from.
 var knownOpeners = []known{
 	// gorm v1.31: func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) error
-	{pkg: "gorm.io/gorm", recv: "DB", name: "Transaction", outer: -1, callback: 0, tx: 0},
+	{pkg: "gorm.io/gorm", recv: "DB", name: "Transaction", outer: -1, callback: 0, tx: 0, nests: true},
 
 	// bun v1.3: RunInTx(ctx, opts, fn func(ctx context.Context, tx Tx) error) of DB, Tx
 	// (a savepoint), and the IDB interface. None is read on a Conn: see dedicated.
@@ -103,8 +104,8 @@ var knownOpeners = []known{
 	{pkg: "github.com/doug-martin/goqu/v9", recv: "Database", name: "WithTx", outer: -1, callback: 0, tx: 0},
 
 	// pop v6: Transaction(fn func(tx *Connection) error) and Rollback(fn func(tx *Connection)).
-	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "Transaction", outer: -1, callback: 0, tx: 0},
-	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "Rollback", outer: -1, callback: 0, tx: 0},
+	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "Transaction", outer: -1, callback: 0, tx: 0, nests: true},
+	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "Rollback", outer: -1, callback: 0, tx: 0, nests: true},
 
 	// upper/db v4: Tx(fn func(sess Session) error) and TxContext(ctx, fn, opts) of Session.
 	{pkg: "github.com/upper/db/v4", recv: "Session", name: "Tx", outer: -1, callback: 0, tx: 0},
@@ -126,22 +127,22 @@ var knownOpeners = []known{
 	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/redis/go-redis/v9", recv: "UniversalClient", name: "Watch", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/redis/go-redis/v9", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/redis/go-redis/v9", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "Watch", outer: -1, callback: 1, tx: 0},
 	{pkg: "github.com/go-redis/redis/v8", recv: "UniversalClient", name: "Watch", outer: -1, callback: 1, tx: 0},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
-	{pkg: "github.com/go-redis/redis/v8", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0, queues: true},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Client", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Conn", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "ClusterClient", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Ring", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Tx", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
+	{pkg: "github.com/go-redis/redis/v8", recv: "Cmdable", name: "TxPipelined", outer: -1, callback: 1, tx: 0},
 
 	// Cloud Firestore: RunTransaction(ctx, f func(context.Context, *Transaction) error, opts...)
 	// The transaction reads and writes through references the client builds, as in
@@ -184,7 +185,7 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 	if !ok || len(call.Args) <= max(k.outer, k.callback) {
 		return Opener{}, false
 	}
-	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds, Queues: k.queues}
+	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds, Nests: k.nests}
 	if k.outer < 0 {
 		// A method expression, as in (*gorm.DB).Transaction(db, fn), takes
 		// its receiver as an argument, so its arguments are shifted and its
@@ -281,6 +282,9 @@ type Begin struct {
 	Call *ast.CallExpr
 	// Tx is the variable the transaction is assigned to.
 	Tx *ast.Ident
+	// Nests is Opener.Nests, for a begin: gorm's Begin on a transaction
+	// opens a savepoint on its connection.
+	Nests bool
 }
 
 // knownBegins lists every begin. Each is a method that returns the
@@ -305,7 +309,7 @@ var knownBegins = []known{
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "Begin"},
 	{pkg: "github.com/jackc/pgx/v4/pgxpool", recv: "Pool", name: "BeginTx"},
 	// gorm: func (db *DB) Begin(opts ...*sql.TxOptions) *DB
-	{pkg: "gorm.io/gorm", recv: "DB", name: "Begin"},
+	{pkg: "gorm.io/gorm", recv: "DB", name: "Begin", nests: true},
 	// bun: Begin of DB and Tx, and BeginTx of DB, Tx, and the IDB interface. On a Tx,
 	// they open a savepoint.
 	{pkg: "github.com/uptrace/bun", recv: "DB", name: "Begin"},
@@ -324,9 +328,9 @@ var knownBegins = []known{
 	{pkg: "github.com/go-pg/pg/v10", recv: "baseDB", name: "Begin"},
 	{pkg: "github.com/go-pg/pg/v10", recv: "baseDB", name: "BeginContext"},
 	// pop: the transaction is a *Connection of its own.
-	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransaction"},
-	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransactionContext"},
-	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransactionContextOptions"},
+	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransaction", nests: true},
+	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransactionContext", nests: true},
+	{pkg: "github.com/gobuffalo/pop/v6", recv: "Connection", name: "NewTransactionContextOptions", nests: true},
 	// Cloud Datastore
 	{pkg: "cloud.google.com/go/datastore", recv: "Client", name: "NewTransaction"},
 }
@@ -358,7 +362,8 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 		return Begin{}, false
 	}
 	sel, _ := methodSelector(info, call)
-	b := Begin{Name: sel.Sel.Name, Outer: sel, Call: call, Tx: lhs[0]}
+	k, _ := lookupFunc(info.Selections[sel].Obj().(*types.Func), knownBegins)
+	b := Begin{Name: sel.Sel.Name, Outer: sel, Call: call, Tx: lhs[0], Nests: k.nests}
 	return b, true
 }
 

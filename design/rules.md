@@ -101,7 +101,15 @@ A transaction opened on a transaction is a savepoint. It runs on the connection 
 
 A savepoint's begins stay in the table of begins. Its result is then a handle of its own, so its commit ends nothing of the outer transaction.
 
-go-redis's `TxPipelined` is no savepoint. It queues commands, and a command on the handle runs at once, before the queued ones. Its callback is read on any handle.
+Only these open a savepoint, or reuse the transaction, when called on one. The others are read on any handle:
+
+| Library | Opener or begin |
+| --- | --- |
+| gorm | `Transaction`, `Begin` |
+| pop | `Transaction`, `Rollback`, `NewTransaction`, `NewTransactionContext`, `NewTransactionContextOptions` |
+| pgx, bun | Every one, by the type of the transaction |
+
+upper/db's `Tx` on a transaction begins another transaction on the pool. go-redis's `TxPipelined` queues commands, and a command on the handle runs at once, before the queued ones. A use of the outer transaction in either is reported.
 
 ## Begins
 
