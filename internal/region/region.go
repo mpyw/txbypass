@@ -127,8 +127,36 @@ func (r *Region) step(instr ssa.Instruction, s state) state {
 		return open
 	case s == open && r.endsAt(instr):
 		return closed
+	case s == open && r.requiresFailure(instr):
+		return closed
 	}
 	return s
+}
+
+// requireFailures are the functions of testify's require, and the methods of
+// its Assertions, that return only when the error they are given is set.
+var requireFailures = map[string]bool{
+	"Error": true, "Errorf": true,
+	"ErrorIs": true, "ErrorIsf": true,
+	"ErrorAs": true, "ErrorAsf": true,
+	"ErrorContains": true, "ErrorContainsf": true,
+}
+
+// requiresFailure reports whether instr is a call of testify's require that
+// asserts the begin failed, as require.Error(t, err). The test goes on only
+// when no transaction began. The error is argument 1 of the function, after
+// t, and of the method, after the receiver.
+func (r *Region) requiresFailure(instr ssa.Instruction) bool {
+	call, ok := instr.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	fn := call.Common().StaticCallee()
+	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg.Path() != "github.com/stretchr/testify/require" || !requireFailures[fn.Name()] {
+		return false
+	}
+	args := call.Common().Args
+	return len(args) > 1 && r.holdsErr(args[1])
 }
 
 // endsAt reports whether instr may end the transaction, as closer says.
@@ -162,9 +190,13 @@ func (r *Region) failed(p, b *ssa.BasicBlock) bool {
 // error there. A begin with no error result, as gorm's Begin, reports
 // failure in the transaction's Error field: tx.Error is its error.
 func (r *Region) isErr(v, other ssa.Value) bool {
-	if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
-		return false
-	}
+	c, ok := other.(*ssa.Const)
+	return ok && c.IsNil() && r.holdsErr(v)
+}
+
+// holdsErr reports whether v is the begin's error, or a load of a variable
+// in memory that last stored it on every path.
+func (r *Region) holdsErr(v ssa.Value) bool {
 	if r.isBeginErr(v) {
 		return true
 	}
