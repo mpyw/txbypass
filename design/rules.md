@@ -238,7 +238,7 @@ Firestore's client builds the references a transaction reads and writes, as in `
 | The argument | Be the scope's transaction, or a field of it, as `tx.Tx` of an sqlx or a bun transaction |
 | The receiver | Name a handle |
 | The result | Have the type of the method's own receiver |
-| The receiver | Be a struct, or a pointer to one, whose every field can hold the transaction or is a `*sql.Stmt`. sqlc's `Queries` holds only its `DBTX`, and with `emit_prepared_queries` a statement per query. A struct that holds more, as a logger or metrics, is not only a database: its other members are no uses |
+| The receiver | Be a struct, or a pointer to one, whose every field can hold the transaction or is a `*sql.Stmt`. The `Queries` of sqlc holds only its `DBTX`, and with `emit_prepared_queries` a statement per query. A struct that holds more, as a logger or metrics, is not only a database: its other members are no uses |
 
 The call itself is not a use, and neither is a chain built on it, as in `q.WithTx(tx).CreateUser(ctx)`. A callback whose transaction parameter is unnamed rebinds nothing.
 
