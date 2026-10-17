@@ -60,3 +60,17 @@ func Region(ctx context.Context, pool *pgxpool.Pool, conn *pgx.Conn) error {
 	conn.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with Begin; use tx2 instead \[outer-handle\]$`
 	return tx2.Rollback(ctx)
 }
+
+// An acquired connection's BeginFunc and BeginTxFunc.
+func AcquiredFunc(ctx context.Context, conn *pgxpool.Conn) error {
+	if err := conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+		_, err := conn.Exec(ctx, "x") // want `^conn bypasses the transaction opened with BeginFunc; use tx instead \[outer-handle\]$`
+		return err
+	}); err != nil {
+		return err
+	}
+	return conn.BeginTxFunc(ctx, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		_, err := conn.Exec(ctx, "x") // want `^conn bypasses the transaction opened with BeginTxFunc; use tx instead \[outer-handle\]$`
+		return err
+	})
+}

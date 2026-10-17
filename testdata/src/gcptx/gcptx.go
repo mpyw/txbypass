@@ -66,3 +66,14 @@ func References(ctx context.Context, client *firestore.Client) error {
 }
 
 func save(ctx context.Context, client *firestore.Client) error { return nil }
+
+// reqCtx implements context.Context, as a web framework's request context
+// does.
+type reqCtx struct{ context.Context }
+
+// The call takes a context, whatever type the caller passes in its place.
+func RequestContext(c *reqCtx, client *firestore.Client) error {
+	return client.RunTransaction(c, func(ctx context.Context, tx *firestore.Transaction) error {
+		return client.Doc("users/c").Set(c, nil) // want `^client bypasses the transaction opened with RunTransaction; use tx instead \[outer-handle\]$`
+	})
+}

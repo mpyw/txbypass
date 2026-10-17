@@ -16,6 +16,7 @@ package region
 
 import (
 	"go/token"
+	"go/types"
 	"slices"
 
 	"golang.org/x/tools/go/ssa"
@@ -48,7 +49,11 @@ func join(a, b state) state {
 
 // Region is where one begun transaction is open.
 type Region struct {
-	begin  ssa.Instruction
+	begin ssa.Instruction
+	// tx is the begin's value, and txAddr the variable in memory that holds
+	// it, or nil.
+	tx     ssa.Value
+	txAddr *ssa.Alloc
 	txs    []handle.Path
 	err    ssa.Value
 	closer *closer.Closer
@@ -61,7 +66,7 @@ type Region struct {
 // nil. A transaction kept in a variable in memory is also every load of it,
 // so its address is given as txAddr, or nil.
 func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer) *Region {
-	r := &Region{begin: begin, txs: []handle.Path{handle.Of(tx)}, err: err, closer: c, entry: make(map[*ssa.BasicBlock]state)}
+	r := &Region{begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{handle.Of(tx)}, err: err, closer: c, entry: make(map[*ssa.BasicBlock]state)}
 	if txAddr != nil {
 		r.txs = append(r.txs, handle.Of(txAddr))
 	}
@@ -113,9 +118,6 @@ func (r *Region) step(instr ssa.Instruction, s state) state {
 // error is set, so the transaction did not begin there. That is the true
 // edge of "err != nil", or the false edge of "err == nil".
 func (r *Region) failed(p, b *ssa.BasicBlock) bool {
-	if r.err == nil {
-		return false
-	}
 	cond, ok := p.Instrs[len(p.Instrs)-1].(*ssa.If)
 	if !ok {
 		return false
@@ -130,16 +132,37 @@ func (r *Region) failed(p, b *ssa.BasicBlock) bool {
 // isErr reports whether v is the begin's error, compared with nil. A
 // variable in memory that holds the error, as a named result a deferred
 // literal reads, is it when every path to the load last stored the begin's
-// error there.
+// error there. A begin with no error result, as gorm's Begin, reports
+// failure in the transaction's Error field: tx.Error is its error.
 func (r *Region) isErr(v, other ssa.Value) bool {
 	if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
 		return false
+	}
+	if r.err == nil {
+		return r.isErrorField(v)
 	}
 	if v == r.err {
 		return true
 	}
 	load, ok := v.(*ssa.UnOp)
 	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.err, make(map[*ssa.BasicBlock]bool))
+}
+
+// isErrorField reports whether v reads the field Error of the transaction
+// itself: of the begin's value, or of a load of the variable that holds it.
+// tx.Create(u).Error is the error of another statement, not the begin's.
+func (r *Region) isErrorField(v ssa.Value) bool {
+	if load, ok := v.(*ssa.UnOp); ok && load.Op == token.MUL {
+		v = load.X
+	}
+	f, ok := v.(*ssa.FieldAddr)
+	if !ok {
+		return false
+	}
+	field := f.X.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Struct).Field(f.Field)
+	load, loaded := f.X.(*ssa.UnOp)
+	direct := f.X == r.tx || loaded && load.Op == token.MUL && r.txAddr != nil && load.X == r.txAddr
+	return field.Name() == "Error" && direct
 }
 
 // lastStored reports whether every path to instruction at of b last stores

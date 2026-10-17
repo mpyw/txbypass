@@ -282,8 +282,12 @@ func (s txScope) scopeInside(ref *ssa.DebugRef) bool {
 }
 
 // scopeWritten reports whether e is written where it stands: on the left
-// of an assignment, or a variable its declaration names.
+// of an assignment, or a variable its declaration names. An index on the
+// left is not: m[k] = v reads m and k, and only the element is written.
 func scopeWritten(e ast.Expr, stack []ast.Node) bool {
+	if _, ok := e.(*ast.IndexExpr); ok {
+		return false
+	}
 	switch parent := stack[len(stack)-1].(type) {
 	case *ast.AssignStmt:
 		return slices.Contains(parent.Lhs, e)
@@ -406,10 +410,17 @@ walk:
 	return !chained
 }
 
-// scopeTakesContext reports whether call passes a context.Context.
+// scopeTakesContext reports whether call takes a context.Context: whether
+// a parameter of the function it calls has that type. What the caller
+// passes there, as a framework's request context, does not change what the
+// call does.
+//
+// call is a call in a chain of methods on the handle, so what it calls is a
+// method, and has a signature.
 func scopeTakesContext(info *types.Info, call *ast.CallExpr) bool {
-	for _, arg := range call.Args {
-		if t, ok := info.TypeOf(arg).(*types.Named); ok && t.Obj().Pkg() != nil && t.Obj().Pkg().Path() == "context" && t.Obj().Name() == "Context" {
+	sig := info.TypeOf(call.Fun).(*types.Signature)
+	for p := range sig.Params().Variables() {
+		if t, ok := types.Unalias(p.Type()).(*types.Named); ok && t.Obj().Pkg() != nil && t.Obj().Pkg().Path() == "context" && t.Obj().Name() == "Context" {
 			return true
 		}
 	}
