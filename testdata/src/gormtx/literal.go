@@ -178,3 +178,34 @@ func PointerCopyGivenAway(db *gorm.DB, u *User, sink func(**BindRepo)) error {
 	r.db.Create(u)
 	return tx.Commit().Error
 }
+
+// ===== gorm's own ConnPool swap =====
+
+// Not reported: base runs on the transaction's pool after the swap, as
+// gorm's own generics.go does.
+func ConnPoolSwap(base, assoc *gorm.DB, u *User) error {
+	return base.Transaction(func(tx *gorm.DB) error {
+		assoc.Statement.ConnPool = tx.Statement.ConnPool
+		base.Statement.ConnPool = tx.Statement.ConnPool
+		if err := assoc.Create(u).Error; err != nil {
+			return err
+		}
+		return base.Create(u).Error
+	})
+}
+
+// The pool swapped in is another handle's, not the transaction's.
+func ConnPoolOfAnother(base, other *gorm.DB, u *User) error {
+	return base.Transaction(func(tx *gorm.DB) error {
+		base.Statement.ConnPool = other.Statement.ConnPool
+		return base.Create(u).Error // want `^base bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+	})
+}
+
+// Not reported: the same swap after a begin.
+func ConnPoolSwapBegin(base *gorm.DB, u *User) error {
+	tx := base.Begin()
+	base.Statement.ConnPool = tx.Statement.ConnPool
+	base.Create(u)
+	return tx.Commit().Error
+}
