@@ -3,6 +3,7 @@ package sqlxtx
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -63,5 +64,34 @@ func Promoted(db *sqlx.DB) error {
 	}
 	db.MustExec("INSERT INTO ledger VALUES (1)")
 	db.Exec("INSERT INTO ledger VALUES (2)") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}
+
+// DBTX and Queries are what sqlc generates for database/sql.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+type Queries struct{ db DBTX }
+
+func (q *Queries) WithTx(tx *sql.Tx) *Queries { return &Queries{db: tx} }
+
+func (q *Queries) CreateUser(ctx context.Context, name string) error { return nil }
+
+// sqlx's transaction embeds *sql.Tx, so sqlc's WithTx takes tx.Tx, a field
+// of the transaction.
+func Sqlc(ctx context.Context, db *sqlx.DB, q *Queries) error {
+	tx, err := db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	qtx := q.WithTx(tx.Tx)
+	if err := qtx.CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	if err := q.CreateUser(ctx, "b"); err != nil { // want `^q bypasses the transaction opened with BeginTxx; use qtx instead \[outer-handle\]$`
+		return err
+	}
 	return tx.Commit()
 }

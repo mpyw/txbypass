@@ -476,16 +476,26 @@ func (c *checker) scopeWithTx(s txScope, call *ast.CallExpr, fn *ssa.Function) (
 	if !ok || sel.Sel.Name != "WithTx" || len(call.Args) != 1 {
 		return scopeQueries{}, false
 	}
+	// The argument may be the transaction or a field of it: sqlc's WithTx
+	// takes a *sql.Tx, which sqlx's and bun's transactions embed, as tx.Tx.
 	arg, ok := c.prog.Ref(fn, call.Args[0])
-	if !ok || !slices.ContainsFunc(s.txs, handle.Of(arg.X).Equal) {
+	if !ok || !slices.ContainsFunc(s.txs, handle.Of(arg.X).Within) {
 		return scopeQueries{}, false
 	}
-	recv, ok := c.prog.Ref(fn, sel.X)
+	// The method's own receiver decides, not what it is called on: WithTx
+	// may be promoted from an embedded *Queries, as in sqlc's Store.
 	info := c.pass.TypesInfo
-	if !ok || !types.Identical(info.TypeOf(call), info.TypeOf(sel.X)) || !scopeHoldsOnly(info.TypeOf(sel.X), info.TypeOf(call.Args[0])) {
+	selection := info.Selections[sel]
+	if selection == nil || selection.Kind() != types.MethodVal {
+		// A function named WithTx, as pkg.WithTx(tx), rebinds nothing.
 		return scopeQueries{}, false
 	}
-	return scopeQueries{outer: handle.Of(recv.X), use: types.ExprString(call)}, true
+	recvType := selection.Obj().(*types.Func).Signature().Recv().Type()
+	recv, ok := c.prog.Ref(fn, sel.X)
+	if !ok || !types.Identical(info.TypeOf(call), recvType) || !scopeHoldsOnly(recvType, info.TypeOf(call.Args[0])) {
+		return scopeQueries{}, false
+	}
+	return scopeQueries{outer: handle.Of(recv.X).With(handle.Promoted(selection)), use: types.ExprString(call)}, true
 }
 
 // scopeHoldsOnly reports whether every field of the struct that t is, or

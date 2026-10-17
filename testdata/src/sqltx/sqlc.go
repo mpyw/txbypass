@@ -3,6 +3,8 @@ package sqltx
 import (
 	"context"
 	"database/sql"
+
+	"txhelper"
 )
 
 // DBTX is what sqlc's generated Queries runs on.
@@ -95,6 +97,37 @@ type Querier interface {
 func InterfaceWithTx(ctx context.Context, db *sql.DB, q Querier) error {
 	tx, _ := db.BeginTx(ctx, nil)
 	q.WithTx(tx).CreateUser(ctx, "a")
+	q.CreateUser(ctx, "b")
+	return tx.Commit()
+}
+
+// Store embeds sqlc's Queries beside the pool, as sqlc's own transaction
+// example does. WithTx is promoted from the embedded Queries.
+type Store struct {
+	*Queries
+	db *sql.DB
+}
+
+func (s *Store) Transfer(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	qtx := s.WithTx(tx)
+	if err := qtx.CreateUser(ctx, "a"); err != nil {
+		return err
+	}
+	if err := s.CreateUser(ctx, "b"); err != nil { // want `^s bypasses the transaction opened with BeginTx; use qtx instead \[outer-handle\]$`
+		return err
+	}
+	return tx.Commit()
+}
+
+// Not reported, and no crash: a function named WithTx rebinds nothing.
+func FunctionWithTx(ctx context.Context, db *sql.DB, q *Queries) error {
+	tx, _ := db.BeginTx(ctx, nil)
+	_ = txhelper.WithTx(tx)
 	q.CreateUser(ctx, "b")
 	return tx.Commit()
 }
