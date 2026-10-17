@@ -212,12 +212,18 @@ func (c *Closer) solve() {
 	c.solving = false
 }
 
-// rootEndsRead reads fn for a call that ends the transaction rooted at root.
+// rootEndsRead reads fn for a call that ends the transaction rooted at root,
+// or a literal that ends it and is given away.
 func (c *Closer) rootEndsRead(fn *ssa.Function, root ssa.Value) bool {
 	txs := []handle.Path{c.paths.Of(root)}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if call, ok := instr.(ssa.CallInstruction); ok && c.callEnds(call.Common(), txs) {
+				return true
+			}
+			// A literal that ends the transaction, given to a call such as
+			// a retry, ends it as one the begin's function gives away.
+			if mc, ok := instr.(*ssa.MakeClosure); ok && c.closureGivenAway(mc, txs) {
 				return true
 			}
 		}

@@ -494,3 +494,23 @@ func insertEvent(tx *sql.Tx, raw []byte) error {
 	_, err := tx.Exec("INSERT INTO events (at) VALUES ($1)", ts)
 	return err
 }
+
+func retry(f func() error) error { return f() }
+
+// commitVia commits through a literal it gives to retry.
+func commitVia(tx *sql.Tx) error { // want commitVia:"closes\\[0\\]"
+	return retry(func() error { return tx.Commit() })
+}
+
+// Not reported: commitVia may have committed the transaction.
+func CommitThroughRetry(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := commitVia(tx); err != nil {
+		return err
+	}
+	db.Exec("SELECT 1")
+	return nil
+}
