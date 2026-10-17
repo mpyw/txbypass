@@ -137,7 +137,7 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 				continue
 			}
 			for _, r := range instr.Operands(rands[:0]) {
-				if *r == fn && used(instr) {
+				if *r == fn && Used(instr) {
 					return instr, true
 				}
 			}
@@ -146,10 +146,10 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 	return nil, false
 }
 
-// used reports whether instr is used by anything but a debug reference. An
+// Used reports whether instr is used by anything but a debug reference. An
 // instruction that is not a value, such as a call that names a literal, is
 // a use in itself.
-func used(instr ssa.Instruction) bool {
+func Used(instr ssa.Instruction) bool {
 	v, ok := instr.(ssa.Value)
 	if !ok {
 		return true
