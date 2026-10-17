@@ -1,0 +1,63 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: txbypass
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  # Pure Go analysis binary: no CGO, so every platform cross-compiles.
+  - id: txbypass
+    main: ./cmd/txbypass
+    binary: txbypass
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      # -V=full answers with the release, not with x/tools' "devel", and an
+      # installed skill names the same release. The module version the go
+      # command records reads +dirty here, since every build after the first
+      # sees the earlier ones in dist/.
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: mpyw
+    name: txbypass
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"

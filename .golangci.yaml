@@ -1,0 +1,37 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    # A method whose body never names its receiver is a function written as a
+    # method, which takes declscope's exemption for methods without earning it.
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: unused-receiver
+    cyclop:
+      max-complexity: 30
+    funlen:
+      lines: 200
+      statements: 100
+    gocognit:
+      min-complexity: 60
+    exhaustive:
+      default-signifies-exhaustive: true
+
+formatters:
+  enable:
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/mpyw/txbypass)
+      custom-order: true

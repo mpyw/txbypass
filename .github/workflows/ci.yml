@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push: {}
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  declscope:
+    name: declscope
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up mise
+        uses: jdx/mise-action@v4
+
+      # shrink goes first: a declaration it would unexport becomes private to
+      # its file, and the analyzer then judges that narrower scope.
+      - name: Run declscope shrink
+        run: declscope shrink ./...
+
+      - name: Run declscope
+        run: declscope ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    # id-token: write is what lets the Codecov upload authenticate as this
+    # workflow run instead of with a stored token. Nothing else in the job
+    # needs it, and the workflow-wide contents: read has to be restated
+    # alongside it, since a job's permissions replace the default rather than
+    # add to it.
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          # Track the go directive in go.mod. setup-go sets GOTOOLCHAIN=local,
+          # so a hardcoded version fails outright once a dependency bump raises
+          # the directive above it, instead of picking up a newer toolchain.
+          go-version-file: go.mod
+
+      - name: Run tests with coverage
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic -coverpkg=./... ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./coverage.txt
+          flags: unittests
+          name: codecov
+          use_oidc: true
+        continue-on-error: true
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # golangci-lint refuses to load a module whose go directive is newer
+          # than the Go it was built with, so this pin has to move whenever the
+          # directive in go.mod does. v2.13.0+ is built with Go 1.27.
+          version: v2.13.1
+          args: --timeout=5m
