@@ -202,7 +202,7 @@ func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
 		if !ok {
 			return Opener{}, false
 		}
-		if dedicated(info.TypeOf(sel.X)) {
+		if dedicated(info.TypeOf(sel.X)) || dedicated(fn.Signature().Recv().Type()) {
 			return Opener{}, false
 		}
 		o.Outer, o.Receiver = sel, true
@@ -238,7 +238,8 @@ var dedicatedConns = []known{
 }
 
 // dedicated reports whether t is one dedicated connection, or a transaction
-// that holds one. A transaction begun on it runs on that connection, so a
+// that holds one. A method declared on such a type is read as one too, when
+// it is promoted to a type that embeds it, as pgxmock's mock embeds pgx.Tx. A transaction begun on it runs on that connection, so a
 // statement on the connection runs inside the transaction: it is no
 // bypass. Begins on a connection are not listed at all.
 func dedicated(t types.Type) bool {
@@ -378,7 +379,11 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 // IsBegin reports whether call is a call of a begin.
 func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	sel, ok := methodSelector(info, call)
-	return ok && IsBeginFunc(info.Selections[sel].Obj().(*types.Func)) && !dedicated(info.TypeOf(sel.X))
+	if !ok {
+		return false
+	}
+	fn := info.Selections[sel].Obj().(*types.Func)
+	return IsBeginFunc(fn) && !dedicated(info.TypeOf(sel.X)) && !dedicated(fn.Signature().Recv().Type())
 }
 
 // CallbackTx reports whether fn is a callback opener whose callback takes
