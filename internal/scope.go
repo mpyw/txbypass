@@ -183,13 +183,10 @@ func scopeSlot(info *types.Info, e ast.Expr, stack []ast.Node) (types.Type, bool
 	case *ast.CompositeLit:
 		return scopeElem(info.TypeOf(parent), slices.Index(parent.Elts, e)), true
 	case *ast.SendStmt:
-		// A channel's operand is a channel, or a type parameter whose core
-		// type is one.
-		if ch, ok := program.Core(info.TypeOf(parent.Chan)).(*types.Chan); ok {
-			return ch.Elem(), parent.Value == e
-		}
-		// Unreachable: a send needs a core type that is a channel.
-		return nil, false
+		// A channel's operand is a channel, or a type parameter whose type
+		// set holds channels of one element type.
+		elem, ok := program.ChanElem(info.TypeOf(parent.Chan))
+		return elem, ok && parent.Value == e
 	case *ast.AssignStmt:
 		// The blank identifier has no type: it takes e as itself, as does
 		// an index on the left, as m[k] in m[k] = v.
@@ -211,6 +208,11 @@ func scopeSlot(info *types.Info, e ast.Expr, stack []ast.Node) (types.Type, bool
 // scopeElem is the type of element i of a literal of type t: the field of
 // a struct, or the element of a slice, an array or a map.
 func scopeElem(t types.Type, i int) types.Type {
+	// An element literal with its & left out, as {ctx} in []*Job{{ctx}},
+	// has the pointer's type: it builds what the pointer points to.
+	if ptr, ok := t.Underlying().(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
 	// A literal of a type parameter, as S{ctx} with S ~[]context.Context,
 	// builds its core type.
 	switch core := program.Core(t).(type) {

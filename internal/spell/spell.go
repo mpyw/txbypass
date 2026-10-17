@@ -55,7 +55,15 @@ func path(info *types.Info, e ast.Expr, from *types.Package) (string, []*types.V
 		// Any other call that gives a handle is a method that returns its
 		// receiver's type. Its selector adds the embedded fields its
 		// promotion passes, as s.Create(u) reaches s.DB.
-		sel, ok := ast.Unparen(e.Fun).(*ast.SelectorExpr)
+		fun := ast.Unparen(e.Fun)
+		// A generic method called with type arguments, as r.Scoped[User]().
+		switch x := fun.(type) {
+		case *ast.IndexExpr:
+			fun = x.X
+		case *ast.IndexListExpr:
+			fun = x.X
+		}
+		sel, ok := ast.Unparen(fun).(*ast.SelectorExpr)
 		if !ok {
 			// Unreachable: a call of a function, as New(db), makes a handle
 			// of its own, and the scope reads no such call as a use.

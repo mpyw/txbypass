@@ -192,6 +192,29 @@ func Core(t types.Type) types.Type {
 	return set.types[0]
 }
 
+// ChanElem is the element type of a channel of type t. For a type
+// parameter, its type set may mix directions, as chan T | chan<- T, which
+// a send allows when every channel has one element type.
+func ChanElem(t types.Type) (types.Type, bool) {
+	if ch, ok := Core(t).(*types.Chan); ok {
+		return ch.Elem(), true
+	}
+	tp, ok := types.Unalias(t).(*types.TypeParam)
+	if !ok {
+		return nil, false
+	}
+	set := typeSet(tp.Constraint())
+	var elem types.Type
+	for _, u := range set.types {
+		ch, ok := u.(*types.Chan)
+		if !ok || elem != nil && !types.Identical(elem, ch.Elem()) {
+			return nil, false
+		}
+		elem = ch.Elem()
+	}
+	return elem, elem != nil && !set.all
+}
+
 // underlyings is a set of underlying types, or every type.
 type underlyings struct {
 	all   bool
