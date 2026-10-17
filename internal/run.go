@@ -11,7 +11,6 @@ import (
 	"errors"
 	"go/ast"
 	"go/types"
-	"slices"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/ctrlflow"
@@ -121,23 +120,18 @@ func (c *checker) runFile(f *ast.File) {
 					return false
 				}
 				c.checkOuterHandleBegins(c.prog.Func(n), n.Body)
+			case *ast.RangeStmt:
+				// The body of a range over a function is a function of its
+				// own.
+				if body := c.prog.Func(n); body != nil {
+					c.checkOuterHandleBegins(body, n.Body)
+				}
 			case *ast.CallExpr:
-				c.runCall(n, c.runEnclosing(outer, stack))
+				c.runCall(n, c.prog.Enclosing(outer, stack, n))
 			}
 			return true
 		})
 	}
-}
-
-// runEnclosing is the function the innermost literal in stack makes, or
-// outer.
-func (c *checker) runEnclosing(outer *ssa.Function, stack []ast.Node) *ssa.Function {
-	for _, n := range slices.Backward(stack) {
-		if lit, ok := n.(*ast.FuncLit); ok {
-			return c.prog.Func(lit)
-		}
-	}
-	return outer
 }
 
 // runCall runs the rule of the callback opener that call is, in fn.

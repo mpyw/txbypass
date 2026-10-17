@@ -69,6 +69,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | Build the SSA form only for a package that calls an opener or a begin, or takes a value with an ending method | The analyzer runs on every dependency for its facts. Most have nothing to read, and building the SSA form of each would make a run slow |
 | Find a begin's call by the position of its parenthesis | A call whose results are assigned to several variables gets no `DebugRef` |
 | Read a variable on the left of an assignment as written, not used | Its `DebugRef` is the value assigned. `create := db.Create` would report `create` |
+| Read the body of a range over a function in the function the builder makes of it | The builder moves the body into a yield function, which the range statement names. Its uses, openers and begins live there, not in the enclosing function |
 
 ## Comparing handles
 

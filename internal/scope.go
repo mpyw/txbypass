@@ -107,13 +107,7 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 		if scopeWritten(e, stack) {
 			return false
 		}
-		fn := s.fn
-		for _, a := range slices.Backward(stack) {
-			if lit, ok := a.(*ast.FuncLit); ok {
-				fn = c.prog.Func(lit)
-				break
-			}
-		}
+		fn := c.prog.Enclosing(s.fn, stack, e)
 		// A handle held by value is used through its address. The address
 		// is the same handle as the value it holds.
 		if ref, ok := c.prog.Ref(fn, e); ok {

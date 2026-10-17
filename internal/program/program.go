@@ -67,9 +67,31 @@ func (p *Program) addFunc(fn *ssa.Function) {
 	}
 }
 
-// Func is the function of a declaration or a literal.
+// Func is the function of a declaration or a literal, or of the body of a
+// range over a function. It is nil for any other range statement.
 func (p *Program) Func(n ast.Node) *ssa.Function {
 	return p.funcs[n]
+}
+
+// Enclosing is the function that evaluates n, whose ancestors are stack:
+// the innermost function literal around it, or loop body of a range over a
+// function, or else outer. The builder makes such a loop body a function of
+// its own, which the range statement names. Its range expression is
+// evaluated outside it.
+func (p *Program) Enclosing(outer *ssa.Function, stack []ast.Node, n ast.Node) *ssa.Function {
+	child := n
+	for _, a := range slices.Backward(stack) {
+		switch a := a.(type) {
+		case *ast.FuncLit:
+			return p.Func(a)
+		case *ast.RangeStmt:
+			if fn := p.Func(a); fn != nil && child == a.Body {
+				return fn
+			}
+		}
+		child = a
+	}
+	return outer
 }
 
 // Funcs lists the package's declared functions and their literals, in the
