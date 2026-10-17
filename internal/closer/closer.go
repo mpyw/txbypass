@@ -396,6 +396,20 @@ func yieldReturns(mc *ssa.MakeClosure, b *ssa.BasicBlock, ret *ssa.Return) bool 
 	return yieldExitReturns(mc.Parent(), mc.Bindings[slices.Index(fn.FreeVars, st.Addr.(*ssa.FreeVar))], st.Val.(*ssa.Const))
 }
 
+// yieldOnlyReturns reports whether b does nothing but return: it loads the
+// results, runs the deferred calls, and returns. In the body of an outer
+// loop, it stores the results and the exit for that loop's function first.
+func yieldOnlyReturns(b *ssa.BasicBlock) bool {
+	for _, instr := range b.Instrs[:len(b.Instrs)-1] {
+		switch instr.(type) {
+		case *ssa.UnOp, *ssa.Store, *ssa.RunDefers, *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // yieldExit reports whether instr stores a constant exit in the jump
 // variable of the body of a range over a function.
 func yieldExit(instr ssa.Instruction) bool {
@@ -427,10 +441,12 @@ func yieldExitReturns(fn *ssa.Function, jump ssa.Value, exit *ssa.Const) bool {
 		if ok && load.X == jump && isConst && constant.Compare(k.Value, token.EQL, exit.Value) {
 			then := b.Succs[0]
 			ret, returns := then.Instrs[len(then.Instrs)-1].(*ssa.Return)
-			// A return in the body comes back through the block the
-			// builder makes for it. A labeled break or a goto out of the body
-			// jumps to its target, which may end in a return of its own.
-			returns = returns && then.Comment == "rangefunc.resume.match"
+			// A return in the body comes back through a block that only
+			// loads the results the body stored, and returns them. A labeled
+			// break or a goto out of the body jumps to its target, which may
+			// end in a return of its own after code of its own. The optimizer
+			// may merge such a target into the block the builder made.
+			returns = returns && yieldOnlyReturns(then)
 			if !returns || !program.Yield(fn) {
 				return returns
 			}
