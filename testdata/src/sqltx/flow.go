@@ -298,3 +298,16 @@ func DeferInLiteral(db *sql.DB) error {
 	}()
 	return tx.Commit()
 }
+
+// A captured handle assigned again inside the region holds another handle
+// after it, so nothing about it is read in the region.
+func ReassignedInRegion(db, other *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	db = other
+	db.Exec("on the other handle")
+	defer func() { _ = db }()
+	return tx.Commit()
+}

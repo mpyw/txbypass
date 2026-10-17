@@ -223,6 +223,38 @@ func scopeBase(e ast.Expr) *ast.Ident {
 	}
 }
 
+// scopeWrites reports whether code that runs inside the transaction of s
+// stores to the handle outer, or to a variable or a field that holds it.
+// In a region, only the stores inside the region count, and the stores of
+// the function literals it makes there.
+func (s txScope) scopeWrites(outer handle.Path) bool {
+	writes := func(fn *ssa.Function) bool {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				st, ok := instr.(*ssa.Store)
+				if ok && outer.Stored(handle.Address(st.Addr)) && (fn != s.fn || s.region == nil || s.region.Inside(st)) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	var within func(fn *ssa.Function) bool
+	within = func(fn *ssa.Function) bool {
+		if writes(fn) {
+			return true
+		}
+		for _, anon := range fn.AnonFuncs {
+			made, ok := program.Creation(anon)
+			if ok && (fn != s.fn || s.region == nil || s.region.Inside(made)) && within(anon) {
+				return true
+			}
+		}
+		return false
+	}
+	return within(s.fn)
+}
+
 // scopeInside reports whether ref is evaluated inside the transaction of s.
 func (s txScope) scopeInside(ref *ssa.DebugRef) bool {
 	return s.region == nil || s.region.Inside(scopeAnchor(s.fn, ref))
@@ -260,6 +292,12 @@ func scopeAnchor(fn *ssa.Function, ref *ssa.DebugRef) ssa.Instruction {
 //declscope:shared // the rules report what their scopes find through it
 func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use string, exempt map[ast.Node]bool) {
 	info := c.pass.TypesInfo
+	// A scope that writes the handle, or what holds it, may run on another
+	// value after the write: s.db = tx makes s.db the transaction. Which
+	// handle it holds is then not known.
+	if s.scopeWrites(outer) {
+		return
+	}
 	visit := func(e ast.Expr, ref *ssa.DebugRef, stack []ast.Node) bool {
 		if scopeChainsOn(e, exempt) {
 			return !exempt[e]

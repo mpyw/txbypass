@@ -32,10 +32,11 @@ type Path struct {
 	// fields are the fields selected from base, in order, including the
 	// embedded fields a promoted field or method passes through.
 	fields []*types.Var
-	// unknown reports that base is a variable in memory written more than
-	// once, or written where this analysis does not follow. Which handle it
-	// holds is not known, so it is the same handle as nothing. It is still
-	// the same storage as itself: see Stored.
+	// unknown reports that base is a variable in memory written where this
+	// analysis does not follow: by a function literal that captures it, or
+	// through an address that goes elsewhere. Which handle it holds is not
+	// known, so it is the same handle as nothing. It is still the same
+	// storage as itself: see Stored.
 	unknown bool
 }
 
@@ -79,12 +80,16 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 			return of(b, seen)
 		}
 	case *ssa.Alloc:
-		stored, n, ok := allocStores(v)
+		// A variable written once is the value written. One written more
+		// than once, all in its own function, is itself: a callback runs
+		// while it holds one value, and a region checks the writes inside
+		// it (see Address). One written elsewhere is not known.
+		stores, ok := allocStores(v)
 		switch {
-		case ok && n == 1:
-			return of(stored, seen)
-		case !ok || n > 1:
+		case !ok:
 			return Path{base: v, unknown: true}
+		case len(stores) == 1:
+			return of(stores[0].Val, seen)
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
@@ -101,9 +106,9 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 	return Path{base: v}
 }
 
-// with extends p with f.
+// with extends p with f. A handle that is not known stays not known.
 func (p Path) with(f *types.Var) Path {
-	return Path{base: p.base, fields: append(slices.Clip(p.fields), f)}
+	return Path{base: p.base, fields: append(slices.Clip(p.fields), f), unknown: p.unknown}
 }
 
 // With extends p with fields, as the embedded fields a promoted method
@@ -157,30 +162,38 @@ func binding(v *ssa.FreeVar) (ssa.Value, bool) {
 	return made.(*ssa.MakeClosure).Bindings[slices.Index(fn.FreeVars, v)], true
 }
 
-// allocStores counts the stores that write a variable in memory, in its own
-// function or in a literal that captures it, and gives the value of the
-// last one. ok is false when its address goes where something else may
-// write it.
-func allocStores(a *ssa.Alloc) (ssa.Value, int, bool) {
+// allocStores lists the stores that write a variable in memory. ok is false
+// when something this analysis does not follow may write it: a function
+// literal that captures it, a store through a field of it, or its address
+// going anywhere but to a load, a store to it, a debug reference, a field
+// read, a capture, or a call. A call takes it as the receiver of a method of
+// a value, as db.Begin() does on a db held by value.
+func allocStores(a *ssa.Alloc) ([]*ssa.Store, bool) {
 	var stores []*ssa.Store
 	if !collectStores(a, &stores) {
-		return nil, 0, false
+		return nil, false
 	}
-	if len(stores) == 0 {
-		return nil, 0, true
+	for _, st := range stores {
+		if st.Parent() != a.Parent() {
+			return nil, false
+		}
 	}
-	return stores[len(stores)-1].Val, len(stores), true
+	return stores, true
 }
 
-// collectStores adds the stores to the address v to stores. It reports
-// false when the address goes anywhere but to a load, a store to it, a
-// debug reference, a field of it, a capture, or a call. A call takes it as
-// the receiver of a method of a value, as db.Begin() does on a db held by
-// value.
+// collectStores adds the stores to the address v to stores, and reports
+// whether the address goes only where allocStores allows.
 func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
 	for _, ref := range *v.Referrers() {
 		switch ref := ref.(type) {
-		case *ssa.UnOp, *ssa.DebugRef, *ssa.FieldAddr, ssa.CallInstruction:
+		case *ssa.UnOp, *ssa.DebugRef, ssa.CallInstruction:
+		case *ssa.FieldAddr:
+			if slices.ContainsFunc(*ref.Referrers(), func(r ssa.Instruction) bool {
+				st, ok := r.(*ssa.Store)
+				return ok && st.Addr == ref
+			}) {
+				return false
+			}
 		case *ssa.Store:
 			if ref.Addr != v {
 				return false
@@ -196,6 +209,20 @@ func collectStores(v ssa.Value, stores *[]*ssa.Store) bool {
 		}
 	}
 	return true
+}
+
+// Address is the storage that a store to addr writes: a variable, or a field
+// of a handle.
+func Address(addr ssa.Value) Path {
+	switch a := addr.(type) {
+	case *ssa.Alloc:
+		return Path{base: a}
+	case *ssa.FreeVar:
+		if b, ok := binding(a); ok {
+			return Address(b)
+		}
+	}
+	return Of(addr)
 }
 
 // returnedReceiver is the receiver of a method call that returns a value of
@@ -216,7 +243,19 @@ func returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 		return nil, false
 	}
 	same := types.Identical(call.Type(), recv.Type())
-	return recv, same && fn.Name() != "WithTx" && !opener.IsBeginFunc(fn)
+	return recv, same && fn.Name() != "WithTx" && !opener.IsBeginFunc(fn) && !binds(fn, recv.Type())
+}
+
+// binds reports whether fn takes a value of its receiver's type, or one that
+// can end a transaction. Such a method binds a new value to what it is
+// given, as repo.Using(tx) does, whatever its name.
+func binds(fn *types.Func, recv types.Type) bool {
+	for p := range fn.Signature().Params().Variables() {
+		if types.Identical(p.Type(), recv) || opener.Holds(p.Type()) {
+			return true
+		}
+	}
+	return false
 }
 
 // samePhi is the handle every edge of a phi gives, when they all give one.
