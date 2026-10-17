@@ -60,46 +60,54 @@ func (ps *Paths) Of(v ssa.Value) Path {
 	if p, ok := ps.known[v]; ok {
 		return p
 	}
-	p := ps.of(v, make(map[ssa.Value]bool))
+	p := ps.of(v, &walk{on: make(map[ssa.Value]bool), phis: make(map[*ssa.Phi]Path)})
 	ps.known[v] = p
 	return p
 }
 
-// of is Of, with the phis and variables already on the way, so that a loop
-// of them ends. A variable stored a call on itself, as q = q.Where(c), leads
+// walk is what one Of has read. on holds the phis and variables still on
+// the way, so that a loop of them ends. phis holds the phis already read: a
+// phi met again through another path of the blocks gives the same handle,
+// and reading it again would take time exponential in the branches.
+type walk struct {
+	on   map[ssa.Value]bool
+	phis map[*ssa.Phi]Path
+}
+
+// of is Of, with what the walk has read. A variable stored a call on itself, as q = q.Where(c), leads
 // back to itself.
-func (ps *Paths) of(v ssa.Value, seen map[ssa.Value]bool) Path {
+func (ps *Paths) of(v ssa.Value, w *walk) Path {
 	switch v := v.(type) {
 	case *ssa.UnOp:
 		// A load gives what its address holds. Any other operator gives a
 		// value of its own.
 		if v.Op == token.MUL {
-			return ps.of(v.X, seen)
+			return ps.of(v.X, w)
 		}
 	case *ssa.FieldAddr:
-		return ps.of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+		return ps.of(v.X, w).with(fieldOf(v.X.Type(), v.Field))
 	case *ssa.Field:
-		return ps.of(v.X, seen).with(fieldOf(v.X.Type(), v.Field))
+		return ps.of(v.X, w).with(fieldOf(v.X.Type(), v.Field))
 	case *ssa.ChangeType:
-		return ps.of(v.X, seen)
+		return ps.of(v.X, w)
 	case *ssa.MakeInterface:
-		return ps.of(v.X, seen)
+		return ps.of(v.X, w)
 	case *ssa.ChangeInterface:
-		return ps.of(v.X, seen)
+		return ps.of(v.X, w)
 	case *ssa.TypeAssert:
 		// Only an assertion that panics when it fails gives the value
 		// itself. The comma-ok form gives a tuple.
 		if !v.CommaOk {
-			return ps.of(v.X, seen)
+			return ps.of(v.X, w)
 		}
 	case *ssa.MakeClosure:
 		// A method value, as db.Create, binds its receiver.
 		if strings.HasPrefix(v.Fn.(*ssa.Function).Synthetic, "bound method wrapper") {
-			return ps.of(v.Bindings[0], seen)
+			return ps.of(v.Bindings[0], w)
 		}
 	case *ssa.FreeVar:
 		if b, ok := binding(v); ok {
-			return ps.of(b, seen)
+			return ps.of(b, w)
 		}
 	case *ssa.Alloc:
 		// A variable written once as a whole is the value written. One
@@ -111,22 +119,30 @@ func (ps *Paths) of(v ssa.Value, seen map[ssa.Value]bool) Path {
 		switch {
 		case !ok:
 			return Path{base: v, unknown: true}
-		case len(whole) == 1 && !fields && !seen[v]:
-			seen[v] = true
-			defer delete(seen, v)
-			return ps.of(whole[0].Val, seen)
+		case len(whole) == 1 && !fields && !w.on[v]:
+			w.on[v] = true
+			defer delete(w.on, v)
+			return ps.of(whole[0].Val, w)
 		}
 	case *ssa.Call:
 		if recv, ok := returnedReceiver(v); ok {
-			return ps.of(recv, seen)
+			return ps.of(recv, w)
 		}
 	case *ssa.Phi:
-		if seen[v] {
-			return Path{base: v}
-		}
-		if p, ok := ps.samePhi(v, seen); ok {
+		if p, ok := w.phis[v]; ok {
 			return p
 		}
+		if w.on[v] {
+			return Path{base: v}
+		}
+		w.on[v] = true
+		p, ok := ps.samePhi(v, w)
+		delete(w.on, v)
+		if !ok {
+			p = Path{base: v}
+		}
+		w.phis[v] = p
+		return p
 	}
 	return Path{base: v}
 }
@@ -368,12 +384,11 @@ func binds(fn *types.Func, recv types.Type) bool {
 // samePhi is the handle every edge of a phi gives, when they all give one.
 // An edge that comes back to the phi itself, around a loop, gives nothing
 // new.
-func (ps *Paths) samePhi(v *ssa.Phi, seen map[ssa.Value]bool) (Path, bool) {
-	seen[v] = true
+func (ps *Paths) samePhi(v *ssa.Phi, w *walk) (Path, bool) {
 	var p Path
 	found := false
 	for _, e := range v.Edges {
-		q := ps.of(e, seen)
+		q := ps.of(e, w)
 		if q.base == v {
 			continue
 		}

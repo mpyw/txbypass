@@ -89,3 +89,26 @@ func ManualCaptured(db *gorm.DB, u *User) error {
 	}
 	return tx.Commit().Error
 }
+
+type Filter struct{ A, B, C bool }
+
+// Every optional filter returns the receiver, so q is db however many
+// conditions rebind it.
+func OptionalFilters(db *gorm.DB, f Filter) error {
+	q := db.Where("1")
+	if f.A {
+		q = q.Where("a")
+	}
+	if f.B {
+		q = q.Where("b")
+	}
+	if f.C {
+		q = q.Where("c")
+	}
+	t := db.Begin()
+	if t.Error != nil {
+		return t.Error
+	}
+	q.First(&User{}) // want `^q bypasses the transaction opened with Begin; use t instead \[outer-handle\]$`
+	return t.Commit().Error
+}
