@@ -111,6 +111,31 @@ func (c *checker) scopeChainBound(s txScope, fn *ssa.Function, e ast.Expr, stack
 	}
 }
 
+// scopeContextMethods are the methods of context.Context.
+var scopeContextMethods = map[string]bool{"Deadline": true, "Done": true, "Err": true, "Value": true}
+
+// scopeAsContext reports whether sel, selected from the outer context, uses
+// it as a context: one of context.Context's own methods. A context of a web
+// framework, as gin's *gin.Context, has methods and fields of its own, as
+// c.JSON(...) or c.Request. They run no statement, and the inner context
+// has none of them, so using it instead does not compile.
+func scopeAsContext(info *types.Info, sel *ast.SelectorExpr) bool {
+	selection := info.Selections[sel]
+	return selection != nil && selection.Kind() == types.MethodVal && scopeContextMethods[sel.Sel.Name]
+}
+
+// scopeContextUse reports whether e, which holds the outer context, uses it
+// as a context. A field of it, as c.Request, which field reports, or a
+// method that the selector above e selects and context.Context lacks, as
+// c.JSON, is no such use.
+func scopeContextUse(info *types.Info, e ast.Expr, stack []ast.Node, field bool) bool {
+	if field {
+		return false
+	}
+	sel, ok := stack[len(stack)-1].(*ast.SelectorExpr)
+	return !ok || sel.X != e || scopeAsContext(info, sel)
+}
+
 // scopeMetadataMethods are the methods of a pool that read or set the pool
 // itself, by package, type and name. A transaction has none of them, so
 // "use the transaction" is no fix, and they run no statement.
@@ -488,6 +513,9 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if !c.paths.Of(ref.X).Within(outer) || scopeInert(info, e, stack) {
 			return true
 		}
+		if r == rule.OuterContext && !scopeContextUse(info, e, stack, c.paths.Of(ref.X).Depth() > outer.Depth()) {
+			return false
+		}
 		if c.scopeBindsBoth(s, ref.Parent(), e, stack) || c.scopeChainBound(s, ref.Parent(), e, stack) {
 			return false
 		}
@@ -504,7 +532,7 @@ func (c *checker) reportScopeUses(s txScope, outer handle.Path, r rule.Name, use
 		if scopeChainsOn(e, exempt) || !c.paths.Of(x.X).With(path).Within(outer) {
 			return true
 		}
-		if c.scopeChainBound(s, x.Parent(), e, stack) {
+		if c.scopeChainBound(s, x.Parent(), e, stack) || r == rule.OuterContext && !scopeAsContext(info, e.(*ast.SelectorExpr)) {
 			return false
 		}
 		if !scopeMetadata(info, e) {
