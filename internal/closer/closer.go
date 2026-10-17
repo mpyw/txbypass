@@ -109,7 +109,7 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 			return st.Dir == types.SendOnly && c.within(st.Send, txs)
 		})
 	case *ssa.MakeClosure:
-		return c.closureGivenAway(instr, txs)
+		return c.closureGivenAway(instr, txs, false)
 	}
 	return false
 }
@@ -226,7 +226,7 @@ func (c *Closer) rootEndsRead(fn *ssa.Function, root ssa.Value) bool {
 			}
 			// A literal that ends the transaction, given to a call such as
 			// a retry, ends it as one the begin's function gives away.
-			if mc, ok := instr.(*ssa.MakeClosure); ok && c.closureGivenAway(mc, txs) {
+			if mc, ok := instr.(*ssa.MakeClosure); ok && c.closureGivenAway(mc, txs, true) {
 				return true
 			}
 		}
@@ -236,9 +236,11 @@ func (c *Closer) rootEndsRead(fn *ssa.Function, root ssa.Value) bool {
 
 // closureGivenAway reports whether mc makes a literal that ends the
 // transaction, and gives it to something other than a call of it or a
-// defer. Then it may run anywhere. A closure that nothing uses never runs,
+// defer. In a helper, every end in the body of a range over a function
+// counts: a path that returns from the helper has ended the parameter by
+// then. Then it may run anywhere. A closure that nothing uses never runs,
 // so it ends nothing.
-func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
+func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path, helper bool) bool {
 	if !program.Used(mc) {
 		return false
 	}
@@ -248,7 +250,7 @@ func (c *Closer) closureGivenAway(mc *ssa.MakeClosure, txs []handle.Path) bool {
 		if !c.within(b, txs) {
 			continue
 		}
-		if fn.Synthetic == yieldSynthetic {
+		if fn.Synthetic == yieldSynthetic && !helper {
 			ends = ends || c.yieldEnds(mc, fn.FreeVars[i])
 		} else {
 			ends = ends || c.rootEnds(fn, fn.FreeVars[i])
@@ -331,7 +333,7 @@ func (c *Closer) yieldStepEnds(instr ssa.Instruction, txs []handle.Path) bool {
 	case ssa.CallInstruction:
 		return c.callEnds(instr.Common(), txs)
 	case *ssa.MakeClosure:
-		return c.closureGivenAway(instr, txs)
+		return c.closureGivenAway(instr, txs, false)
 	}
 	return false
 }
@@ -414,6 +416,10 @@ func yieldExitReturns(fn *ssa.Function, jump ssa.Value, exit *ssa.Const) bool {
 		if ok && load.X == jump && isConst && constant.Compare(k.Value, token.EQL, exit.Value) {
 			then := b.Succs[0]
 			ret, returns := then.Instrs[len(then.Instrs)-1].(*ssa.Return)
+			// A return in the body comes back through the block the
+			// builder makes for it. A labeled break or a goto out of the body
+			// jumps to its target, which may end in a return of its own.
+			returns = returns && then.Comment == "rangefunc.resume.match"
 			if !returns || fn.Synthetic != yieldSynthetic {
 				return returns
 			}
