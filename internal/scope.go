@@ -161,8 +161,13 @@ func scopeContextArg(info *types.Info, call *ast.CallExpr, e ast.Expr) bool {
 	if fn, ok := typeutil.Callee(info, call).(*types.Func); ok && fn.Pkg() != nil && strings.HasPrefix(fn.Pkg().Path(), "go.mongodb.org/mongo-driver") && scopeSessionEnds[fn.Name()] {
 		return false
 	}
-	// A conversion has no signature, and gives e as a context.
+	// A conversion has no signature, and gives e as a context. A generic
+	// function is read in its origin, where a type parameter constrained by
+	// context.Context is an interface.
 	sig, ok := info.TypeOf(call.Fun).Underlying().(*types.Signature)
+	if fn, isFunc := typeutil.Callee(info, call).(*types.Func); isFunc {
+		sig = fn.Origin().Signature()
+	}
 	return !ok || types.IsInterface(scopeParam(sig, slices.Index(call.Args, e)))
 }
 
@@ -276,35 +281,78 @@ func (c *checker) scopeRunsBound(s txScope, fn *ssa.Function, e ast.Expr, stack 
 	call := stack[len(stack)-1].(*ast.CallExpr)
 	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
 		ref, ok := c.prog.Ref(fn, arg)
-		return ok && c.scopeMadeBound(s, ref.X, make(map[ssa.Value]bool))
+		return ok && c.scopeMadeBound(s, ref.X, make(scopeWalk))
 	})
 }
 
-// scopeMadeBound reports whether v was made by a chain of calls one of
-// which was given the transaction, as q.Ancestor(k).Transaction(tx). A
-// variable written once is the value written.
-func (c *checker) scopeMadeBound(s txScope, v ssa.Value, seen map[ssa.Value]bool) bool {
-	if seen[v] {
-		return false
+// scopeMadeBound reports whether v was built by a chain of methods one of
+// which was given the transaction, as q.Ancestor(k).Transaction(tx). Each
+// method of the chain is a builder: it returns its receiver's type. A
+// function given the transaction, as context.WithValue(ctx, key, tx),
+// binds nothing it returns to it. A variable is bound when every value
+// written to it is, and a phi when every edge is.
+func (c *checker) scopeMadeBound(s txScope, v ssa.Value, w scopeWalk) bool {
+	// A value still on the way comes back around a loop. It adds nothing to
+	// the edges and stores it meets, which all must be bound. A value read
+	// already gives the same answer.
+	if bound, ok := w[v]; ok {
+		return bound == nil || *bound
 	}
-	seen[v] = true
+	w[v] = nil
+	bound := c.scopeMadeBoundRead(s, v, w)
+	w[v] = &bound
+	return bound
+}
+
+// scopeWalk holds, for each value scopeMadeBound met, its answer, or nil
+// while it is still on the way.
+type scopeWalk map[ssa.Value]*bool
+
+// scopeMadeBoundRead is scopeMadeBound for a value met the first time.
+func (c *checker) scopeMadeBoundRead(s txScope, v ssa.Value, w scopeWalk) bool {
 	switch v := v.(type) {
 	case *ssa.Call:
-		args := v.Common().Args
-		if slices.ContainsFunc(args, func(arg ssa.Value) bool {
+		common := v.Common()
+		if common.Signature().Recv() == nil || len(common.Args) == 0 || !types.Identical(v.Type(), common.Args[0].Type()) {
+			return false
+		}
+		if slices.ContainsFunc(common.Args[1:], func(arg ssa.Value) bool {
 			return slices.ContainsFunc(s.txs, c.paths.Of(arg).Within)
 		}) {
 			return true
 		}
-		return len(args) > 0 && c.scopeMadeBound(s, args[0], seen)
+		return c.scopeMadeBound(s, common.Args[0], w)
 	case *ssa.UnOp:
 		addr, ok := v.X.(*ssa.Alloc)
-		return ok && slices.ContainsFunc(*addr.Referrers(), func(ref ssa.Instruction) bool {
-			st, ok := ref.(*ssa.Store)
-			return ok && st.Addr == addr && c.scopeMadeBound(s, st.Val, seen)
-		})
+		if !ok {
+			return false
+		}
+		var vals []ssa.Value
+		for _, ref := range *addr.Referrers() {
+			if st, ok := ref.(*ssa.Store); ok && st.Addr == addr {
+				vals = append(vals, st.Val)
+			}
+		}
+		return c.scopeAllBound(s, vals, w)
+	case *ssa.Phi:
+		return c.scopeAllBound(s, v.Edges, w)
 	}
 	return false
+}
+
+// scopeAllBound reports whether every value of vals is bound, as
+// scopeMadeBound says, and one of them leads somewhere other than back.
+func (c *checker) scopeAllBound(s txScope, vals []ssa.Value, w scopeWalk) bool {
+	ahead := false
+	for _, v := range vals {
+		bound, met := w[v]
+		back := met && bound == nil
+		if !c.scopeMadeBound(s, v, w) {
+			return false
+		}
+		ahead = ahead || !back
+	}
+	return ahead
 }
 
 // scopeValueBound reports whether v, or a variable it is kept in, is the

@@ -702,3 +702,20 @@ func CleanupHelper(t *testing.T, db *sql.DB) {
 	dropDeferred(db, "w") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	tx.Commit()
 }
+
+type txKey struct{}
+
+func countRows(tx *sql.Tx) int { return 0 }
+
+// A context that carries the transaction, or a value a helper made from
+// it, does not bind a statement on the pool to it.
+func ContextCarriesTx(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, txKey{}, tx)
+	db.ExecContext(ctx, "DELETE FROM t")            // want `^db bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
+	db.ExecContext(ctx, "SELECT $1", countRows(tx)) // want `^db bypasses the transaction opened with BeginTx; use tx instead \[outer-handle\]$`
+	return tx.Commit()
+}

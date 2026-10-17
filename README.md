@@ -1098,6 +1098,19 @@ return sess.Commit()
 <td>⚠️</td>
 <td>xorm's session is the transaction, and its <code>Begin</code> returns only an error, so no region is read. <code>engine.Transaction(...)</code> is read</td>
 </tr>
+<tr>
+<td>
+
+```go
+m.Do(c, func(ctx context.Context) error {
+	return saveOrder(c) // takes *gin.Context
+})
+```
+
+</td>
+<td>⚠️</td>
+<td>A framework context given to a parameter of its own type is taken as that type, not as a context. What the helper does with it is not read</td>
+</tr>
 </tbody>
 </table>
 
