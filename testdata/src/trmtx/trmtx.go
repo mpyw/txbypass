@@ -84,6 +84,16 @@ func Handler(c *gin.Context, m *manager.Manager) error {
 		render(c, id)
 		_ = audit{c: c}
 		_ = []*gin.Context{c}
+		_ = audit{c}
+		_ = map[string]*gin.Context{"c": c}
+		var kept *gin.Context = c
+		kept = c
+		var same = c
+		_, _ = kept, same
+		_ = map[*gin.Context]int{c: 1} // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
+		_ = c == nil                   // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
+		ch := make(chan *gin.Context, 1)
+		ch <- c
 		_ = saveAs(c)                // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
 		_ = any(c)                   // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`
 		logAll(c)                    // want `^c bypasses the transaction opened with Do; use ctx instead \[outer-context\]$`

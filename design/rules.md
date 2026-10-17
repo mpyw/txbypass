@@ -300,7 +300,7 @@ The handle the opener is called on is not reported there. With MongoDB, `coll.In
 
 The context of a callback that carries a session, as MongoDB's `WithSession` and `UseSession` give, is not reported inside a transaction on that session. `sess.WithTransaction(sc, ...)` runs with `sc` too, so a statement on `sc` runs inside it.
 
-The outer context is reported where it is used as a context: given to a call, or with a method of `context.Context` called on it. A web framework's context, as gin's `*gin.Context`, has methods and fields of its own, as `c.JSON(...)` and `c.Request`. They run no statement, and the inner context has none of them, so they are not reported. A method of them that gives a context back is a use, as `c.Request.Context()`. Giving the outer context where a plain context does not fit is no use either. That is a parameter, a field or an element of a concrete type, as `*gin.Context`. It is also an interface with methods `context.Context` lacks, as fiber v3's `fiber.Ctx`. MongoDB's session ends with `CommitTransaction`, `AbortTransaction` and `EndSession`. They take a context only for its deadline, so giving them the outer context is no use.
+The outer context is reported where it is used as a context: given to a call, or with a method of `context.Context` called on it. A web framework's context, as gin's `*gin.Context`, has methods and fields of its own, as `c.JSON(...)` and `c.Request`. They run no statement, and the inner context has none of them, so they are not reported. A method of them that gives a context back is a use, as `c.Request.Context()`. Giving the outer context where a plain context does not fit is no use either. That is a parameter, a field, an element, a channel or a variable of a concrete type, as `*gin.Context`. It is also an interface with methods `context.Context` lacks, as fiber v3's `fiber.Ctx`. MongoDB's session ends with `CommitTransaction`, `AbortTransaction` and `EndSession`. They take a context only for its deadline, so giving them the outer context is no use.
 
 ## Messages
 
@@ -352,6 +352,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
+| A function literal given to a transaction helper of the project, as `s.withTx(ctx, func(tx *sql.Tx) error { ... })` | Only a call of a known opener opens a scope. Inside the helper, the callback is a function value, whose body is not read |
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |

@@ -303,3 +303,21 @@ func CleanupInCallback(t *testing.T, db *gorm.DB) error {
 		return nil
 	})
 }
+
+// adminTX keeps the handle beside the transaction.
+type adminTX struct {
+	db *gorm.DB
+	tx *gorm.DB
+}
+
+// Not reported: the literal keeps db beside the callback's transaction, as
+// a constructor given both would.
+func KeptBeside(db *gorm.DB) *adminTX {
+	var kept *adminTX
+	db.Transaction(func(tx *gorm.DB) error {
+		kept = &adminTX{db: db, tx: tx}
+		_ = adminTX{db, tx}
+		return nil
+	})
+	return kept
+}
