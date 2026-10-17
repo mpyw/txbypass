@@ -45,7 +45,9 @@ func Of(v ssa.Value) Path {
 	return of(v, make(map[ssa.Value]bool))
 }
 
-// of is Of, with the phis already on the way, so that a loop of phis ends.
+// of is Of, with the phis and variables already on the way, so that a loop
+// of them ends. A variable stored a call on itself, as q = q.Where(c), leads
+// back to itself.
 func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 	switch v := v.(type) {
 	case *ssa.UnOp:
@@ -89,7 +91,9 @@ func of(v ssa.Value, seen map[ssa.Value]bool) Path {
 		switch {
 		case !ok:
 			return Path{base: v, unknown: true}
-		case len(whole) == 1 && !fields:
+		case len(whole) == 1 && !fields && !seen[v]:
+			seen[v] = true
+			defer delete(seen, v)
 			return of(whole[0].Val, seen)
 		}
 	case *ssa.Call:
@@ -184,6 +188,28 @@ func allocStores(a *ssa.Alloc) (whole []*ssa.Store, fields, ok bool) {
 type allocStoreSet struct {
 	whole  []*ssa.Store
 	fields []*ssa.Store
+	// visited holds the variables whose loads are already walked. A pointer
+	// copied back and forth between two variables leads back to one.
+	visited map[allocStep]bool
+}
+
+// allocStep is a variable that holds the address, as collectLoads walks it.
+type allocStep struct {
+	v     ssa.Value
+	field bool
+}
+
+// visit reports whether step is new, and marks it walked. Each address is
+// reached once: a load, a field, or a free variable has one way in.
+func (set *allocStoreSet) visit(step allocStep) bool {
+	if set.visited == nil {
+		set.visited = make(map[allocStep]bool)
+	}
+	if set.visited[step] {
+		return false
+	}
+	set.visited[step] = true
+	return true
 }
 
 // collect adds the stores to the address v to the set, as whole stores or,
@@ -229,6 +255,9 @@ func (set *allocStoreSet) collect(v ssa.Value, field bool) bool {
 // what v holds, not the address. A literal that captures v loads it
 // through its free variable.
 func (set *allocStoreSet) collectLoads(v ssa.Value, field bool) bool {
+	if !set.visit(allocStep{v: v, field: field}) {
+		return true
+	}
 	for _, ref := range *v.Referrers() {
 		switch ref := ref.(type) {
 		case *ssa.UnOp:

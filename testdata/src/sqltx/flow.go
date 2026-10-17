@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"time"
 
 	"txhelper"
 )
@@ -480,4 +481,16 @@ func SelectReceive(ctx context.Context, db *sql.DB, in <-chan int) error {
 	}
 	db.Exec("still inside") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
+}
+
+// Not reported, and no crash: a value filled through a pointer method, then
+// normalized by a call on itself, in a helper that takes a transaction.
+func insertEvent(tx *sql.Tx, raw []byte) error {
+	var ts time.Time
+	if err := ts.UnmarshalText(raw); err != nil {
+		return err
+	}
+	ts = ts.UTC()
+	_, err := tx.Exec("INSERT INTO events (at) VALUES ($1)", ts)
+	return err
 }

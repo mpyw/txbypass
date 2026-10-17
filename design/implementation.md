@@ -79,6 +79,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | A variable in memory written by one store is the value stored | A variable that a literal captures is not lifted. The callback's `db` is a load of it, so the parameter has to be found through the store |
 | Count the stores inside the literals that capture the variable too | A literal can assign it, through its free variable |
 | A phi is a handle only when every edge gives it | Two handles meeting is neither. A loop edge back to the phi adds nothing |
+| A variable already on the way is itself | `q = q.Where(c)` stores a call on `q`, which gives `q` back. Pointers copied back and forth lead back to one variable too. Without the guard, the analysis recursed until the stack overflowed |
 | A free variable of a synthetic function is a root | The wrapper of a bound method value has no parent to find its closure in |
 | `WithTx` does not give its receiver back | `qtx := q.WithTx(tx)` is another handle, bound to the transaction |
 | Leave the embedded fields at the end out of a comparison | `db.Begin()` on a `*sqlx.DB` is database/sql's, on the embedded `db.DB`. `db.Get` is sqlx's own, on `db`. Both are one handle |
