@@ -4,6 +4,7 @@ package gormtx
 import (
 	"context"
 	"fmt"
+	"testing"
 
 	"gorm.io/gorm"
 
@@ -288,4 +289,17 @@ func BeginOnBegin(db *gorm.DB, u *User) error {
 	tx.Create(u)
 	sp.Commit()
 	return tx.Commit().Error
+}
+
+// Not reported: a cleanup registered in the callback runs after the test,
+// when the transaction has ended.
+func CleanupInCallback(t *testing.T, db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		u := User{}
+		if err := tx.Create(&u).Error; err != nil {
+			return err
+		}
+		t.Cleanup(func() { db.Delete(&u) })
+		return nil
+	})
 }

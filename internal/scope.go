@@ -124,19 +124,32 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 	if s.region == nil {
 		hooks = c.scopeHooks(s.root)
 	}
+	// later holds what runs after the scope: the function and the
+	// arguments of a deferred call, and the function given to t.Cleanup. A
+	// call among them runs where it stands, so it is read.
+	later := make(map[ast.Node]bool)
 	ast.PreorderStack(s.root, nil, func(n ast.Node, stack []ast.Node) bool {
+		if later[n] {
+			return false
+		}
 		switch n := n.(type) {
 		case *ast.DeferStmt:
 			// The function that holds the begin runs its deferred calls when
 			// it returns. A literal runs its own when it returns, inside.
 			if s.region != nil && !slices.ContainsFunc(stack, scopeIsLiteral) {
-				return false
+				scopeLater(later, n.Call.Fun)
+				for _, arg := range n.Call.Args {
+					scopeLater(later, arg)
+				}
+				return true
 			}
 		case *ast.CallExpr:
-			// t.Cleanup runs its function after the test returns, as the
-			// function's deferred calls run.
-			if s.region != nil && !slices.ContainsFunc(stack, scopeIsLiteral) && program.CleanupCall(c.pass.TypesInfo, n) {
-				return false
+			// t.Cleanup runs its function after the test returns, when the
+			// transaction has ended.
+			if program.CleanupCall(c.pass.TypesInfo, n) {
+				for _, arg := range n.Args {
+					scopeLater(later, arg)
+				}
 			}
 		case *ast.FuncLit:
 			if hooks[n] {
@@ -169,6 +182,14 @@ func (c *checker) walkScope(s txScope, visit, promoted scopeVisit) {
 		x, ok := c.prog.Ref(fn, sel.X)
 		return !ok || !s.scopeInside(x) || promoted(sel, x, stack)
 	})
+}
+
+// scopeLater adds e to later, unless it is a call, which runs where it
+// stands.
+func scopeLater(later map[ast.Node]bool, e ast.Expr) {
+	if _, ok := ast.Unparen(e).(*ast.CallExpr); !ok {
+		later[e] = true
+	}
 }
 
 // scopeIsLiteral reports whether n is a function literal.
