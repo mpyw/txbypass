@@ -4,7 +4,8 @@
 // or s.repo.db. Two expressions name the same handle when they start from the
 // same variable and select the same fields. A method that returns the type of
 // its receiver, as gorm's WithContext does, gives the same handle back, so
-// db.WithContext(ctx) names db.
+// db.WithContext(ctx) names db. A value is the same handle as the fields it
+// embeds: when s embeds *gorm.DB, s and s.DB are one handle.
 //
 // Only names are compared. A copy of the handle into another variable, as in
 // d := db, names a different handle.
@@ -13,6 +14,7 @@ package handle
 import (
 	"go/ast"
 	"go/types"
+	"slices"
 	"strings"
 )
 
@@ -22,6 +24,11 @@ type Path struct {
 	// fields are the fields selected from base, in order, including the
 	// embedded fields a promoted field or method passes through.
 	fields []*types.Var
+}
+
+// Var is the handle v names by itself.
+func Var(v types.Object) Path {
+	return Path{base: v}
 }
 
 // Of reports the handle e names. It reports nothing for an expression that
@@ -107,29 +114,39 @@ func (p Path) through(t types.Type, idx []int) Path {
 	return Path{base: p.base, fields: fields}
 }
 
-// Equal reports whether p and q name the same handle.
+// Equal reports whether p and q name the same handle. Embedded fields at the
+// end of either are left out, since a value is the handle it embeds.
 func (p Path) Equal(q Path) bool {
-	if p.base != q.base || len(p.fields) != len(q.fields) {
-		return false
+	pf, qf := p.named(), q.named()
+	return p.base == q.base && slices.Equal(pf, qf)
+}
+
+// Within reports whether p is q, or a field selected from q, embedded or
+// not. A method of tx.TX is a method of the transaction tx.
+func (p Path) Within(q Path) bool {
+	return p.base == q.base && len(p.fields) >= len(q.fields) && slices.Equal(p.fields[:len(q.fields)], q.fields)
+}
+
+// named is p's fields without the embedded fields at their end.
+func (p Path) named() []*types.Var {
+	n := len(p.fields)
+	for n > 0 && p.fields[n-1].Embedded() {
+		n--
 	}
-	for i := range p.fields {
-		if p.fields[i] != q.fields[i] {
-			return false
-		}
-	}
-	return true
+	return p.fields[:n]
 }
 
 // Spell spells the handle as source in package from would: the variable,
 // then each field. A variable of another package is qualified by its
-// package's name.
+// package's name. Embedded fields at the end are left out, as Equal leaves
+// them out.
 func (p Path) Spell(from *types.Package) string {
 	var b strings.Builder
 	if pkg := p.base.Pkg(); pkg != from {
 		b.WriteString(pkg.Name() + ".")
 	}
 	b.WriteString(p.base.Name())
-	for _, f := range p.fields {
+	for _, f := range p.named() {
 		b.WriteString("." + f.Name())
 	}
 	return b.String()

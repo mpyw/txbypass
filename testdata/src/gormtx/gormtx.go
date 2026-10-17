@@ -20,7 +20,7 @@ type AuditLog struct{ Action string }
 func Create(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		tx.Create(u)
-		db.Create(&AuditLog{Action: "create"}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.Create(&AuditLog{Action: "create"}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -30,7 +30,7 @@ func Create(db *gorm.DB, u *User) error {
 func Chained(ctx context.Context, db *gorm.DB, u *User) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		tx.Create(u)
-		db.WithContext(ctx).Debug().Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.WithContext(ctx).Debug().Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -43,7 +43,7 @@ type Repo struct {
 func (r *Repo) Save(u *User) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		tx.Save(u)
-		r.db.Save(&AuditLog{}) // want `^r\.db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		r.db.Save(&AuditLog{}) // want `^r\.db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -52,7 +52,7 @@ func (r *Repo) Save(u *User) error {
 func Passed(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		tx.Create(u)
-		return audit(db) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		return audit(db) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 	})
 }
 
@@ -63,10 +63,10 @@ func audit(db *gorm.DB) error { return db.Create(&AuditLog{}).Error }
 func Nested(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		defer func() {
-			db.Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+			db.Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		}()
 		go func() {
-			db.Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+			db.Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		}()
 		tx.Create(u)
 		return nil
@@ -78,8 +78,8 @@ func Nested(db *gorm.DB, u *User) error {
 // transaction.
 func Twice(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		return db.Transaction(func(tx2 *gorm.DB) error { // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
-			db.Create(u) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		return db.Transaction(func(tx2 *gorm.DB) error { // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+			db.Create(u) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 			return nil
 		})
 	})
@@ -90,7 +90,7 @@ func Twice(db *gorm.DB, u *User) error {
 func Savepoint(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		return tx.Transaction(func(sp *gorm.DB) error {
-			tx.Create(u) // want `^tx bypasses the transaction it opened with Transaction; use sp instead \[outer-handle\]$`
+			tx.Create(u) // want `^tx bypasses the transaction opened with Transaction; use sp instead \[outer-handle\]$`
 			return nil
 		})
 	})
@@ -99,7 +99,7 @@ func Savepoint(db *gorm.DB, u *User) error {
 // A blank parameter leaves the transaction unnamed.
 func Blank(db *gorm.DB, u *User) error {
 	return db.Transaction(func(_ *gorm.DB) error {
-		db.Create(u) // want `^db bypasses the transaction it opened with Transaction; use the callback's transaction instead \[outer-handle\]$`
+		db.Create(u) // want `^db bypasses the transaction opened with Transaction; use the callback's transaction instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -107,7 +107,7 @@ func Blank(db *gorm.DB, u *User) error {
 // So does a parameter with no name.
 func Unnamed(db *gorm.DB, u *User) error {
 	return db.Transaction(func(*gorm.DB) error {
-		db.Create(u) // want `^db bypasses the transaction it opened with Transaction; use the callback's transaction instead \[outer-handle\]$`
+		db.Create(u) // want `^db bypasses the transaction opened with Transaction; use the callback's transaction instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -115,7 +115,7 @@ func Unnamed(db *gorm.DB, u *User) error {
 // A parenthesized callback is still the callback.
 func Paren(db *gorm.DB, u *User) error {
 	return db.Transaction((func(tx *gorm.DB) error {
-		(*&db).Create(u) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		(*&db).Create(u) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	}))
 }
@@ -123,7 +123,7 @@ func Paren(db *gorm.DB, u *User) error {
 // A handle another package holds is qualified by its package's name.
 func Shared(u *User) error {
 	return dbs.Main.Transaction(func(tx *gorm.DB) error {
-		dbs.Main.Create(u) // want `^dbs\.Main bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		dbs.Main.Create(u) // want `^dbs\.Main bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }

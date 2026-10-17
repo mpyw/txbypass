@@ -5,6 +5,7 @@ import (
 
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/opener"
+	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -13,33 +14,43 @@ import (
 // handle runs outside the transaction: it is not rolled back with it, and it
 // may wait on a lock the transaction holds.
 //
-//declscope:shared // run.go calls it for every call
-func (c *checker) checkOuterHandle(call *ast.CallExpr) {
+//declscope:shared // run.go calls it for every callback opener
+func (c *checker) checkOuterHandle(o opener.Opener) {
+	s := txScope{nodes: []ast.Node{o.Callback.Body}, opener: o.Name, tx: o.Tx, unnamed: "the callback's transaction", builds: o.Builds}
+	c.reportOuterHandle(s, o.Outer)
+}
+
+// checkOuterHandleBegins reports each use of a handle while a transaction
+// begun on it is open, in the function whose body is body. A begin inside a
+// function literal in body belongs to the literal, which is checked on its
+// own.
+//
+//declscope:shared // run.go calls it for every function
+func (c *checker) checkOuterHandleBegins(body *ast.BlockStmt) {
 	info := c.pass.TypesInfo
-	o, ok := opener.Of(info, call)
-	if !ok {
-		return
-	}
-	outer, ok := handle.Of(info, o.Outer)
-	if !ok {
-		return
-	}
-	msg := outer.Spell(c.pass.Pkg) + " bypasses the transaction it opened with " + o.Name + "; "
-	if o.Tx == "" {
-		msg += "use the callback's transaction instead"
-	} else {
-		msg += "use " + o.Tx + " instead"
-	}
-	ast.Inspect(o.Callback.Body, func(n ast.Node) bool {
-		e, ok := n.(ast.Expr)
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
+		b, ok := opener.BeginOf(info, n)
 		if !ok {
 			return true
 		}
-		p, ok := handle.Of(info, e)
-		if !ok || !p.Equal(outer) {
-			return true
+		var err = info.ObjectOf(b.Err)
+		if b.Err == nil {
+			err = nil
 		}
-		c.report(e.Pos(), rule.OuterHandle, msg)
-		return false
+		nodes := region.Inside(info, body, n, info.ObjectOf(b.Tx), err)
+		c.reportOuterHandle(txScope{nodes: nodes, opener: b.Name, tx: b.Tx}, b.Outer)
+		return true
 	})
+}
+
+// reportOuterHandle reports the uses in s of the handle outer names, and of
+// each handle s rebinds to its transaction with WithTx.
+func (c *checker) reportOuterHandle(s txScope, outer ast.Expr) {
+	if p, ok := handle.Of(c.pass.TypesInfo, outer); ok {
+		c.reportScopeUses(s, p, rule.OuterHandle, s.scopeUse(), nil)
+	}
+	c.reportScopeQueries(s)
 }

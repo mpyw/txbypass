@@ -27,3 +27,16 @@ func (p *Pool) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, er
 func (p *Pool) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, nil
 }
+
+func (p *Pool) Acquire(ctx context.Context) (*Conn, error) { return &Conn{}, nil }
+
+// Conn is a connection acquired from a Pool.
+type Conn struct{}
+
+func (c *Conn) Begin(ctx context.Context) (pgx.Tx, error) { return nil, nil }
+
+func (c *Conn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) { return nil, nil }
+
+func (c *Conn) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}

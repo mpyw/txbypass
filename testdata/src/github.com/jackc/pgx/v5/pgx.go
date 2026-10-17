@@ -16,6 +16,7 @@ import (
 
 // Tx is a transaction.
 type Tx interface {
+	Begin(ctx context.Context) (Tx, error)
 	Exec(ctx context.Context, sql string, arguments ...any) (commandTag pgconn.CommandTag, err error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error

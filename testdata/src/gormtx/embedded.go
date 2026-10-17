@@ -11,8 +11,8 @@ type Store struct {
 func (s Store) Save(u *User) error {
 	return s.Transaction(func(tx *gorm.DB) error {
 		tx.Save(u)
-		s.Create(&AuditLog{}) // want `^s\.DB bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
-		s.DB.Create(&AuditLog{}) // want `^s\.DB bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		s.Create(&AuditLog{})    // want `^s bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
+		s.DB.Create(&AuditLog{}) // want `^s bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -24,7 +24,7 @@ type Service struct {
 
 func (s *Service) Save(u *User) error {
 	return s.store.Transaction(func(tx *gorm.DB) error {
-		s.store.Create(u) // want `^s\.store\.DB bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		s.store.Create(u) // want `^s\.store bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -34,7 +34,7 @@ var Default *gorm.DB
 
 func Global(u *User) error {
 	return Default.Transaction(func(tx *gorm.DB) error {
-		Default.Create(u) // want `^Default bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		Default.Create(u) // want `^Default bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -42,7 +42,7 @@ func Global(u *User) error {
 // Reading a field of the handle is a use of it.
 func Field(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		return db.Error // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		return db.Error // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 	})
 }
 

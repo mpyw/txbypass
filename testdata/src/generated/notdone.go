@@ -7,7 +7,7 @@ import "gorm.io/gorm"
 
 func NotDoneCreate(db *gorm.DB, u *User) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		db.Create(u) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.Create(u) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }

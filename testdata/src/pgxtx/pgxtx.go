@@ -16,14 +16,14 @@ func Begin(ctx context.Context, pool *pgxpool.Pool) error {
 		if _, err := tx.Exec(ctx, "UPDATE accounts SET balance = balance - 1"); err != nil {
 			return err
 		}
-		_, err := pool.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^pool bypasses the transaction it opened with pgx\.BeginFunc; use tx instead \[outer-handle\]$`
+		_, err := pool.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^pool bypasses the transaction opened with pgx\.BeginFunc; use tx instead \[outer-handle\]$`
 		return err
 	})
 }
 
 func BeginTx(ctx context.Context, conn *pgx.Conn) error {
 	return pgx.BeginTxFunc(ctx, conn, pgx.TxOptions{IsoLevel: "serializable"}, func(pgx.Tx) error {
-		_, err := conn.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction it opened with pgx\.BeginTxFunc; use the callback's transaction instead \[outer-handle\]$`
+		_, err := conn.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^conn bypasses the transaction opened with pgx\.BeginTxFunc; use the callback's transaction instead \[outer-handle\]$`
 		return err
 	})
 }
@@ -34,7 +34,7 @@ type Repo struct {
 
 func (r *Repo) Transfer(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
-		_, err := r.pool.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^r\.pool bypasses the transaction it opened with pgx\.BeginFunc; use tx instead \[outer-handle\]$`
+		_, err := r.pool.Exec(ctx, "INSERT INTO ledger VALUES (1)") // want `^r\.pool bypasses the transaction opened with pgx\.BeginFunc; use tx instead \[outer-handle\]$`
 		return err
 	})
 }

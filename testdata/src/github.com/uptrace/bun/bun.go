@@ -68,3 +68,7 @@ func (tx Tx) RunInTx(
 }
 
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return Tx{}, nil }
+
+func (c Conn) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return Tx{}, nil }
+
+func (tx Tx) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error) { return tx, nil }

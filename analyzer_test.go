@@ -15,7 +15,22 @@ func TestAnalyzer(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer,
 		"gormtx",
 		"buntx",
+		"sqltx",
+		"sqlxtx",
 		"pgxtx",
+		"pgx4tx",
+		"bobtx",
+		"goqutx",
+		"poptx",
+		"uppertx",
+		"gopgtx",
+		"xormtx",
+		"redistx",
+		"gcptx",
+		"enttx",
+		"mongotx",
+		"reltx",
+		"trmtx",
 		"directives",
 		"generated",
 	)
@@ -32,10 +47,21 @@ func TestOuterHandleOff(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "gormtx")
 }
 
+// TestOuterContextOff does for outer-context what TestOuterHandleOff does
+// for outer-handle.
+func TestOuterContextOff(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "trmtx")
+	restore := setFlag(t, "outer-context", "false")
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "outercontextoff")
+	restore()
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "trmtx")
+}
+
 // TestFlags pins the name and the default of each rule's flag.
 func TestFlags(t *testing.T) {
 	defaults := map[string]string{
-		"outer-handle": "true",
+		"outer-handle":  "true",
+		"outer-context": "true",
 	}
 	for name, want := range defaults {
 		f := txbypass.Analyzer.Flags.Lookup(name)

@@ -52,7 +52,7 @@ func TwoLinesBelow(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		//txbypass:ignore outer-handle // too far // want `^unused txbypass:ignore directive$`
 		use()
-		db.Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -79,7 +79,7 @@ func NothingToSilenceAll(db *gorm.DB) error {
 func TrailingDoesNotReachBelow(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		use()                  //txbypass:ignore outer-handle // trailing // want `^unused txbypass:ignore directive$`
-		db.Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
@@ -132,7 +132,7 @@ func EmptyRuleName(db *gorm.DB) error {
 func Prose(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		// txbypass:ignore outer-handle
-		db.Create(&AuditLog{}) // want `^db bypasses the transaction it opened with Transaction; use tx instead \[outer-handle\]$`
+		db.Create(&AuditLog{}) // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`
 		return nil
 	})
 }
