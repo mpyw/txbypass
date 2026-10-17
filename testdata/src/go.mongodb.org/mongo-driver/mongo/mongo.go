@@ -26,3 +26,16 @@ func (coll *Collection) InsertOne(ctx context.Context, document interface{}) (in
 }
 
 func WithSession(ctx context.Context, sess Session, fn func(SessionContext) error) error { return nil }
+
+// Client is a client. UseSessionWithOptions takes an
+// *options.SessionOptions, which the stub keeps in this package.
+type Client struct{}
+
+// SessionOptions stands in for options.SessionOptions.
+type SessionOptions struct{}
+
+func (c *Client) UseSession(ctx context.Context, fn func(SessionContext) error) error { return nil }
+
+func (c *Client) UseSessionWithOptions(ctx context.Context, opts *SessionOptions, fn func(SessionContext) error) error {
+	return nil
+}

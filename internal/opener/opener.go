@@ -158,12 +158,17 @@ var knownOpeners = []known{
 	// The rest carry the transaction in the callback's context.
 
 	// MongoDB v2: func (s *Session) WithTransaction(ctx, fn func(ctx context.Context) (any, error), opts...)
-	// and func WithSession(ctx, sess *Session, fn func(context.Context) error) error.
+	// and func WithSession(ctx, sess *Session, fn func(context.Context) error) error, and
+	// UseSession(ctx, fn) and UseSessionWithOptions(ctx, opts, fn) of *Client.
 	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Session", name: "WithTransaction", outer: 0, callback: 1, tx: 0, inContext: true},
 	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/v2/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true},
 	// MongoDB v1.17: the same, with the Session interface and SessionContext.
 	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Session", name: "WithTransaction", outer: 0, callback: 1, tx: 0, inContext: true},
 	{pkg: "go.mongodb.org/mongo-driver/mongo", name: "WithSession", outer: 0, callback: 2, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSession", outer: 0, callback: 1, tx: 0, inContext: true},
+	{pkg: "go.mongodb.org/mongo-driver/mongo", recv: "Client", name: "UseSessionWithOptions", outer: 0, callback: 2, tx: 0, inContext: true},
 	// go-rel: Transaction(ctx, fn func(ctx context.Context) error) of the Repository interface.
 	{pkg: "github.com/go-rel/rel", recv: "Repository", name: "Transaction", outer: 0, callback: 1, tx: 0, inContext: true},
 	// avito-tech/go-transaction-manager v2: Do(ctx, fn) and DoWithSettings(ctx, s, fn) of the

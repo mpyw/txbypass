@@ -181,8 +181,8 @@ Nothing is reported in a generated file. Test files are checked like any other f
 | [Firestore](https://pkg.go.dev/cloud.google.com/go/firestore) | [`Client.RunTransaction`](https://pkg.go.dev/cloud.google.com/go/firestore#Client.RunTransaction) |  |
 | [Spanner](https://pkg.go.dev/cloud.google.com/go/spanner) | [`Client.ReadWriteTransaction`](https://pkg.go.dev/cloud.google.com/go/spanner#Client.ReadWriteTransaction), [`Client.ReadWriteTransactionWithOptions`](https://pkg.go.dev/cloud.google.com/go/spanner#Client.ReadWriteTransactionWithOptions) |  |
 | [Datastore](https://pkg.go.dev/cloud.google.com/go/datastore) | [`Client.RunInTransaction`](https://pkg.go.dev/cloud.google.com/go/datastore#Client.RunInTransaction) | [`Client.NewTransaction`](https://pkg.go.dev/cloud.google.com/go/datastore#Client.NewTransaction) |
-| [MongoDB](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo) v2 | [`Session.WithTransaction`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#Session.WithTransaction), [`WithSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#WithSession), read by `outer-context` |  |
-| [MongoDB](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo) v1 | [`Session.WithTransaction`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Session.WithTransaction), [`WithSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#WithSession), read by `outer-context` |  |
+| [MongoDB](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo) v2 | [`Session.WithTransaction`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#Session.WithTransaction), [`WithSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#WithSession), [`Client.UseSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#Client.UseSession), [`Client.UseSessionWithOptions`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo#Client.UseSessionWithOptions), read by `outer-context` |  |
+| [MongoDB](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo) v1 | [`Session.WithTransaction`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Session.WithTransaction), [`WithSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#WithSession), [`Client.UseSession`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Client.UseSession), [`Client.UseSessionWithOptions`](https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Client.UseSessionWithOptions), read by `outer-context` |  |
 | [go-rel](https://pkg.go.dev/github.com/go-rel/rel) | [`Repository.Transaction`](https://pkg.go.dev/github.com/go-rel/rel#Repository.Transaction), read by `outer-context` |  |
 | [go-transaction-manager](https://pkg.go.dev/github.com/avito-tech/go-transaction-manager/trm/v2) v2 | [`trm.Manager.Do`](https://pkg.go.dev/github.com/avito-tech/go-transaction-manager/trm/v2#Manager.Do), [`trm.Manager.DoWithSettings`](https://pkg.go.dev/github.com/avito-tech/go-transaction-manager/trm/v2#Manager.DoWithSettings), [`manager.Manager.Do`](https://pkg.go.dev/github.com/avito-tech/go-transaction-manager/trm/v2/manager#Manager.Do), [`manager.Manager.DoWithSettings`](https://pkg.go.dev/github.com/avito-tech/go-transaction-manager/trm/v2/manager#Manager.DoWithSettings), read by `outer-context` |  |
 
@@ -1080,6 +1080,23 @@ db.Transaction(func(tx *gorm.DB) error {
 </td>
 <td>⚠️</td>
 <td>A call given the transaction too keeps the handle beside it, as a constructor <code>newStore(db, tx)</code> does. What the call does with the handle is not read</td>
+</tr>
+<tr>
+<td>
+
+```go
+sess := engine.NewSession()
+defer sess.Close()
+if err := sess.Begin(); err != nil {
+	return err
+}
+engine.Insert(&u)
+return sess.Commit()
+```
+
+</td>
+<td>⚠️</td>
+<td>xorm's session is the transaction, and its <code>Begin</code> returns only an error, so no region is read. <code>engine.Transaction(...)</code> is read</td>
 </tr>
 </tbody>
 </table>

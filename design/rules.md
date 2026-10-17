@@ -56,8 +56,12 @@ These carry the transaction in the callback's context. They are read by [`outer-
 | --- | --- | --- | --- | --- | --- | --- |
 | MongoDB v2 | `go.mongodb.org/mongo-driver/v2/mongo` | `*Session` | `WithTransaction` | Argument 0 | Argument 1 | Parameter 0 |
 | MongoDB v2 | The same | None | `WithSession` | Argument 0 | Argument 2 | Parameter 0 |
+| MongoDB v2 | The same | `*Client` | `UseSession` | Argument 0 | Argument 1 | Parameter 0 |
+| MongoDB v2 | The same | `*Client` | `UseSessionWithOptions` | Argument 0 | Argument 2 | Parameter 0 |
 | MongoDB v1 | `go.mongodb.org/mongo-driver/mongo` | `Session` | `WithTransaction` | Argument 0 | Argument 1 | Parameter 0 |
 | MongoDB v1 | The same | None | `WithSession` | Argument 0 | Argument 2 | Parameter 0 |
+| MongoDB v1 | The same | `*Client` | `UseSession` | Argument 0 | Argument 1 | Parameter 0 |
+| MongoDB v1 | The same | `*Client` | `UseSessionWithOptions` | Argument 0 | Argument 2 | Parameter 0 |
 | go-rel | `github.com/go-rel/rel` | `Repository` | `Transaction` | Argument 0 | Argument 1 | Parameter 0 |
 | go-transaction-manager | `github.com/avito-tech/go-transaction-manager/trm/v2`, and its `manager` package | `Manager` | `Do` | Argument 0 | Argument 1 | Parameter 0 |
 | go-transaction-manager | The same | `Manager` | `DoWithSettings` | Argument 0 | Argument 2 | Parameter 0 |
@@ -356,6 +360,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A Firestore reference built in the scope, then used to run outside it. `ref := client.Doc(p)` then `ref.Set(ctx, v)` is one | `ref` is a reference, not the client |
 | An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
+| xorm's `session.Begin()` ... `session.Commit()` | The session is the transaction, and its begin returns only an error. No value marks where the transaction is, so no region is read. Use `engine.Transaction(...)` for a scope this analysis reads |
 | A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |
 | A use that runs no statement, such as reading the handle's dialect | It is reported, unless it reads a basic value or an error. The transaction gives the same answer, so the fix still applies. A pool's own settings and statistics are not reported: see [Handles](#handles) |
 | A hook kept for after the callback, but called inside it too | The literal is not read |
