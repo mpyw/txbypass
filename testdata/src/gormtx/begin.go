@@ -219,6 +219,7 @@ func ManyFiltersInLoop(db *gorm.DB, fs []Filter, n int) error {
 	q.First(&User{}) // want `^q bypasses the transaction opened with Begin; use t instead \[outer-handle\]$`
 	return t.Commit().Error
 }
+
 // A query built in nested loops is db wherever it is used.
 func NestedLoops(db *gorm.DB, fs [][]string) error {
 	return db.Transaction(func(tx *gorm.DB) error {
