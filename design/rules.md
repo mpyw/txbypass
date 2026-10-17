@@ -188,7 +188,7 @@ A call of a method that reads or sets the pool itself is no use. The transaction
 
 A scope that writes the outer handle, or a variable or a field that holds it, reports no use of it. After the write, it may hold another value. So `db = tx` or `s.db = tx` inside the callback makes `db` or `s.db` no use. A store of a value taken from the transaction into a field of the outer handle is such a write too. In gorm, `base.Statement.ConnPool = tx.Statement.ConnPool` makes `base` run on the transaction. In a region, only the writes inside the region count, and a deferred literal writes when the function returns.
 
-What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds.
+What ends a transaction is matched by where it is stored, not by its value. A commit through a load of a variable assigned twice still ends the transaction the variable holds. So does a commit on a value that may be the transaction on one path, as `tx` in a loop that commits and begins again.
 
 A use is an expression with a value in the SSA form, or a variable used through its address. What stands on the left of an assignment is written, not used, and so is a variable its declaration names. An index on the left is read: `m[k] = v` uses `m` and `k`.
 
