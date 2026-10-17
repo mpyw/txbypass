@@ -176,6 +176,50 @@ func Creation(fn *ssa.Function) (ssa.Instruction, bool) {
 	return nil, false
 }
 
+// Core is the underlying type of t, or for a type parameter, the one
+// underlying type of every type in its type set, as the SSA form reads a
+// composite literal of it. A type parameter with no such type has none,
+// and Core gives its constraint.
+func Core(t types.Type) types.Type {
+	tp, ok := types.Unalias(t).(*types.TypeParam)
+	if !ok {
+		return t.Underlying()
+	}
+	var core types.Type
+	for term := range unionTerms(tp.Underlying().(*types.Interface)) {
+		u := term.Type().Underlying()
+		if core != nil && !types.Identical(core, u) {
+			return tp.Underlying()
+		}
+		core = u
+	}
+	if core == nil {
+		return tp.Underlying()
+	}
+	return core
+}
+
+// unionTerms lists the terms of the types iface embeds.
+func unionTerms(iface *types.Interface) func(func(*types.Term) bool) {
+	return func(yield func(*types.Term) bool) {
+		for e := range iface.EmbeddedTypes() {
+			// A constraint that is a type, as [P Row], embeds the type. An
+			// embedded interface, as comparable, adds no term.
+			terms := []*types.Term{types.NewTerm(false, e)}
+			if union, ok := e.(*types.Union); ok {
+				terms = slices.Collect(union.Terms())
+			} else if types.IsInterface(e) {
+				terms = nil
+			}
+			for _, term := range terms {
+				if !yield(term) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // Yield reports whether fn is the function the builder makes of the body
 // of a range over a function.
 func Yield(fn *ssa.Function) bool {

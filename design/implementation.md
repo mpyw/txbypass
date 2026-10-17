@@ -132,6 +132,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | `opener.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
+| A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
 
 ## Scopes that build or rebind
 
