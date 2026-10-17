@@ -120,3 +120,25 @@ func GenericMethod(ctx context.Context, s *Store) error {
 		return err
 	})
 }
+
+// tracedTx and loggedConn embed a transaction and a connection.
+type tracedTx struct{ pgx.Tx }
+
+type loggedConn struct{ *pgx.Conn }
+
+// Not reported: BeginFunc given a type whose Begin is pgx.Tx's opens a
+// savepoint, and one whose Begin is pgx.Conn's begins on that connection.
+func BeginFuncOnEmbedded(ctx context.Context, t tracedTx, c loggedConn) error {
+	if err := pgx.BeginFunc(ctx, t, func(sp pgx.Tx) error {
+		// Not reported: a savepoint runs on the transaction's connection.
+		_, err := t.Exec(ctx, "select 1")
+		return err
+	}); err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, c, func(tx pgx.Tx) error {
+		// Not reported: the connection is the one the transaction runs on.
+		_, err := c.Exec(ctx, "select 1")
+		return err
+	})
+}
