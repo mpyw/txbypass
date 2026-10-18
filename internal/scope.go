@@ -502,28 +502,75 @@ func scopeLiteralOf(e ast.Expr, stack []ast.Node) (ast.Expr, bool) {
 	return lit, true
 }
 
-// scopeValueBound reports whether v, or a variable it is kept in, is the
-// receiver of a call given the transaction, as q in q.WithTx(tx).
+// scopeValueBound reports whether every use of v, or of a variable it is
+// kept in, is a call given the transaction, as q in q.WithTx(tx), and one
+// is. Any other use runs on what v was built from: m.Exists(name) on
+// m := &Manager{DB: db} uses db, whatever m.CreateWithTx(tx, name) does.
 func (c *checker) scopeValueBound(s txScope, v ssa.Value) bool {
+	bound, only := c.scopeOnlyBound(s, v, make(map[ssa.Value]bool))
+	return bound && only
+}
+
+// scopeOnlyBound is scopeValueBound, with the variables already read. It
+// reports whether a use of v is a call given the transaction, and whether
+// every use is one, or builds v.
+func (c *checker) scopeOnlyBound(s txScope, v ssa.Value, seen map[ssa.Value]bool) (bound, only bool) {
 	for _, ref := range *v.Referrers() {
+		b, o := false, false
 		switch ref := ref.(type) {
+		case *ssa.DebugRef:
+			o = true
 		case ssa.CallInstruction:
 			args := ref.Common().Args
-			if len(args) > 0 && args[0] == v && slices.ContainsFunc(args[1:], func(arg ssa.Value) bool {
+			b = len(args) > 0 && args[0] == v && slices.ContainsFunc(args[1:], func(arg ssa.Value) bool {
 				return slices.ContainsFunc(s.txs, c.paths.Of(arg).Within)
-			}) {
-				return true
-			}
+			})
+			o = b
+		case *ssa.FieldAddr:
+			// A field written as v is built, as &Manager{DB: db} does.
+			o = !slices.ContainsFunc(*ref.Referrers(), func(r ssa.Instruction) bool {
+				st, ok := r.(*ssa.Store)
+				return !ok || st.Addr != ref
+			})
 		case *ssa.Store:
-			if addr, ok := ref.Addr.(*ssa.Alloc); ok && ref.Val == v && slices.ContainsFunc(*addr.Referrers(), func(load ssa.Instruction) bool {
-				u, ok := load.(*ssa.UnOp)
-				return ok && c.scopeValueBound(s, u)
-			}) {
-				return true
+			if ref.Val == v {
+				b, o = c.scopeVarBound(s, ref.Addr, seen)
 			}
 		}
+		if !o {
+			return false, false
+		}
+		bound = bound || b
 	}
-	return false
+	return bound, true
+}
+
+// scopeVarBound is scopeOnlyBound for a variable that v is kept in, read
+// through its loads, and through the free variable of a literal that
+// captures it. A pointer copied back and forth between two variables leads
+// back to one.
+func (c *checker) scopeVarBound(s txScope, addr ssa.Value, seen map[ssa.Value]bool) (bound, only bool) {
+	if seen[addr] {
+		return false, true
+	}
+	seen[addr] = true
+	for _, use := range *addr.Referrers() {
+		b, o := false, false
+		switch use := use.(type) {
+		case *ssa.UnOp:
+			b, o = c.scopeOnlyBound(s, use, seen)
+		case *ssa.MakeClosure:
+			fv := use.Fn.(*ssa.Function).FreeVars[slices.Index(use.Bindings, addr)]
+			b, o = c.scopeVarBound(s, fv, seen)
+		case *ssa.Store, *ssa.DebugRef:
+			o = true
+		}
+		if !o {
+			return false, false
+		}
+		bound = bound || b
+	}
+	return bound, true
 }
 
 // scopeMetadataMethods are the methods of a pool that read or set the pool

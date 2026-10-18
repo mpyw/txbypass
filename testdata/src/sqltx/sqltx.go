@@ -345,3 +345,58 @@ func LiteralRepositoryAlone(db *sql.DB) error {
 	_ = m.Count()
 	return tx.Commit()
 }
+
+// A repository on the pool that is given the transaction once, and used on
+// its own once more, is a use.
+func LiteralRepositoryMixed(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m := &Manager{DB: db} // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	if err := m.CreateWithTx(tx, "a"); err != nil {
+		return err
+	}
+	_ = m.Count()
+	return tx.Commit()
+}
+
+// No crash: the repository copied back and forth between two variables
+// that a literal captures.
+func LiteralRepositoryCopied(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m := &Manager{DB: db}
+	orig := m
+	m = orig
+	defer func() { _, _ = m, orig }()
+	if err := m.CreateWithTx(tx, "a"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// The pool read through the literal's field, or the literal kept in memory
+// and used without the transaction, is a use.
+func LiteralRepositoryReadField(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m := &Manager{DB: db} // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	if err := m.CreateWithTx(tx, "a"); err != nil {
+		return err
+	}
+	_ = m.DB.Ping()
+	k := &Manager{DB: db} // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	defer func() { _ = k.Count() }()
+	if err := k.CreateWithTx(tx, "b"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
