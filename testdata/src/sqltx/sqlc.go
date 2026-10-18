@@ -225,7 +225,7 @@ func NewThenBoth(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	q := New(db)
+	q := New(db) // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	qtx := q.WithTx(tx)
 	if err := qtx.CreateUser(ctx, "a"); err != nil {
 		return err
