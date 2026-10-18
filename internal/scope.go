@@ -102,6 +102,13 @@ func (c *checker) scopeChainBound(s txScope, fn *ssa.Function, e ast.Expr, stack
 	// The scope's root is a block, which ends the walk up. The chain may
 	// start at a call given the handle, as sqlc's New(pool).WithTx(tx).
 	cur, i := e, len(stack)-1
+	// The handle may be a field of a literal kept and then given the
+	// transaction, as m := &Manager{DB: db} and m.CreateWithTx(tx, ...).
+	if lit, ok := scopeLiteralOf(e, stack); ok {
+		if ref, ok := c.prog.Ref(fn, lit); ok && c.scopeValueBound(s, ref.X) {
+			return true
+		}
+	}
 	if call, ok := stack[i].(*ast.CallExpr); ok && slices.Contains(call.Args, e) {
 		// The call's result may be kept, as q := New(pool), and rebound
 		// later, as q.WithTx(tx).
@@ -476,6 +483,23 @@ func (c *checker) scopeAllBound(s txScope, vals []ssa.Value, w scopeWalk) bool {
 		ahead = ahead || !back
 	}
 	return ahead
+}
+
+// scopeLiteralOf is the literal that e is a field or an element of, with the
+// & taken of it when there is one.
+func scopeLiteralOf(e ast.Expr, stack []ast.Node) (ast.Expr, bool) {
+	i := len(stack) - 1
+	if kv, ok := stack[i].(*ast.KeyValueExpr); ok && kv.Value == e {
+		i--
+	}
+	lit, ok := stack[i].(*ast.CompositeLit)
+	if !ok {
+		return nil, false
+	}
+	if addr, ok := stack[i-1].(*ast.UnaryExpr); ok && addr.Op == token.AND {
+		return addr, true
+	}
+	return lit, true
 }
 
 // scopeValueBound reports whether v, or a variable it is kept in, is the

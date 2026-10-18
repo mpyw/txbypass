@@ -305,3 +305,43 @@ func (s *PoolStore) BeginAudit() error {
 	auditPool(s.db) // want `^s\.db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
+
+// Manager is a repository built with a literal.
+type Manager struct{ DB *sql.DB }
+
+func (m *Manager) CreateWithTx(tx *sql.Tx, name string) error {
+	_, err := tx.Exec("INSERT", name)
+	return err
+}
+
+func (m *Manager) Count() int { return 0 }
+
+// Not reported: the repository built on the pool is given the transaction
+// before it runs, as one a constructor builds is.
+func LiteralRepository(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m := &Manager{DB: db}
+	if err := m.CreateWithTx(tx, "a"); err != nil {
+		return err
+	}
+	if err := (&Manager{DB: db}).CreateWithTx(tx, "b"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// A repository on the pool that is never given the transaction is a use.
+func LiteralRepositoryAlone(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m := &Manager{DB: db} // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	_ = m.Count()
+	return tx.Commit()
+}
