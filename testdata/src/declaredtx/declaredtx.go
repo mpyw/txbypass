@@ -72,6 +72,43 @@ func Begun(ctx context.Context, db DB) error {
 	return err
 }
 
+// Conn begins a transaction that is a Conn too, as gorm's DB does.
+type Conn struct{}
+
+func (*Conn) Exec(ctx context.Context, query string) error { return nil }
+
+// Start begins a transaction. It returns its receiver's type, yet gives
+// the transaction, not the receiver.
+//
+//txbypass:begins
+func (c *Conn) Start() *Conn { return c } // want Start:`^begins\[p0\]$`
+
+//txbypass:closes
+func (*Conn) Finish() error { return nil } // want Finish:`^closes\[0\]$`
+
+func Started(ctx context.Context, db *Conn, pool *declaredlib.Pool) error {
+	tx := db.Start()
+	tx.Exec(ctx, "in")
+	db.Exec(ctx, "q") // want `^db bypasses the transaction opened with Start; use tx instead \[outer-handle\]$`
+	if err := tx.Finish(); err != nil {
+		return err
+	}
+	lib := pool.Conn()
+	ltx := lib.Begin()
+	ltx.Exec(ctx, "in")
+	lib.Exec(ctx, "q") // want `^lib bypasses the transaction opened with Begin; use ltx instead \[outer-handle\]$`
+	if err := ltx.End(); err != nil {
+		return err
+	}
+	s, err := pool.Open(ctx)
+	if err != nil {
+		return err
+	}
+	// Using binds the pool to the session, so it is not the pool.
+	pool.Using(s).Exec(ctx, "in")
+	return s.End()
+}
+
 // ===== A declaration wins over the body =====
 
 type Store struct {

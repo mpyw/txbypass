@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
+
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // TestFreeVarOfNeverMadeLiteral reads the free variable of a literal that is
@@ -35,7 +37,7 @@ func f(x *int) {
 	}
 	f := pkg.Func("f")
 	fv := f.AnonFuncs[0].FreeVars[0]
-	ps := NewPaths("")
+	ps := NewPaths("", txcall.IsBeginFunc, txcall.Holds)
 	if !ps.Of(fv).Equal(ps.Of(fv)) {
 		t.Error("the free variable is not the same handle as itself")
 	}

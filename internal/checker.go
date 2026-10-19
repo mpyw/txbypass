@@ -114,6 +114,15 @@ func (c *checker) holds(t types.Type) bool {
 	return found
 }
 
+// begins reports whether fn is a begin: one of a library, one a directive
+// or a flag declares, or a helper of another package. A begin that returns
+// a value of its receiver's type gives the transaction, not the receiver.
+//
+//declscope:shared // run.go hands it to handle
+func (c *checker) begins(fn *types.Func) bool {
+	return txcall.IsBeginFunc(fn) || c.declares(directive.Begins, fn) || fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
+}
+
 // declares reports whether fn is declared as kind: by a directive of the
 // package, or by a flag.
 //

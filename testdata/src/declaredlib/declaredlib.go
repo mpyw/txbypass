@@ -40,5 +40,28 @@ func (*Pool) Exec(ctx context.Context, query string) error { return nil }
 //txbypass:begins
 func (*Pool) Open(ctx context.Context) (*Session, error) { return nil, nil } // want Open:`^begins\[p0\]$`
 
+// Using binds the pool to s, as a repository's Using(tx) does: a session
+// is a transaction, by its declared end.
+func (p *Pool) Using(s *Session) *Pool { return p }
+
 // EndSession ends s through its declared end, so it ends s too.
 func EndSession(s *Session) error { return s.End() } // want EndSession:`^closes\[0\]$`
+
+// Conn begins a transaction that is a Conn too, as gorm's DB does.
+type Conn struct{}
+
+// Conn gives a connection of the pool.
+func (*Pool) Conn() *Conn { return nil }
+
+// Exec runs a statement on the connection.
+func (*Conn) Exec(ctx context.Context, query string) error { return nil }
+
+// Begin begins a transaction on the connection.
+//
+//txbypass:begins
+func (c *Conn) Begin() *Conn { return c } // want Begin:`^begins\[p0\]$`
+
+// End ends the transaction.
+//
+//txbypass:closes
+func (*Conn) End() error { return nil } // want End:`^closes\[0\]$`

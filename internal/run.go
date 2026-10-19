@@ -45,7 +45,7 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	c.runDeclarations()
 	if runNeedsProgram(pass, c.declares, c.holds) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
-		c.paths = handle.NewPaths(runModule(pass.Module))
+		c.paths = handle.NewPaths(runModule(pass.Module), c.begins, c.holds)
 		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.Closes, fn) }, c.holds)
 		c.closer.Export(c.prog)
 		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declares, c.holds)
