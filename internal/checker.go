@@ -10,6 +10,7 @@ import (
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/rule"
 )
@@ -27,6 +28,9 @@ type checker struct {
 	closer *closer.Closer
 	// paths says which handle each SSA value is.
 	paths *handle.Paths
+	// helpers says which calls are invokers: a library's, and
+	// the helpers of the project.
+	helpers *helper.Helpers
 	//declscope:private
 	cfg Config
 	// generated holds the files marked as generated, by name. Nothing is

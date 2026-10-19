@@ -106,7 +106,7 @@ func BeginFuncOnTx(ctx context.Context, tx pgx.Tx) error {
 // Store begins, so pgx's BeginFunc takes it, and has a generic method.
 type Store struct{ pool *pgxpool.Pool }
 
-func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) { return s.pool.Begin(ctx) }
+func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) { return s.pool.Begin(ctx) } // want Begin:`^begins\[p0\.pool\]$`
 
 func (s *Store) Get[T any](ctx context.Context, id int) (T, error) {
 	var zero T

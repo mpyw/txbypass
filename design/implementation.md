@@ -29,6 +29,7 @@ internal/txcall/         the calls that open a transaction: the tables, and ent'
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/closer/         which instructions may end a transaction, and the fact of helpers
+internal/helper/         the helpers of the project that are invokers or begins, and their facts
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -43,6 +44,7 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | `program` | Builds the SSA form, and maps syntax to it. It knows nothing of handles |
 | `handle` | Reads SSA values only |
 | `closer` | Reads SSA instructions and facts. It knows nothing of rules |
+| `helper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
 | `region` | Reads the SSA control flow, and asks `closer` what ends a transaction |
 | `spell` | Reads syntax and types only |
 
@@ -56,7 +58,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | --- | --- |
 | No `//declscope:core` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:shared`, with the file that calls it | `run.go` calls into each rule's file |
-| `scope.go` holds what both rules read a scope with | Each name carries `scope`: `txScope`, `scopeOuter`, `reportScopeUses`, `scopeRuns` |
+| `scope.go` holds what both rules read a scope with | Each name carries `scope`: `txScope`, `reportScopeUses`, `scopeRuns` |
 
 ## The SSA form
 
@@ -134,6 +136,28 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
 | The core type is read from the whole type set | A constraint may embed an interface that holds the terms, as `Entity` embeds `Keyed`. An interface allows what all its embedded types allow, and a union what any term allows |
+
+## Helpers that are invokers or begins
+
+`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
+
+| Decision | Why |
+| --- | --- |
+| Read the body, with no directive | A project's `withTx` is written once and called everywhere. Reading it costs one pass. A directive would have to say which field is the handle |
+| The outer handle is a parameter, and the fields selected from it, by name | A fact is gob-encoded, so it cannot hold a `*types.Var`. The caller finds the fields again in the type of its argument |
+| Every call of the callback must be inside a transaction it is given | A helper that may run the callback outside makes every use inside a false report on that path. A miss is better than a false report |
+| A callback given anywhere else is no helper | It may run where this analysis does not follow it |
+| A helper that calls itself reads as no helper there, and the answer is kept | A ring of helpers is rare. In a ring of two, the one read second may see the first as no helper, so the answer may depend on the order. A fixpoint was not added, since it would only find more helpers in code that is rare |
+| Take the first parameter that qualifies | Two callbacks run in one transaction are rare, and the first is the usual one |
+| A helper that returns a transaction is a begin of its own kind, with the fact `begins` | The region is read where the result is kept, as for a library's begin. The helper's error result is the begin's error, so `if err != nil` leaves the region as it does after `BeginTx` |
+| Every return of a begin helper gives `nil` or a transaction still open there | A helper that commits before it returns, or hands back one it was given, would open a region on a closed or foreign transaction |
+| A begin helper's result may be a load of a named result, followed back through its stores | A named result that a deferred literal reads lives in memory. Its return loads each result, stores it back, runs the deferred calls, and loads it again. The region's error check follows the same loads, and so does the check for a returned `nil` |
+| A deferred call given the transaction makes a begin helper no helper | The region ends nothing where a deferred call is written. A rollback deferred in the helper runs before the caller reads the transaction |
+| An error whose address is handed to a call or stored makes a begin helper no helper | The walk back to the last store sees only stores of the function. A call given `&err` may set it after the begin succeeded |
+| The return in the block that a recovered panic reaches takes no part | It returns whatever the named results hold. A path through a panic takes no part in a region either |
+| A literal's parameter is a helper's transaction only when the literal is given as the helper's callback | A helper may take two literals. The other one may be given the handle itself, so a transaction opened on it is no savepoint |
+| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
+| `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 
 ## Scopes that build or rebind
 

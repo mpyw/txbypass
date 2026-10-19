@@ -115,6 +115,53 @@ Only these open a savepoint, or reuse the transaction, when called on one. The o
 
 The `Tx` of upper/db on a transaction begins another transaction on the pool. The `TxPipelined` of go-redis queues commands, and a command on the handle runs at once, before the queued ones. A use of the outer transaction in either is reported.
 
+### Helpers that are invokers
+
+A function of the project can open a transaction and run a callback it is given inside it. Such a helper is an invoker too. It is read from its body, so it needs no configuration:
+
+```go
+func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+```
+
+`s.withTx(ctx, func(tx *sql.Tx) error { ... })` opens a scope on `s.db`. A use of `s.db` inside the callback is reported. A use of `s.audit` is not.
+
+A function is a helper when all of these hold:
+
+| Condition | Why |
+| --- | --- |
+| It is a declared function or method, and one of its parameters is of a function type | That parameter is the callback |
+| It opens a transaction with an invoker, or a helper, and calls the callback in that invoker's callback. Or it calls the callback in the region of a begin | The callback runs inside the transaction |
+| Each call of the callback is given the transaction, at the same parameter | That parameter is the callback's transaction |
+| The transaction is opened on a parameter, or on a field selected from one. Every call agrees on which | That handle is the outer one. A package-level variable is no parameter |
+| The callback is only called, or compared with `nil`. It is not stored, passed on, or called by `go` or `defer` | It might then run outside the transaction. A guard such as `if fn == nil { return errNoFunc }` hands it nowhere |
+| No call of the callback runs outside a transaction | A helper that reuses a transaction it is given, as `if cur != nil { return fn(cur) }`, also runs the callback outside the one it opens |
+
+The first parameter of a function type that meets them is the callback. A second callback that runs inside the transaction too is not read. A helper that calls itself is read as no helper at its own call.
+
+A helper of another package is known by the fact `invokes[pO.f, pC(T)]`, which the analysis of its package exports. `pO` is the parameter that holds the handle, and `.f` the fields selected from it. `pC` is the callback, and `T` the callback's parameter that is given the transaction. The receiver of a method is parameter 0.
+
+At the call, the scope is read as an invoker's is. The message names the helper as it names an invoker: a method by its name, a function by its package's name and its own. A helper may open with an invoker or a begin that opens a [savepoint](#savepoints) on a transaction. Called on a transaction, such a helper opens a savepoint too, and its scope is not read. A call is not read when:
+
+| Case | Why |
+| --- | --- |
+| The callback is not a function literal | Its body is not read |
+| The callback is the receiver, or the handle is the receiver of a method expression | The selector names no handle, or no literal |
+| The arguments are one call with several results | There is no function literal to read |
+| The handle given is one dedicated connection, or a transaction that holds one, as pgx's `Tx` | See [Dedicated connections](#dedicated-connections) |
+
+A transaction that a helper gives its callback, or that a helper returns, is a transaction for [Savepoints](#savepoints) too.
+
+A helper may begin its transaction with a [helper that is a begin](#helpers-that-are-begins). A helper that carries the transaction in a context is not read yet.
+
 ## Begins
 
 A begin is a method recognized as an invoker is. It returns the transaction first, and an error second when it may fail.
@@ -156,6 +203,34 @@ A begin is read where its result is kept in a variable:
 | `if tx, err := db.Begin(); err == nil { ... }` | Yes |
 | `_, err := db.Begin()` | No. No transaction is kept |
 | `r.tx, err = db.Begin()` | No. A field is not followed |
+
+### Helpers that are begins
+
+A function of the project that returns a transaction it begins is a begin too. It is read from its body:
+
+```go
+func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	return tx, nil
+}
+```
+
+`tx, err := s.begin(ctx)` opens a region on `s.db`, as `s.db.BeginTx` would. A function is such a helper when all of these hold:
+
+| Condition | Why |
+| --- | --- |
+| It is a declared function or method. Its first result has a method that ends a transaction. It has no other result, or a second of type `error` | The results read as a begin's do |
+| Each return gives `nil`, or a transaction it began with a begin or a helper, still open there | A transaction committed before the return, or one it was given, is not new |
+| A return of `nil` gives an error beside it that is not the constant `nil` | A helper that may begin nothing, with no error, gives the caller a begin that did not happen |
+| A function literal sets a named error result only under `err != nil`, and hands it nowhere. The address of the error is not given to a call, or stored, as `defer annotate(&err)` or `check(&err)` does | A deferred literal that wraps the error keeps a `nil` error `nil`. One that sets it otherwise may return an open transaction beside an error |
+| No deferred call is given the transaction, as `defer tx.Rollback()` is | It runs after the return, and may end the transaction before the caller uses it |
+| A return that gives the transaction gives `nil` or the begin's own error beside it. For gorm's `Begin`, which has no error result, that is `tx.Error` | The caller reads the error as a failed begin. A transaction returned with another error stays open where the caller reads none |
+| The transactions are begun on a parameter, or on a field selected from one, and every return agrees on which | That handle is the outer one |
+
+A transaction wrapped in a struct of the project is not read. A helper of another package is known by the fact `begins[pO.f]`, spelled as `invokes` spells its handle. At the call, a method expression or arguments of one call with several results are not read.
 
 ## Handles
 
@@ -314,7 +389,7 @@ Every report of a rule has one shape. A report about a directive has its own, li
 
 | Part | Spelled as |
 | --- | --- |
-| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields at the end. A variable of another package is qualified by its package's name |
+| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields, as the source leaves them out. `db.writer`, promoted from an embedded `dbbase`, is spelled `db.writer`. An embedded field stays when a field of the same name shadows the one it holds: `o.Inner.db` stays `o.Inner.db` when `o` has a `db` of its own. A variable of another package is qualified by its package's name |
 | `<call>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
 | `<instead>` | The transaction's variable or parameter. For a handle rebound with `WithTx`, the variable its result is assigned to, or the call as written |
 
@@ -354,7 +429,8 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
-| A function literal given to a transaction helper of the project, as `s.withTx(ctx, func(tx *sql.Tx) error { ... })` | Only a call of a known invoker opens a scope. Inside the helper, the callback is a function value, whose body is not read |
+| A function literal given to a helper of the project that is not read as one. A helper that opens on a package-level variable is one |
+| A helper method with a pointer receiver, called on a struct held by value | The call takes the variable's address. A method of the module given an address may change what it holds, so the variable is no known handle after it | See [Helpers that are invokers](#helpers-that-are-invokers) |
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |

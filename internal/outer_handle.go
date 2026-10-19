@@ -20,8 +20,8 @@ import (
 //
 //declscope:shared // run.go calls it for every invoker
 func (c *checker) checkOuterHandle(o txcall.Invoker, fn *ssa.Function) {
-	outer, ok := c.scopeOuter(o, fn)
-	if !ok || o.Nests && outerHandleSavepoint(outer) {
+	outer, ok := c.helpers.Outer(fn, o.Outer, o.Receiver, o.Fields)
+	if !ok || o.Nests && c.outerHandleSavepoint(outer) {
 		return
 	}
 	lit := c.prog.Func(o.Callback)
@@ -61,7 +61,7 @@ func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) 
 				return false
 			}
 		}
-		b, ok := txcall.BeginOf(c.pass.TypesInfo, n)
+		b, ok := c.helpers.BeginOf(n)
 		if !ok {
 			return true
 		}
@@ -77,34 +77,12 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 		// The begin is in code that no path reaches. It never runs.
 		return
 	}
-	var tx, err ssa.Value = call, nil
-	for _, ref := range *call.Referrers() {
-		if ex, ok := ref.(*ssa.Extract); ok {
-			switch ex.Index {
-			case 0:
-				tx = ex
-			case 1:
-				err = ex
-			}
-		}
-	}
-	var addr *ssa.Alloc
-	for _, ref := range *tx.Referrers() {
-		if st, ok := ref.(*ssa.Store); ok {
-			addr, _ = st.Addr.(*ssa.Alloc)
-		}
-	}
-	r := region.New(call, tx, err, addr, c.closer, c.paths)
-	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: []handle.Path{c.paths.Of(tx)}}
-	if addr != nil {
-		s.txs = append(s.txs, c.paths.Of(addr))
-	}
-	// The receiver of a method call is always evaluated as a value.
-	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
-	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
-	if b.Nests && outerHandleSavepoint(outer) {
+	outer, ok := c.helpers.Outer(fn, b.Outer, b.Receiver, b.Fields)
+	if !ok || b.Nests && c.outerHandleSavepoint(outer) {
 		return
 	}
+	r := region.Begun(call, c.closer, c.paths)
+	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: r.Txs()}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
 }
@@ -115,25 +93,26 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 // transaction's connection, and so does a statement on the transaction:
 // it bypasses nothing. outer is a transaction when it is a begin's result,
 // as gorm's tx := db.Begin(), or the transaction a callback is given, as
-// gorm's tx in db.Transaction(func(tx *gorm.DB) error { ... }).
-func outerHandleSavepoint(outer handle.Path) bool {
+// gorm's tx in db.Transaction(func(tx *gorm.DB) error { ... }). A helper
+// of the project that begins or invokes gives a transaction too.
+func (c *checker) outerHandleSavepoint(outer handle.Path) bool {
 	switch root := outer.Root().(type) {
 	case *ssa.Extract:
-		return root.Index == 0 && outerHandleBegun(root.Tuple)
+		return root.Index == 0 && c.outerHandleBegun(root.Tuple)
 	case *ssa.Call:
-		return outerHandleBegun(root)
+		return c.outerHandleBegun(root)
 	case *ssa.Parameter:
-		return scopeGiven(root, txcall.CallbackTx)
+		return scopeGiven(root, c.helpers.GivesTx)
 	}
 	return false
 }
 
 // outerHandleBegun reports whether v is the call of a begin.
-func outerHandleBegun(v ssa.Value) bool {
+func (c *checker) outerHandleBegun(v ssa.Value) bool {
 	call, ok := v.(*ssa.Call)
 	if !ok {
 		return false
 	}
 	fn, ok := scopeCallee(call.Common())
-	return ok && txcall.IsBeginFunc(fn)
+	return ok && c.helpers.IsBegin(fn)
 }

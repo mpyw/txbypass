@@ -70,12 +70,12 @@ type Region struct {
 	bodies map[*ssa.Function]bool
 }
 
-// New computes the region of the transaction that begin returns, in begin's
+// build computes the region of the transaction that begin returns, in begin's
 // function. tx is the transaction's value. err is the begin's error, or
 // nil. A transaction kept in a variable in memory is also every load of it,
 // so its address is given as txAddr, or nil. Handles are read through
 // paths.
-func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer, paths *handle.Paths) *Region {
+func build(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer, paths *handle.Paths) *Region {
 	r := &Region{
 		begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{paths.Of(tx)}, err: err, closer: c,
 		entry: make(map[*ssa.BasicBlock]state), ends: make(map[ssa.Instruction]bool), at: make(map[ssa.Instruction]state),
@@ -86,6 +86,53 @@ func New(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer
 	}
 	r.solve(begin.Parent(), closed)
 	return r
+}
+
+// Begun computes the region of the transaction that begin returns. The
+// transaction is the begin's first result, and its error the second. A
+// transaction kept in a variable that a literal captures lives in memory, at
+// the address it is stored to.
+func Begun(begin *ssa.Call, c *closer.Closer, paths *handle.Paths) *Region {
+	var tx, err ssa.Value = begin, nil
+	for _, ref := range *begin.Referrers() {
+		if ex, ok := ref.(*ssa.Extract); ok {
+			switch ex.Index {
+			case 0:
+				tx = ex
+			case 1:
+				err = ex
+			}
+		}
+	}
+	var addr *ssa.Alloc
+	for _, ref := range *tx.Referrers() {
+		// A store to a field, after the variable's own, does not forget the
+		// variable.
+		if st, ok := ref.(*ssa.Store); ok {
+			if a, ok := st.Addr.(*ssa.Alloc); ok {
+				addr = a
+			}
+		}
+	}
+	return build(begin, tx, err, addr, c, paths)
+}
+
+// Txs are the values of the transaction: the begin's, and the variable in
+// memory that holds it, if any.
+func (r *Region) Txs() []handle.Path {
+	return r.txs
+}
+
+// GivesErr reports whether v, returned beside the transaction, is the
+// begin's error, or nil. For a begin with no error result, as gorm's Begin,
+// the begin's error is the transaction's Error field. A named result that a
+// deferred literal reads lives in memory, so v may be a load of it, and
+// return tx, nil stores the nil there first.
+func (r *Region) GivesErr(v ssa.Value) bool {
+	return Stored(v, func(x ssa.Value) bool {
+		c, ok := x.(*ssa.Const)
+		return ok && c.IsNil() || r.isBeginErr(x)
+	})
 }
 
 // solve computes the state before each instruction of fn, whose entry is in
@@ -238,11 +285,32 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 // holdsErr reports whether v is the begin's error, or a load of a variable
 // in memory that last stored it on every path.
 func (r *Region) holdsErr(v ssa.Value) bool {
-	if r.isBeginErr(v) {
+	return Stored(v, r.isBeginErr)
+}
+
+// Stored reports whether v is a value that is accepts, or a load of a
+// variable in memory that last stored such a value on every path. A value
+// stored may itself be such a load: a return of named results, before
+// deferred calls, loads each result and stores it back.
+func Stored(v ssa.Value, is func(ssa.Value) bool) bool {
+	return loaded(v, is, make(map[*ssa.UnOp]bool))
+}
+
+// loaded is Stored. A load met again around a loop leaves the answer to the
+// other paths.
+func loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp]bool) bool {
+	if is(v) {
 		return true
 	}
 	load, ok := v.(*ssa.UnOp)
-	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.isBeginErr, make(map[*ssa.BasicBlock]bool))
+	if !ok || load.Op != token.MUL {
+		return false
+	}
+	if seen[load] {
+		return true
+	}
+	seen[load] = true
+	return lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
 }
 
 // isBeginErr reports whether v is the begin's error itself: its error

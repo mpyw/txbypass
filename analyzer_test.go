@@ -2,11 +2,14 @@ package txbypass_test
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
 
 	"github.com/mpyw/txbypass"
+	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/helper"
 )
 
 // No test in this file may call t.Parallel: the flags live on the global
@@ -32,6 +35,7 @@ func TestAnalyzer(t *testing.T) {
 		"mongotx",
 		"reltx",
 		"trmtx",
+		"helpertx",
 		"directives",
 		"generated",
 	)
@@ -101,4 +105,23 @@ func setFlag(t *testing.T, name, value string) func() {
 	}
 	t.Cleanup(restore)
 	return restore
+}
+
+// TestFactTypes pins every fact the analyzer exports. go vet encodes facts
+// by their registered types, and panics on one left out. analysistest keeps
+// facts in memory, so it does not see a type missing from the list.
+func TestFactTypes(t *testing.T) {
+	want := []any{new(closer.Fact), new(helper.Invokes), new(helper.Begins)}
+	got := make(map[reflect.Type]bool)
+	for _, f := range txbypass.Analyzer.FactTypes {
+		got[reflect.TypeOf(f)] = true
+	}
+	for _, f := range want {
+		if !got[reflect.TypeOf(f)] {
+			t.Errorf("FactTypes lacks %T", f)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("FactTypes has %d types, want %d", len(got), len(want))
+	}
 }

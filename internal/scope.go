@@ -15,7 +15,6 @@ import (
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
 	"github.com/mpyw/txbypass/internal/spell"
-	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // txScope is the code that runs inside one transaction: the body of a
@@ -45,25 +44,6 @@ type txScope struct {
 	// transaction, so that a use counts only when it runs. See
 	// txcall.Invoker.Builds.
 	builds bool
-}
-
-// scopeOuter is the handle o opens its transaction on, in fn. For a method,
-// that is its receiver, through the embedded fields its promotion passes.
-//
-//declscope:shared // both rules find the handle or the context outside the scope through it
-func (c *checker) scopeOuter(o txcall.Invoker, fn *ssa.Function) (handle.Path, bool) {
-	expr := o.Outer
-	var promoted []*types.Var
-	if o.Receiver {
-		sel := o.Outer.(*ast.SelectorExpr)
-		expr = sel.X
-		promoted = handle.Promoted(c.pass.TypesInfo.Selections[sel])
-	}
-	ref, ok := c.prog.Ref(fn, expr)
-	if !ok {
-		return handle.Path{}, false
-	}
-	return c.paths.Of(ref.X).With(promoted), true
 }
 
 // scopeBindsBoth reports whether e is an argument of a call, or a field of
@@ -1202,10 +1182,12 @@ func scopePrepared(t types.Type) bool {
 }
 
 // scopeGiven reports whether p is the parameter of a callback that an
-// invoker runs, which takes reports of the invoker and p's index.
+// invoker runs. takes reports it of the invoker, the parameter of the
+// invoker that the literal is given to, where the receiver of a method is
+// parameter 0, and p's index.
 //
 //declscope:shared // both rules ask whether a value is what an invoker gives its callback
-func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
+func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) bool {
 	lit := p.Parent()
 	if lit.Parent() == nil {
 		// A declared function is no callback this analysis reads.
@@ -1215,20 +1197,39 @@ func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
 	made, _ := program.Creation(lit)
 	i := slices.Index(lit.Params, p)
 	var calls []ssa.CallInstruction
+	values := []ssa.Value{lit}
 	switch made := made.(type) {
 	case ssa.CallInstruction:
 		calls = append(calls, made)
-	case *ssa.MakeClosure:
-		for _, ref := range *made.Referrers() {
-			if call, ok := ref.(ssa.CallInstruction); ok {
-				calls = append(calls, call)
-			}
-		}
+	case *ssa.MakeClosure, *ssa.ChangeType:
+		values, calls = scopePassed(made.(ssa.Value), values, nil)
 	}
 	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
 		fn, ok := scopeCallee(call.Common())
-		return ok && takes(fn, i)
+		arg := slices.IndexFunc(call.Common().Args, func(a ssa.Value) bool { return slices.Contains(values, a) })
+		if call.Common().IsInvoke() && arg >= 0 {
+			// The receiver of an interface method is not among the
+			// arguments.
+			arg++
+		}
+		return ok && takes(fn, arg, i)
 	})
+}
+
+// scopePassed adds v to values, and the calls it is given to to calls. A
+// literal given as a named function type, as a func(*gorm.DB) error given
+// as a HandlerFunc, is converted first, and the conversion is given instead.
+func scopePassed(v ssa.Value, values []ssa.Value, calls []ssa.CallInstruction) ([]ssa.Value, []ssa.CallInstruction) {
+	values = append(values, v)
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case ssa.CallInstruction:
+			calls = append(calls, ref)
+		case *ssa.ChangeType:
+			values, calls = scopePassed(ref, values, calls)
+		}
+	}
+	return values, calls
 }
 
 // scopeCallee is the function, or the interface method, that call calls.

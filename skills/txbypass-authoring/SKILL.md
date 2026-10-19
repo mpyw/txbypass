@@ -90,11 +90,11 @@ A clean run does not prove that no statement bypasses a transaction:
 | Not seen | Example |
 | --- | --- |
 | A callback that is not a function literal | `db.Transaction(r.place)` |
-| A callback given to a transaction helper of your own | `s.withTx(ctx, func(tx *sql.Tx) error { ... })` |
+| A callback given to a transaction helper of your own that may run it outside the transaction, or keeps it | `s.reuse(ctx, cur, func(tx *sql.Tx) error { ... })`, where `reuse` runs `fn(cur)` when `cur` is set |
 | A function the transaction's code calls | `r.audit(ctx)`, where `audit` uses `r.db` |
 | A transaction kept in a field | `r.tx, err = db.Begin()` |
 | A transaction stored, or sent away | `h.tx = tx`, `ch <- tx` |
 | A call given the transaction too | `audit(db, tx)`, `newStore(s.db, tx)` |
-| A library or a call txbypass does not know | A begin helper of your own, sqlboiler's global executor |
+| A library or a call txbypass does not know | A begin helper of your own that wraps the transaction in a struct, sqlboiler's global executor |
 
 Write such code as if txbypass read it.
