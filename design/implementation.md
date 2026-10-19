@@ -151,6 +151,9 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Take the first parameter that qualifies | Two callbacks run in one transaction are rare, and the first is the usual one |
 | A helper that returns a transaction is a begin of its own kind, with the fact `begins` | The region is read where the result is kept, as for a library's begin. The helper's error result is the begin's error, so `if err != nil` leaves the region as it does after `BeginTx` |
 | Every return of a begin helper gives `nil` or a transaction still open there | A helper that commits before it returns, or hands back one it was given, would open a region on a closed or foreign transaction |
+| A begin helper's result may be a load of a named result, followed back through its stores | A named result that a deferred literal reads lives in memory. Its return loads each result, stores it back, runs the deferred calls, and loads it again. The region's error check follows the same loads |
+| The return in the block that a recovered panic reaches takes no part | It returns whatever the named results hold. A path through a panic takes no part in a region either |
+| A literal's parameter is a helper's transaction only when the literal is given as the helper's callback | A helper may take two literals. The other one may be given the handle itself, so a transaction opened on it is no savepoint |
 | A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
 | `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 

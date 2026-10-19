@@ -258,3 +258,26 @@ func Savepoint(db *gorm.DB, v any) error {
 		})
 	})
 }
+
+// run runs fn in a transaction on db, and onErr on db when it fails.
+func run(db *gorm.DB, fn func(*gorm.DB) error, onErr func(*gorm.DB)) error { // want run:`^invokes\[p0, p1\(0\)\]$`
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return fn(tx)
+	}); err != nil {
+		onErr(db)
+		return err
+	}
+	return nil
+}
+
+// onErr is given the handle, not a transaction, so a transaction opened on
+// it is no savepoint.
+func OnErr(db *gorm.DB, v any) error {
+	return run(db, func(tx *gorm.DB) error {
+		return tx.Create(v).Error
+	}, func(other *gorm.DB) {
+		other.Transaction(func(sp *gorm.DB) error {
+			return other.Create(v).Error // want `^other bypasses the transaction opened with Transaction; use sp instead \[outer-handle\]$`
+		})
+	})
+}

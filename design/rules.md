@@ -224,6 +224,7 @@ func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
 | --- | --- |
 | It is a declared function or method. Its first result has a method that ends a transaction. It has no other result, or a second of type `error` | The results read as a begin's do |
 | Each return gives `nil`, or a transaction it began with a begin or a helper, still open there | A transaction committed before the return, or one it was given, is not new |
+| A return that gives the transaction gives `nil` or the begin's own error beside it | The caller reads the error as a failed begin. A transaction returned with another error stays open where the caller reads none |
 | The transactions are begun on a parameter, or on a field selected from one, and every return agrees on which | That handle is the outer one |
 
 A transaction wrapped in a struct of the project is not read. A helper of another package is known by the fact `begins[pO.f]`, spelled as `invokes` spells its handle. At the call, a method expression or arguments of one call with several results are not read.

@@ -170,7 +170,48 @@ func (s *Store) noError(ctx context.Context) (*sql.Tx, int) {
 	return tx, 0
 }
 
+// setUp returns the transaction it began with an error of its own, which
+// leaves the transaction open where the caller reads a failed begin.
+func (s *Store) setUp(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, "set"); err != nil {
+		return tx, errors.New("set up")
+	}
+	return tx, nil
+}
+
+// beginWith takes the handle first, so that one call with several results
+// fills it.
+func beginWith(db *sql.DB, ctx context.Context) (*sql.Tx, error) { // want beginWith:`^begins\[p0\]$`
+	return db.BeginTx(ctx, nil)
+}
+
+func withCtx(db *sql.DB) (*sql.DB, context.Context) {
+	return db, context.Background()
+}
+
+// beginOn takes the handle after the receiver.
+func (s *Store) beginOn(ctx context.Context, db *sql.DB) (*sql.Tx, error) { // want beginOn:`^begins\[p2\]$`
+	return db.BeginTx(ctx, nil)
+}
+
 func (s *Store) NotBegun(ctx context.Context) error {
+	if setUp, err := s.setUp(ctx); err == nil {
+		s.db.ExecContext(ctx, "q")
+		setUp.Commit()
+	}
+	// The arguments are one call with several results.
+	several, _ := beginWith(withCtx(s.db))
+	s.db.ExecContext(ctx, "q")
+	several.Commit()
+	// A method expression takes its receiver as an argument, and its other
+	// arguments one place off.
+	onExpr, _ := (*Store).beginOn(s, ctx, s.db)
+	s.db.ExecContext(ctx, "q")
+	onExpr.Commit()
 	committed, _ := s.committed(ctx)
 	s.db.ExecContext(ctx, "q")
 	committed.Commit()
@@ -243,4 +284,53 @@ func (s *Store) RolledBack(ctx context.Context) error {
 	}
 	_, err = s.db.ExecContext(ctx, "q")
 	return errors.Join(err, tx.Commit())
+}
+
+// beginNamed returns through named results, which a deferred literal reads.
+func (s *Store) beginNamed(ctx context.Context) (tx *sql.Tx, err error) { // want beginNamed:`^begins\[p0\.db\]$`
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("begin: %w", err)
+		}
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
+
+// beginBare returns through named results, with a bare return.
+func (s *Store) beginBare(ctx context.Context) (tx *sql.Tx, err error) { // want beginBare:`^begins\[p0\.db\]$`
+	tx, err = s.db.BeginTx(ctx, nil)
+	return
+}
+
+func (s *Store) NamedResults(ctx context.Context) error {
+	tx, err := s.beginNamed(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q") // want `^s\.db bypasses the transaction opened with beginNamed; use tx instead \[outer-handle\]$`
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	bare, err := s.beginBare(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q") // want `^s\.db bypasses the transaction opened with beginBare; use bare instead \[outer-handle\]$`
+	return bare.Commit()
+}
+
+// beginLoop copies its error around a loop before it returns it.
+func (s *Store) beginLoop(ctx context.Context, n int) (tx *sql.Tx, err error) { // want beginLoop:`^begins\[p0\.db\]$`
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("begin: %w", err)
+		}
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	for range n {
+		e := err
+		err = e
+	}
+	return tx, err
 }

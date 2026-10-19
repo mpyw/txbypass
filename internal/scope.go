@@ -1182,10 +1182,12 @@ func scopePrepared(t types.Type) bool {
 }
 
 // scopeGiven reports whether p is the parameter of a callback that an
-// invoker runs, which takes reports of the invoker and p's index.
+// invoker runs. takes reports it of the invoker, the parameter of the
+// invoker that the literal is given to, where the receiver of a method is
+// parameter 0, and p's index.
 //
 //declscope:shared // both rules ask whether a value is what an invoker gives its callback
-func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
+func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) bool {
 	lit := p.Parent()
 	if lit.Parent() == nil {
 		// A declared function is no callback this analysis reads.
@@ -1195,10 +1197,12 @@ func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
 	made, _ := program.Creation(lit)
 	i := slices.Index(lit.Params, p)
 	var calls []ssa.CallInstruction
+	var value ssa.Value = lit
 	switch made := made.(type) {
 	case ssa.CallInstruction:
 		calls = append(calls, made)
 	case *ssa.MakeClosure:
+		value = made
 		for _, ref := range *made.Referrers() {
 			if call, ok := ref.(ssa.CallInstruction); ok {
 				calls = append(calls, call)
@@ -1207,7 +1211,13 @@ func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
 	}
 	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
 		fn, ok := scopeCallee(call.Common())
-		return ok && takes(fn, i)
+		arg := slices.Index(call.Common().Args, value)
+		if call.Common().IsInvoke() {
+			// The receiver of an interface method is not among the
+			// arguments.
+			arg++
+		}
+		return ok && takes(fn, arg, i)
 	})
 }
 

@@ -119,16 +119,24 @@ func (h *Helpers) BeginOf(n ast.Node) (txcall.Begin, bool) {
 }
 
 // GivesTx reports whether fn is an invoker whose callback takes the
-// transaction itself as its parameter i: one of a library, or a helper.
-func (h *Helpers) GivesTx(fn *types.Func, i int) bool {
+// transaction itself as its parameter i: one of a library, or a helper. A
+// helper gives it only to the callback, its parameter arg. The receiver of
+// a method is parameter 0.
+func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
+	if txcall.CallbackTx(fn, i) {
+		return true
+	}
 	s, ok := h.invokerShape(fn)
-	return txcall.CallbackTx(fn, i) || ok && s.Tx == i
+	return ok && s.Callback == arg && s.Tx == i
 }
 
 // IsBegin reports whether fn is a begin: one of a library, or a helper.
 func (h *Helpers) IsBegin(fn *types.Func) bool {
+	if txcall.IsBeginFunc(fn) {
+		return true
+	}
 	_, ok := h.beginShape(fn)
-	return txcall.IsBeginFunc(fn) || ok
+	return ok
 }
 
 // Calls reports whether call calls a helper of another package.
@@ -222,14 +230,16 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 	var shape *txcall.BeginShape
 	for _, b := range fn.Blocks {
 		ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
-		if !ok {
+		// A return after a deferred call recovers from a panic takes no
+		// part, as a path through a panic takes none in a region.
+		if !ok || b == fn.Recover {
 			continue
 		}
 		if c, ok := ret.Results[0].(*ssa.Const); ok && c.IsNil() {
 			continue
 		}
 		s, ok := h.returned(fn, ret, txs)
-		if !ok || shape != nil && (shape.Outer != s.Outer || !slices.Equal(shape.Fields, s.Fields) || shape.Nests != s.Nests) {
+		if !ok || shape != nil && !beginShapeEqual(*shape, s) {
 			return nil
 		}
 		shape = &s
@@ -243,6 +253,12 @@ func (h *Helpers) returned(fn *ssa.Function, ret *ssa.Return, txs []transaction)
 	v := h.paths.Of(ret.Results[0])
 	for _, t := range txs {
 		if t.region == nil || t.fn != fn || !t.region.Inside(ret) || !slices.ContainsFunc(t.txs, v.Equal) {
+			continue
+		}
+		// A second result tells the caller whether the begin failed. Any
+		// other error leaves the transaction open where the caller reads
+		// none.
+		if len(ret.Results) == 2 && !t.region.GivesErr(ret.Results[1]) {
 			continue
 		}
 		if outer, fields, ok := helperParam(fn, t.outer); ok {
@@ -416,6 +432,12 @@ func (h *Helpers) gives(instr ssa.Instruction, cb handle.Path) bool {
 		}
 	}
 	return false
+}
+
+// beginShapeEqual reports whether a and b, read from two returns, are one
+// shape.
+func beginShapeEqual(a, b txcall.BeginShape) bool {
+	return a.Outer == b.Outer && slices.Equal(a.Fields, b.Fields) && a.Nests == b.Nests
 }
 
 // shapeEqual reports whether a and b, read from two calls of one callback,

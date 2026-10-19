@@ -119,6 +119,17 @@ func (r *Region) Txs() []handle.Path {
 	return r.txs
 }
 
+// GivesErr reports whether v, returned beside the transaction, is the
+// begin's error, or nil. Any v does for a begin with no error. A named
+// result that a deferred literal reads lives in memory, so v may be a load
+// of it.
+func (r *Region) GivesErr(v ssa.Value) bool {
+	if c, ok := v.(*ssa.Const); r.err == nil || ok && c.IsNil() {
+		return true
+	}
+	return r.holdsErr(v)
+}
+
 // solve computes the state before each instruction of fn, whose entry is in
 // state start.
 func (r *Region) solve(fn *ssa.Function, start state) {
@@ -269,11 +280,27 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 // holdsErr reports whether v is the begin's error, or a load of a variable
 // in memory that last stored it on every path.
 func (r *Region) holdsErr(v ssa.Value) bool {
-	if r.isBeginErr(v) {
+	return r.loaded(v, r.isBeginErr, make(map[*ssa.UnOp]bool))
+}
+
+// loaded reports whether v is a value that is accepts, or a load of a
+// variable in memory that last stored such a value on every path. A value
+// stored may itself be such a load: a return of named results, before
+// deferred calls, loads each result and stores it back. A load met again
+// around a loop leaves the answer to the other paths.
+func (r *Region) loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp]bool) bool {
+	if is(v) {
 		return true
 	}
 	load, ok := v.(*ssa.UnOp)
-	return ok && load.Op == token.MUL && lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, r.isBeginErr, make(map[*ssa.BasicBlock]bool))
+	if !ok || load.Op != token.MUL {
+		return false
+	}
+	if seen[load] {
+		return true
+	}
+	seen[load] = true
+	return lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return r.loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
 }
 
 // isBeginErr reports whether v is the begin's error itself: its error

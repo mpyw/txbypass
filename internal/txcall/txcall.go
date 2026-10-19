@@ -278,20 +278,23 @@ type BeginShape struct {
 // the receiver, the expression is the selector of the call.
 func shapeOuter(info *types.Info, call *ast.CallExpr, fn *types.Func, i int, names []string) (ast.Expr, bool, []*types.Var, bool) {
 	sig := fn.Signature()
-	if sig.Recv() != nil && i == 0 {
-		// A method expression takes its receiver as an argument, and its
-		// selector names no handle.
+	if sig.Recv() != nil {
+		// A method expression takes its receiver as an argument: its
+		// selector names no handle, and its arguments are one place off.
 		sel, ok := methodSelector(info, call)
-		if !ok || len(names) == 0 && dedicated(info.TypeOf(sel.X)) {
+		if !ok || i == 0 && len(names) == 0 && dedicated(info.TypeOf(sel.X)) {
 			return nil, false, nil, false
 		}
-		return sel, true, shapeFields(sig.Recv().Type(), names), true
+		if i == 0 {
+			return sel, true, shapeFields(sig.Recv().Type(), names), true
+		}
 	}
 	e, ok := shapeArg(call, fn, i)
-	// A dedicated connection, or a transaction that holds one, given as the
-	// handle itself makes the transaction a savepoint on it, as it does for
-	// an invoker of a library.
-	if !ok || len(names) == 0 && (dedicated(info.TypeOf(e)) || dedicatedBegin(info.TypeOf(e))) {
+	// One call with several results gives no handle of its own. A dedicated
+	// connection, or a transaction that holds one, given as the handle
+	// itself makes the transaction a savepoint on it, as it does for an
+	// invoker of a library.
+	if !ok || shapeTuple(info.TypeOf(e)) || len(names) == 0 && (dedicated(info.TypeOf(e)) || dedicatedBegin(info.TypeOf(e))) {
 		return nil, false, nil, false
 	}
 	return e, false, shapeFields(shapeParam(sig, i), names), true
@@ -309,6 +312,12 @@ func shapeArg(call *ast.CallExpr, fn *types.Func, i int) (ast.Expr, bool) {
 		return nil, false
 	}
 	return call.Args[i], true
+}
+
+// shapeTuple reports whether t is the type of a call with several results.
+func shapeTuple(t types.Type) bool {
+	_, ok := t.(*types.Tuple)
+	return ok
 }
 
 // shapeParam is the type of parameter i of sig, where the receiver of a
