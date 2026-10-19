@@ -226,14 +226,32 @@ func (s *Store) Place(ctx context.Context) error {
 
 The helper may open the transaction with a begin, as above, or with the callback of an invoker or of another helper.
 
+A helper that returns the transaction it begins is read as a begin:
+
+```go
+func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
+	return s.db.BeginTx(ctx, nil)
+}
+
+tx, err := s.begin(ctx)
+if err != nil {
+	return err
+}
+defer tx.Rollback()
+// s.db bypasses the transaction opened with begin;
+// use tx instead
+s.db.ExecContext(ctx, audit)
+```
+
 | A helper is not read when | Why |
 | --- | --- |
 | It may call the callback outside the transaction, as `if cur != nil { return fn(cur) }` | Every use inside would be reported on that path |
 | It stores the callback, passes it on, or runs it with `go` or `defer` | The callback may run outside the transaction |
 | It opens on a package-level variable, or on a handle a call returns | Only a parameter, or a field of one, can name the handle at the call |
 | It carries the transaction in a context | Not read yet |
+| It returns the transaction wrapped in a struct, or one it was given | The struct is not followed. A transaction it was given is not new |
 
-The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers).
+The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
 
 ### `outer-handle`
 

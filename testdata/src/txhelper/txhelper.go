@@ -45,3 +45,8 @@ func RunInTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	}
 	return tx.Commit()
 }
+
+// Begin begins a transaction on db.
+func Begin(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	return db.BeginTx(ctx, nil)
+}

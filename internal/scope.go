@@ -15,7 +15,6 @@ import (
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
 	"github.com/mpyw/txbypass/internal/spell"
-	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // txScope is the code that runs inside one transaction: the body of a
@@ -47,15 +46,17 @@ type txScope struct {
 	builds bool
 }
 
-// scopeOuter is the handle o opens its transaction on, in fn. For a method,
-// that is its receiver, through the embedded fields its promotion passes.
+// scopeOuter is the handle that outer gives, in fn, with fields selected
+// from it. When outer is the selector of a method call, the handle is its
+// receiver, through the embedded fields its promotion passes. An invoker
+// or a begin gives its handle this way.
 //
 //declscope:shared // both rules find the handle or the context outside the scope through it
-func (c *checker) scopeOuter(o txcall.Invoker, fn *ssa.Function) (handle.Path, bool) {
-	expr := o.Outer
+func (c *checker) scopeOuter(outer ast.Expr, receiver bool, fields []*types.Var, fn *ssa.Function) (handle.Path, bool) {
+	expr := outer
 	var promoted []*types.Var
-	if o.Receiver {
-		sel := o.Outer.(*ast.SelectorExpr)
+	if receiver {
+		sel := outer.(*ast.SelectorExpr)
 		expr = sel.X
 		promoted = handle.Promoted(c.pass.TypesInfo.Selections[sel])
 	}
@@ -63,7 +64,7 @@ func (c *checker) scopeOuter(o txcall.Invoker, fn *ssa.Function) (handle.Path, b
 	if !ok {
 		return handle.Path{}, false
 	}
-	return c.paths.Of(ref.X).With(promoted).With(o.Fields), true
+	return c.paths.Of(ref.X).With(promoted).With(fields), true
 }
 
 // scopeBindsBoth reports whether e is an argument of a call, or a field of

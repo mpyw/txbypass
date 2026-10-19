@@ -20,7 +20,7 @@ import (
 //
 //declscope:shared // run.go calls it for every invoker
 func (c *checker) checkOuterHandle(o txcall.Invoker, fn *ssa.Function) {
-	outer, ok := c.scopeOuter(o, fn)
+	outer, ok := c.scopeOuter(o.Outer, o.Receiver, o.Fields, fn)
 	if !ok || o.Nests && outerHandleSavepoint(outer) {
 		return
 	}
@@ -61,7 +61,7 @@ func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) 
 				return false
 			}
 		}
-		b, ok := txcall.BeginOf(c.pass.TypesInfo, n)
+		b, ok := c.helpers.BeginOf(n)
 		if !ok {
 			return true
 		}
@@ -77,14 +77,12 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 		// The begin is in code that no path reaches. It never runs.
 		return
 	}
-	r := region.Begun(call, c.closer, c.paths)
-	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: r.Txs()}
-	// The receiver of a method call is always evaluated as a value.
-	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
-	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))
-	if b.Nests && outerHandleSavepoint(outer) {
+	outer, ok := c.scopeOuter(b.Outer, b.Receiver, b.Fields, fn)
+	if !ok || b.Nests && outerHandleSavepoint(outer) {
 		return
 	}
+	r := region.Begun(call, c.closer, c.paths)
+	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: r.Txs()}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
 }

@@ -157,7 +157,7 @@ At the call, the scope is read as an invoker's is. The message names the helper 
 | The callback is the receiver, or the handle is the receiver of a method expression | The selector names no handle, or no literal |
 | The arguments are one call with several results | There is no function literal to read |
 
-A helper that carries the transaction in a context is not read yet.
+A helper may begin its transaction with a [helper that is a begin](#helpers-that-are-begins). A helper that carries the transaction in a context is not read yet.
 
 ## Begins
 
@@ -200,6 +200,30 @@ A begin is read where its result is kept in a variable:
 | `if tx, err := db.Begin(); err == nil { ... }` | Yes |
 | `_, err := db.Begin()` | No. No transaction is kept |
 | `r.tx, err = db.Begin()` | No. A field is not followed |
+
+### Helpers that are begins
+
+A function of the project that returns a transaction it begins is a begin too. It is read from its body:
+
+```go
+func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	return tx, nil
+}
+```
+
+`tx, err := s.begin(ctx)` opens a region on `s.db`, as `s.db.BeginTx` would. A function is such a helper when all of these hold:
+
+| Condition | Why |
+| --- | --- |
+| It is a declared function or method. Its first result has a method that ends a transaction. It has no other result, or a second of type `error` | The results read as a begin's do |
+| Each return gives `nil`, or a transaction it began with a begin or a helper, still open there | A transaction committed before the return, or one it was given, is not new |
+| The transactions are begun on a parameter, or on a field selected from one, and every return agrees on which | That handle is the outer one |
+
+A transaction wrapped in a struct of the project is not read. A helper of another package is known by the fact `begins[pO.f]`, spelled as `invokes` spells its handle. At the call, a method expression or arguments of one call with several results are not read.
 
 ## Handles
 

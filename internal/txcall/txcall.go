@@ -240,41 +240,14 @@ type InvokerShape struct {
 }
 
 // InvokerOfShape reports the invoker that call is, when it calls fn, a
-// helper of shape s. As with InvokerOf, the callback has to be a function literal.
+// helper of shape s. As with InvokerOf, the callback has to be a function
+// literal.
 func InvokerOfShape(info *types.Info, call *ast.CallExpr, fn *types.Func, s InvokerShape) (Invoker, bool) {
-	sig := fn.Signature()
-	arg := func(i int) (ast.Expr, bool) {
-		if sig.Recv() != nil {
-			i--
-		}
-		// The receiver may be the callback, when it is of a function
-		// type. The arguments may be one call with several results.
-		if i < 0 || i >= len(call.Args) {
-			return nil, false
-		}
-		return call.Args[i], true
+	outer, receiver, fields, ok := shapeOuter(info, call, fn, s.Outer, s.Fields)
+	if !ok {
+		return Invoker{}, false
 	}
-	o := Invoker{Name: displayName(fn)}
-	var t types.Type
-	if sig.Recv() != nil && s.Outer == 0 {
-		// A method expression takes its receiver as an argument, and its
-		// selector names no handle.
-		sel, ok := methodSelector(info, call)
-		if !ok {
-			return Invoker{}, false
-		}
-		o.Outer, o.Receiver = sel, true
-		t = sig.Recv().Type()
-	} else {
-		e, ok := arg(s.Outer)
-		if !ok {
-			return Invoker{}, false
-		}
-		o.Outer = e
-		t = shapeParam(sig, s.Outer)
-	}
-	o.Fields = shapeFields(t, s.Fields)
-	e, ok := arg(s.Callback)
+	e, ok := shapeArg(call, fn, s.Callback)
 	if !ok {
 		return Invoker{}, false
 	}
@@ -282,9 +255,52 @@ func InvokerOfShape(info *types.Info, call *ast.CallExpr, fn *types.Func, s Invo
 	if !ok {
 		return Invoker{}, false
 	}
-	o.Callback = lit
-	o.Tx = paramIdent(lit, s.Tx)
-	return o, true
+	return Invoker{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Callback: lit, Tx: paramIdent(lit, s.Tx)}, true
+}
+
+// BeginShape is where a helper of the project that returns a transaction
+// takes what it begins the transaction on. The receiver of a method is
+// parameter 0.
+type BeginShape struct {
+	// Outer is the parameter that holds the handle, and Fields the fields
+	// selected from it, by name.
+	Outer  int
+	Fields []string
+}
+
+// shapeOuter is the expression that gives the handle a call of fn opens
+// on, when fn takes it at parameter i, and the fields selected from it. For
+// the receiver, the expression is the selector of the call.
+func shapeOuter(info *types.Info, call *ast.CallExpr, fn *types.Func, i int, names []string) (ast.Expr, bool, []*types.Var, bool) {
+	sig := fn.Signature()
+	if sig.Recv() != nil && i == 0 {
+		// A method expression takes its receiver as an argument, and its
+		// selector names no handle.
+		sel, ok := methodSelector(info, call)
+		if !ok {
+			return nil, false, nil, false
+		}
+		return sel, true, shapeFields(sig.Recv().Type(), names), true
+	}
+	e, ok := shapeArg(call, fn, i)
+	if !ok {
+		return nil, false, nil, false
+	}
+	return e, false, shapeFields(shapeParam(sig, i), names), true
+}
+
+// shapeArg is the argument of a call of fn at parameter i, where the
+// receiver of a method is parameter 0.
+func shapeArg(call *ast.CallExpr, fn *types.Func, i int) (ast.Expr, bool) {
+	if fn.Signature().Recv() != nil {
+		i--
+	}
+	// The receiver may be the callback, when it is of a function type. The
+	// arguments may be one call with several results.
+	if i < 0 || i >= len(call.Args) {
+		return nil, false
+	}
+	return call.Args[i], true
 }
 
 // shapeParam is the type of parameter i of sig, where the receiver of a
@@ -389,8 +405,11 @@ func Holds(t types.Type) bool {
 type Begin struct {
 	// Name is how a message names the call, as Invoker.Name does.
 	Name string
-	// Outer is the selector of the call, which names the handle.
-	Outer *ast.SelectorExpr
+	// Outer, Receiver and Fields give the handle, as they do for an
+	// Invoker.
+	Outer    ast.Expr
+	Receiver bool
+	Fields   []*types.Var
 	// Call is the call of the begin.
 	Call *ast.CallExpr
 	// Tx is the variable the transaction is assigned to.
@@ -450,8 +469,9 @@ var knownBegins = []known{
 
 // BeginOf reports the begin that n assigns. n is an assignment or a
 // variable declaration with a single call on its right, whose first result
-// is kept in a variable.
-func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
+// is kept in a variable. helper gives the shape of a helper of the project
+// that returns a transaction.
+func BeginOf(info *types.Info, n ast.Node, helper func(*types.Func) (BeginShape, bool)) (Begin, bool) {
 	var lhs []*ast.Ident
 	var rhs []ast.Expr
 	switch n := n.(type) {
@@ -471,13 +491,32 @@ func BeginOf(info *types.Info, n ast.Node) (Begin, bool) {
 	if !ok {
 		return Begin{}, false
 	}
-	if !IsBegin(info, call) {
+	b, ok := BeginCall(info, call, helper)
+	b.Tx = lhs[0]
+	return b, ok
+}
+
+// BeginCall reports the begin that call is, whether its result is kept or
+// not. Its Tx is nil.
+func BeginCall(info *types.Info, call *ast.CallExpr, helper func(*types.Func) (BeginShape, bool)) (Begin, bool) {
+	if IsBegin(info, call) {
+		sel, _ := methodSelector(info, call)
+		k, _ := lookupFunc(info.Selections[sel].Obj().(*types.Func), knownBegins)
+		return Begin{Name: sel.Sel.Name, Outer: sel, Receiver: true, Call: call, Nests: k.nests}, true
+	}
+	fn, ok := typeutil.Callee(info, call).(*types.Func)
+	if !ok {
 		return Begin{}, false
 	}
-	sel, _ := methodSelector(info, call)
-	k, _ := lookupFunc(info.Selections[sel].Obj().(*types.Func), knownBegins)
-	b := Begin{Name: sel.Sel.Name, Outer: sel, Call: call, Tx: lhs[0], Nests: k.nests}
-	return b, true
+	s, ok := helper(fn)
+	if !ok {
+		return Begin{}, false
+	}
+	outer, receiver, fields, ok := shapeOuter(info, call, fn, s.Outer, s.Fields)
+	if !ok {
+		return Begin{}, false
+	}
+	return Begin{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Call: call}, true
 }
 
 // IsBegin reports whether call is a call of a begin.

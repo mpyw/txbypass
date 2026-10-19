@@ -29,7 +29,7 @@ internal/txcall/         the calls that open a transaction: the tables, and ent'
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/closer/         which instructions may end a transaction, and the fact of helpers
-internal/helper/         the helpers of the project that are invokers, and their fact
+internal/helper/         the helpers of the project that are invokers or begins, and their facts
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -137,9 +137,9 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
 | The core type is read from the whole type set | A constraint may embed an interface that holds the terms, as `Entity` embeds `Keyed`. An interface allows what all its embedded types allow, and a union what any term allows |
 
-## Helpers that open a transaction
+## Helpers that are invokers or begins
 
-`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
+`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
 
 | Decision | Why |
 | --- | --- |
@@ -149,6 +149,9 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A callback given anywhere else is no helper | It may run where this analysis does not follow it |
 | A helper that calls itself reads as no helper there, and the answer is kept | A ring of helpers is rare. A fixpoint was not added, since it would only find more helpers in code that is rare |
 | Take the first parameter that qualifies | Two callbacks run in one transaction are rare, and the first is the usual one |
+| A helper that returns a transaction is a begin of its own kind, with the fact `begins` | The region is read where the result is kept, as for a library's begin. The helper's error result is the begin's error, so `if err != nil` leaves the region as it does after `BeginTx` |
+| Every return of a begin helper gives `nil` or a transaction still open there | A helper that commits before it returns, or hands back one it was given, would open a region on a closed or foreign transaction |
+| `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 
 ## Scopes that build or rebind
 

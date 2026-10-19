@@ -14,7 +14,7 @@ import (
 //
 //declscope:shared // run.go calls it for every invoker whose transaction rides in a context
 func (c *checker) checkOuterContext(o txcall.Invoker, fn *ssa.Function) {
-	outer, ok := c.scopeOuter(o, fn)
+	outer, ok := c.scopeOuter(o.Outer, o.Receiver, o.Fields, fn)
 	if !ok {
 		return
 	}
