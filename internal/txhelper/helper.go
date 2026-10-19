@@ -182,7 +182,7 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
-		if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" {
+		if s, problem := declared.Invoker(fn.Origin()); problem == "" {
 			if !s.InContext {
 				s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 			}
@@ -200,7 +200,7 @@ func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
-		if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
+		if s, problem := declared.Begin(fn.Origin()); problem == "" {
 			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 			return s, true
 		}
@@ -338,9 +338,8 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []helperTra
 				return true
 			}
 			lit := h.prog.Func(o.Callback)
-			obj := h.pass.TypesInfo.Defs[o.Tx]
-			i := slices.IndexFunc(lit.Params, func(p *ssa.Parameter) bool { return p.Object() == obj })
-			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer, nests: o.Nests})
+			tx := program.Param(lit, h.pass.TypesInfo.Defs[o.Tx])
+			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(tx)}, outer: outer, nests: o.Nests})
 			return true
 		}
 		b, ok := txcall.BeginCall(h.pass.TypesInfo, call, h.beginShape)

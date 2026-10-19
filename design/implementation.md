@@ -26,11 +26,11 @@ internal/                the rules: one flat package, one namespace per file
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //txbypass: comments
 internal/funcname/       the names -invokes, -begins and -closes take
-internal/txcall/         the calls that open a transaction: the tables (known.go), invokers, begins, ent's shape, and declared shapes
+internal/txcall/         the calls that open a transaction: the tables (known.go), invokers, begins, and ent's shape
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/fact/           the facts a package exports: closes, invokes and begins
-internal/declared/       what a directive or a flag declares, and which types are transactions
+internal/declared/       what a directive or a flag declares, the shape it reads from a signature, and which types are transactions
 internal/txcloser/       which instructions may end a transaction
 internal/txhelper/       the helpers of the project that are invokers or begins: helper.go, invoker.go, begin.go
 internal/region/         where a begun transaction is open, on every path

@@ -23,6 +23,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/txcloser"
 )
 
@@ -310,7 +311,7 @@ func loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp]bool) bool 
 		return true
 	}
 	seen[load] = true
-	return lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
+	return program.LastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
 }
 
 // isBeginErr reports whether v is the begin's error itself: its error
@@ -337,33 +338,6 @@ func (r *Region) isErrorField(v ssa.Value) bool {
 	load, loaded := f.X.(*ssa.UnOp)
 	direct := f.X == r.tx || loaded && load.Op == token.MUL && r.txAddr != nil && load.X == r.txAddr
 	return field.Name() == "Error" && direct
-}
-
-// lastStored reports whether every path to instruction at of b last stores
-// a value that v accepts to addr. A variable stored on one path only has a path that reaches the
-// entry with no store, so it is not the begin's error.
-// A block met again around a loop leaves the answer to the other paths.
-func lastStored(b *ssa.BasicBlock, at int, addr ssa.Value, v func(ssa.Value) bool, seen map[*ssa.BasicBlock]bool) bool {
-	for i := at - 1; i >= 0; i-- {
-		if st, ok := b.Instrs[i].(*ssa.Store); ok && st.Addr == addr {
-			return v(st.Val)
-		}
-	}
-	// A path that reaches the entry stored nothing to addr, so addr does not
-	// hold the begin's error there.
-	if len(b.Preds) == 0 {
-		return false
-	}
-	if seen[b] {
-		return true
-	}
-	seen[b] = true
-	for _, p := range b.Preds {
-		if !lastStored(p, len(p.Instrs), addr, v, seen) {
-			return false
-		}
-	}
-	return true
 }
 
 // Inside reports whether the transaction is open at instr, on every path.

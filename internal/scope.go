@@ -833,7 +833,7 @@ func (c *checker) scopeWrites(s txScope, outer handle.Path) bool {
 		}
 		for _, anon := range fn.AnonFuncs {
 			made, ok := program.Creation(anon)
-			if ok && (fn != s.fn || s.region == nil || s.region.Inside(made) && !scopeDeferred(made)) && within(anon) {
+			if ok && (fn != s.fn || s.region == nil || s.region.Inside(made) && !program.Deferred(made)) && within(anon) {
 				return true
 			}
 		}
@@ -853,36 +853,6 @@ func (c *checker) scopeRebinds(s txScope, outer handle.Path, st *ssa.Store) bool
 		return true
 	}
 	return addr.Within(outer) && slices.ContainsFunc(s.txs, c.paths.Of(st.Val).Within)
-}
-
-// scopeDeferred reports whether the literal that made makes runs only when
-// the function returns: made is a defer of it or a t.Cleanup of it, or a
-// closure that only those use.
-func scopeDeferred(made ssa.Instruction) bool {
-	if scopeDefers(made) {
-		return true
-	}
-	mc, ok := made.(*ssa.MakeClosure)
-	if !ok {
-		return false
-	}
-	for _, ref := range *mc.Referrers() {
-		if _, ok := ref.(*ssa.DebugRef); !ok && !scopeDefers(ref) {
-			return false
-		}
-	}
-	return true
-}
-
-// scopeDefers reports whether instr is a defer, or a t.Cleanup.
-func scopeDefers(instr ssa.Instruction) bool {
-	switch instr := instr.(type) {
-	case *ssa.Defer:
-		return true
-	case *ssa.Call:
-		return program.Cleanup(instr.Common())
-	}
-	return false
 }
 
 // scopeInside reports whether ref is evaluated inside the transaction of s.

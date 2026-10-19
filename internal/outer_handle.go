@@ -27,22 +27,10 @@ func (c *checker) checkOuterHandle(o txcall.Invoker, fn *ssa.Function) {
 	lit := c.prog.Func(o.Callback)
 	s := txScope{root: o.Callback.Body, fn: lit, openedWith: o.Name, tx: o.Tx, unnamed: "the callback's transaction", builds: o.Builds}
 	if o.Tx != nil {
-		s.txs = []handle.Path{c.paths.Of(outerHandleParam(lit, c.pass.TypesInfo.Defs[o.Tx]))}
+		s.txs = []handle.Path{c.paths.Of(program.Param(lit, c.pass.TypesInfo.Defs[o.Tx]))}
 	}
 	c.reportScopeUses(s, outer, rule.OuterHandle, s.scopeUse(), nil)
 	c.reportScopeQueries(s)
-}
-
-// outerHandleParam is the parameter of fn that obj declares.
-func outerHandleParam(fn *ssa.Function, obj any) ssa.Value {
-	for _, p := range fn.Params {
-		if p.Object() == obj {
-			return p
-		}
-	}
-	// Unreachable: the transaction is a parameter of the callback, which
-	// the builder made from the same declaration.
-	panic("outer handle: no parameter for the transaction")
 }
 
 // checkOuterHandleBegins reports each use of a handle while a transaction

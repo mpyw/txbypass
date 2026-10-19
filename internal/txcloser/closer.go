@@ -19,11 +19,8 @@
 package txcloser
 
 import (
-	"go/constant"
-	"go/token"
 	"go/types"
 	"slices"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
@@ -383,7 +380,7 @@ func (c *Closer) yieldEnds(mc *ssa.MakeClosure, root ssa.Value) bool {
 	txs := []handle.Path{c.paths.Of(root)}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
-			if c.yieldStepEnds(instr, txs) && yieldGoesOn(mc, b) {
+			if c.yieldStepEnds(instr, txs) && program.YieldGoesOn(mc, b) {
 				return true
 			}
 		}
@@ -400,115 +397,6 @@ func (c *Closer) yieldStepEnds(instr ssa.Instruction, txs []handle.Path) bool {
 		return c.callEnds(instr.Common(), txs)
 	case *ssa.MakeClosure:
 		return c.closureGivenAway(instr, txs, false)
-	}
-	return false
-}
-
-// yieldGoesOn reports whether a path from block b of the body that mc makes
-// goes on in the loop or after it. The body returns true
-// for the next iteration. It returns false to leave the loop, with the exit
-// it takes stored in its jump variable. The function that holds the loop
-// branches on that exit: to a return for a return in the body, or past the
-// loop for a break.
-func yieldGoesOn(mc *ssa.MakeClosure, b *ssa.BasicBlock) bool {
-	seen := map[*ssa.BasicBlock]bool{b: true}
-	for work := []*ssa.BasicBlock{b}; len(work) > 0; {
-		b, work = work[len(work)-1], work[:len(work)-1]
-		ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
-		if ok && !yieldReturns(mc, b, ret) {
-			return true
-		}
-		for _, s := range b.Succs {
-			if !seen[s] {
-				seen[s] = true
-				work = append(work, s)
-			}
-		}
-	}
-	return false
-}
-
-// yieldReturns reports whether ret, at the end of block b of the body that
-// mc makes, returns from the function that holds the loop.
-func yieldReturns(mc *ssa.MakeClosure, b *ssa.BasicBlock, ret *ssa.Return) bool {
-	if done, ok := ret.Results[0].(*ssa.Const); !ok || constant.BoolVal(done.Value) {
-		return false
-	}
-	fn := mc.Fn.(*ssa.Function)
-	// The last store is the exit. A body with no branch stores that it is
-	// running first, in the same block.
-	var st *ssa.Store
-	for _, instr := range b.Instrs {
-		if yieldExit(instr) {
-			st = instr.(*ssa.Store)
-		}
-	}
-	if st == nil {
-		// Unreachable: the builder stores the exit in the jump variable
-		// before each return of false.
-		return false
-	}
-	return yieldExitReturns(mc.Parent(), mc.Bindings[slices.Index(fn.FreeVars, st.Addr.(*ssa.FreeVar))], st.Val.(*ssa.Const))
-}
-
-// yieldOnlyReturns reports whether b does nothing but return: it loads the
-// results, runs the deferred calls, and returns. In the body of an outer
-// loop, it stores the results and the exit for that loop's function first.
-func yieldOnlyReturns(b *ssa.BasicBlock) bool {
-	for _, instr := range b.Instrs[:len(b.Instrs)-1] {
-		switch instr.(type) {
-		case *ssa.UnOp, *ssa.Store, *ssa.RunDefers, *ssa.DebugRef:
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// yieldExit reports whether instr stores a constant exit in the jump
-// variable of the body of a range over a function.
-func yieldExit(instr ssa.Instruction) bool {
-	st, ok := instr.(*ssa.Store)
-	if !ok {
-		return false
-	}
-	fv, isFree := st.Addr.(*ssa.FreeVar)
-	_, isConst := st.Val.(*ssa.Const)
-	return isFree && isConst && strings.HasPrefix(fv.Name(), "jump$")
-}
-
-// yieldExitReturns reports whether fn, which holds the loop, returns when
-// the body leaves it by exit, which the body stored in jump. When fn is
-// itself the body of an outer loop, it returns false for a break too, so
-// its return is read as the body's own.
-func yieldExitReturns(fn *ssa.Function, jump ssa.Value, exit *ssa.Const) bool {
-	for _, b := range fn.Blocks {
-		cond, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If)
-		if !ok {
-			continue
-		}
-		cmp, ok := cond.Cond.(*ssa.BinOp)
-		if !ok || cmp.Op != token.EQL {
-			continue
-		}
-		load, ok := cmp.X.(*ssa.UnOp)
-		k, isConst := cmp.Y.(*ssa.Const)
-		if ok && load.X == jump && isConst && constant.Compare(k.Value, token.EQL, exit.Value) {
-			then := b.Succs[0]
-			ret, returns := then.Instrs[len(then.Instrs)-1].(*ssa.Return)
-			// A return in the body comes back through a block that only
-			// loads the results the body stored, and returns them. A labeled
-			// break or a goto out of the body jumps to its target, which may
-			// end in a return of its own after code of its own. The optimizer
-			// may merge such a target into the block the builder made.
-			returns = returns && yieldOnlyReturns(then)
-			if !returns || !program.Yield(fn) {
-				return returns
-			}
-			made, _ := program.Creation(fn)
-			outer, ok := made.(*ssa.MakeClosure)
-			return ok && yieldReturns(outer, then, ret)
-		}
 	}
 	return false
 }
