@@ -307,8 +307,9 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 // the problem with it.
 func DeclaredBegin(fn *types.Func) (BeginShape, string) {
 	res := fn.Signature().Results()
-	// A transaction is a value with methods. A number or a string is none.
-	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) || declaredBasic(res.At(0).Type()) {
+	// A number, a string, an error, a context or a function is no
+	// transaction.
+	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) || !MayBeTx(res.At(0).Type()) {
 		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
 	}
 	outer, ok := declaredOuter(fn.Signature(), declaredParams(fn.Signature()))
@@ -356,10 +357,16 @@ func declaredOuter(sig *types.Signature, params []types.Type) (int, bool) {
 	return i, i >= 0
 }
 
-// declaredBasic reports whether t is a basic type, as a number or a string.
-func declaredBasic(t types.Type) bool {
-	_, ok := t.Underlying().(*types.Basic)
-	return ok
+// MayBeTx reports whether a value of type t may be a transaction: it is not
+// a number, a string, a bool, an error, a context or a function.
+func MayBeTx(t types.Type) bool {
+	switch t.Underlying().(type) {
+	case *types.Basic, *types.Signature:
+		return false
+	case *types.Interface:
+		return !types.Identical(t, types.Universe.Lookup("error").Type()) && !IsContext(t)
+	}
+	return true
 }
 
 // declaredFunc reports whether t is a function type.

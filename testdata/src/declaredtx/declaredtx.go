@@ -405,3 +405,17 @@ func (*Journal) End(why string, h *Handle, l *Logger) error { return nil } // wa
 
 // logged ends h, and not l, which is no transaction.
 func logged(j *Journal, h *Handle, l *Logger) error { return j.End("done", h, l) } // want logged:`^closes\[1\]$`
+
+// bookEnd ends s through another package's declared end, and not l.
+func bookEnd(b *declaredlib.Book, s *declaredlib.Session, l *declaredlib.Log) error { // want bookEnd:`^closes\[1\]$`
+	return b.End(s, l)
+}
+
+// Lease ends itself, and no begin of the package returns one.
+type Lease interface {
+	//txbypass:closes
+	Release() error // want Release:`^closes\[0\]$`
+}
+
+// release ends l through its declared end.
+func release(l Lease) error { return l.Release() } // want release:`^closes\[0\]$`

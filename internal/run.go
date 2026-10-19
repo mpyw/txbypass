@@ -88,7 +88,7 @@ func (c *checker) runDeclarations() {
 		case directive.KindCloses:
 			var params []int
 			params, problem = txcall.DeclaredCloser(d.Obj)
-			fact = &closer.Fact{Params: params}
+			fact = &closer.Fact{Params: params, Declared: true}
 		}
 		if problem != "" {
 			// Nothing is reported in a generated file.

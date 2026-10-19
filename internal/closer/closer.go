@@ -38,6 +38,10 @@ import (
 // letting them go. The receiver of a method is parameter 0.
 type Fact struct {
 	Params []int
+	// Declared is true when a //txbypass:closes directive, not the body,
+	// says so. Params then holds every input, and only the first that may
+	// be a transaction is one.
+	Declared bool
 }
 
 // AFact marks Fact as an analysis fact.

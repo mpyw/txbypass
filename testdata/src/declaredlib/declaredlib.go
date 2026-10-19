@@ -65,3 +65,12 @@ func (c *Conn) Begin() *Conn { return c } // want Begin:`^begins\[p0\]$`
 //
 //txbypass:closes
 func (*Conn) End() error { return nil } // want End:`^closes\[0\]$`
+
+// Log is given to an end beside the session. It is no transaction.
+type Log struct{}
+
+// Book ends a session, and logs to l.
+type Book struct{}
+
+//txbypass:closes
+func (*Book) End(s *Session, l *Log) error { return nil } // want End:`^closes\[0 1 2\]$`

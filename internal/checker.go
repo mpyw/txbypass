@@ -2,6 +2,7 @@ package internal
 
 import (
 	"cmp"
+	"go/ast"
 	"go/token"
 	"go/types"
 	"slices"
@@ -149,7 +150,7 @@ func (c *checker) begins(fn *types.Func) bool {
 // that may be a transaction.
 func checkerTakesTx(m *types.Func) bool {
 	for p := range m.Signature().Params().Variables() {
-		if checkerMayBeTx(p.Type()) {
+		if txcall.MayBeTx(p.Type()) {
 			return true
 		}
 	}
@@ -157,15 +158,20 @@ func checkerTakesTx(m *types.Func) bool {
 }
 
 // declaredTx reports whether t is the type of a transaction that a declared
-// helper the package calls gives or takes: the first result of a begin,
+// helper the package calls or defines gives or takes: the first result of a begin,
 // or a parameter of an end other than its receiver. Such a type may have
 // no method at all, as an opaque handle that only its manager ends.
 func (c *checker) declaredTx(t types.Type) bool {
 	if !c.txTypesRead {
 		c.txTypesRead = true
-		for _, obj := range c.pass.TypesInfo.Uses {
-			if fn, ok := obj.(*types.Func); ok {
-				c.readTxTypes(fn)
+		// A declaration of the package counts where it is defined, so a
+		// helper beside it that takes its transaction is read even before
+		// anything calls it.
+		for _, m := range []map[*ast.Ident]types.Object{c.pass.TypesInfo.Uses, c.pass.TypesInfo.Defs} {
+			for _, obj := range m {
+				if fn, ok := obj.(*types.Func); ok {
+					c.readTxTypes(fn)
+				}
 			}
 		}
 	}
@@ -184,6 +190,8 @@ func (c *checker) readTxTypes(fn *types.Func) {
 	if !declared && (fn.Pkg() == c.pass.Pkg || !c.pass.ImportObjectFact(fn.Origin(), &f)) {
 		return
 	}
+	// A directive of another package declares every input too.
+	declared = declared || f.Declared
 	first := 0
 	if sig.Recv() != nil {
 		first = 1
@@ -210,19 +218,7 @@ func checkerTxLike(t types.Type) bool {
 	if i, ok := types.Unalias(t).(*types.Interface); ok && i.Empty() {
 		return false
 	}
-	return checkerMayBeTx(t)
-}
-
-// checkerMayBeTx reports whether a value of type t may be a transaction: it
-// is not a number, a string, a bool, an error, a context or a function.
-func checkerMayBeTx(t types.Type) bool {
-	switch t.Underlying().(type) {
-	case *types.Basic, *types.Signature:
-		return false
-	case *types.Interface:
-		return !types.Identical(t, types.Universe.Lookup("error").Type()) && !txcall.IsContext(t)
-	}
-	return true
+	return txcall.MayBeTx(t)
 }
 
 // declares reports whether fn is declared as kind: by a directive of the
