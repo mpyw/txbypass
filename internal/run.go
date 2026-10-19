@@ -18,6 +18,7 @@ import (
 
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/txcall"
 )
@@ -44,6 +45,8 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 		c.paths = handle.NewPaths(runModule(pass.Module))
 		c.closer = closer.New(pass, c.paths)
 		c.closer.Export(c.prog)
+		c.helpers = helper.New(pass, c.prog, c.paths, c.closer)
+		c.helpers.Export()
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not
 			// analyzed.
@@ -82,7 +85,7 @@ func runNeedsProgram(pass *analysis.Pass) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
 				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
-				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n)
+				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n)
 			case *ast.FuncDecl:
 				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature())
 			case *ast.FuncLit:
@@ -146,7 +149,7 @@ func (c *checker) runFile(f *ast.File) {
 
 // runCall runs the rule of the invoker that call is, in fn.
 func (c *checker) runCall(call *ast.CallExpr, fn *ssa.Function) {
-	o, ok := txcall.InvokerOf(c.pass.TypesInfo, call)
+	o, ok := c.helpers.InvokerOf(call)
 	switch {
 	case !ok:
 	case o.InContext:

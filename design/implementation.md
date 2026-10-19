@@ -29,6 +29,7 @@ internal/txcall/         the calls that open a transaction: the tables, and ent'
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/closer/         which instructions may end a transaction, and the fact of helpers
+internal/helper/         the helpers of the project that are invokers, and their fact
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -43,6 +44,7 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | `program` | Builds the SSA form, and maps syntax to it. It knows nothing of handles |
 | `handle` | Reads SSA values only |
 | `closer` | Reads SSA instructions and facts. It knows nothing of rules |
+| `helper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
 | `region` | Reads the SSA control flow, and asks `closer` what ends a transaction |
 | `spell` | Reads syntax and types only |
 
@@ -134,6 +136,19 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
 | The core type is read from the whole type set | A constraint may embed an interface that holds the terms, as `Entity` embeds `Keyed`. An interface allows what all its embedded types allow, and a union what any term allows |
+
+## Helpers that open a transaction
+
+`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
+
+| Decision | Why |
+| --- | --- |
+| Read the body, with no directive | A project's `withTx` is written once and called everywhere. Reading it costs one pass. A directive would have to say which field is the handle |
+| The outer handle is a parameter, and the fields selected from it, by name | A fact is gob-encoded, so it cannot hold a `*types.Var`. The caller finds the fields again in the type of its argument |
+| Every call of the callback must be inside a transaction it is given | A helper that may run the callback outside makes every use inside a false report on that path. A miss is better than a false report |
+| A callback given anywhere else is no helper | It may run where this analysis does not follow it |
+| A helper that calls itself reads as no helper there, and the answer is kept | A ring of helpers is rare. A fixpoint was not added, since it would only find more helpers in code that is rare |
+| Take the first parameter that qualifies | Two callbacks run in one transaction are rare, and the first is the usual one |
 
 ## Scopes that build or rebind
 

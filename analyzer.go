@@ -14,6 +14,7 @@ import (
 
 	"github.com/mpyw/txbypass/internal"
 	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -23,9 +24,9 @@ var Analyzer = &analysis.Analyzer{
 	Doc:      "reports a database handle used inside a transaction it opened",
 	URL:      "https://github.com/mpyw/txbypass",
 	Requires: []*analysis.Analyzer{ctrlflow.Analyzer},
-	// The fact says which parameters a function ends, so that a helper of
-	// another package that commits a transaction is seen.
-	FactTypes: []analysis.Fact{new(closer.Fact)},
+	// The facts say which parameters a function ends, and which function
+	// is an invoker, so that a helper of another package is seen.
+	FactTypes: []analysis.Fact{new(closer.Fact), new(helper.Invokes)},
 	Run:       runAnalyzer,
 }
 

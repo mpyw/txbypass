@@ -53,6 +53,10 @@ type Invoker struct {
 	// and go-redis's TxPipelined queues commands that a command on the
 	// handle runs before.
 	Nests bool
+	// Fields are the fields that a helper of the project selects from
+	// Outer, as withTx opens on s.db when it is called on s. They are
+	// empty for an invoker of a library.
+	Fields []*types.Var
 }
 
 // known is one call that opens a transaction.
@@ -219,6 +223,97 @@ func InvokerOf(info *types.Info, call *ast.CallExpr) (Invoker, bool) {
 	o.Callback = lit
 	o.Tx = paramIdent(lit, k.tx)
 	return o, true
+}
+
+// InvokerShape is where a helper of the project takes what it opens a transaction
+// on, and the function it runs inside it. The receiver of a method is
+// parameter 0.
+type InvokerShape struct {
+	// Outer is the parameter that holds the handle, and Fields the fields
+	// selected from it, by name.
+	Outer  int
+	Fields []string
+	// Callback is the parameter that is run inside the transaction, and Tx
+	// the parameter of the callback that it gives the transaction.
+	Callback int
+	Tx       int
+}
+
+// InvokerOfShape reports the invoker that call is, when it calls fn, a
+// helper of shape s. As with InvokerOf, the callback has to be a function literal.
+func InvokerOfShape(info *types.Info, call *ast.CallExpr, fn *types.Func, s InvokerShape) (Invoker, bool) {
+	sig := fn.Signature()
+	arg := func(i int) (ast.Expr, bool) {
+		if sig.Recv() != nil {
+			i--
+		}
+		// The receiver may be the callback, when it is of a function
+		// type. The arguments may be one call with several results.
+		if i < 0 || i >= len(call.Args) {
+			return nil, false
+		}
+		return call.Args[i], true
+	}
+	o := Invoker{Name: displayName(fn)}
+	var t types.Type
+	if sig.Recv() != nil && s.Outer == 0 {
+		// A method expression takes its receiver as an argument, and its
+		// selector names no handle.
+		sel, ok := methodSelector(info, call)
+		if !ok {
+			return Invoker{}, false
+		}
+		o.Outer, o.Receiver = sel, true
+		t = sig.Recv().Type()
+	} else {
+		e, ok := arg(s.Outer)
+		if !ok {
+			return Invoker{}, false
+		}
+		o.Outer = e
+		t = shapeParam(sig, s.Outer)
+	}
+	o.Fields = shapeFields(t, s.Fields)
+	e, ok := arg(s.Callback)
+	if !ok {
+		return Invoker{}, false
+	}
+	lit, ok := ast.Unparen(e).(*ast.FuncLit)
+	if !ok {
+		return Invoker{}, false
+	}
+	o.Callback = lit
+	o.Tx = paramIdent(lit, s.Tx)
+	return o, true
+}
+
+// shapeParam is the type of parameter i of sig, where the receiver of a
+// method is parameter 0.
+func shapeParam(sig *types.Signature, i int) types.Type {
+	if sig.Recv() != nil {
+		i--
+	}
+	return sig.Params().At(i).Type()
+}
+
+// shapeFields finds the fields named by names, selected one after another
+// from a value of type t, through pointers. The helper's own analysis read
+// them from a parameter of this type, so each is there.
+func shapeFields(t types.Type, names []string) []*types.Var {
+	var out []*types.Var
+	for _, name := range names {
+		if p, ok := t.Underlying().(*types.Pointer); ok {
+			t = p.Elem()
+		}
+		for f := range t.Underlying().(*types.Struct).Fields() {
+			if f.Name() == name {
+				out = append(out, f)
+				t = f.Type()
+				break
+			}
+		}
+	}
+	return out
 }
 
 // dedicatedConns are the types whose begin or invoker runs on one

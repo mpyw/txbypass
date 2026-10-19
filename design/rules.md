@@ -115,6 +115,50 @@ Only these open a savepoint, or reuse the transaction, when called on one. The o
 
 The `Tx` of upper/db on a transaction begins another transaction on the pool. The `TxPipelined` of go-redis queues commands, and a command on the handle runs at once, before the queued ones. A use of the outer transaction in either is reported.
 
+### Helpers that are invokers
+
+A function of the project can open a transaction and run a callback it is given inside it. Such a helper is an invoker too. It is read from its body, so it needs no configuration:
+
+```go
+func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+```
+
+`s.withTx(ctx, func(tx *sql.Tx) error { ... })` opens a scope on `s.db`. A use of `s.db` inside the callback is reported. A use of `s.audit` is not.
+
+A function is a helper when all of these hold:
+
+| Condition | Why |
+| --- | --- |
+| It is a declared function or method, and one of its parameters is of a function type | That parameter is the callback |
+| It opens a transaction with an invoker, or a helper, and calls the callback in that invoker's callback. Or it calls the callback in the region of a begin | The callback runs inside the transaction |
+| Each call of the callback is given the transaction, at the same parameter | That parameter is the callback's transaction |
+| The transaction is opened on a parameter, or on a field selected from one. Every call agrees on which | That handle is the outer one. A package-level variable is no parameter |
+| The callback is only called. It is not stored, passed on, or called by `go` or `defer` | It might then run outside the transaction |
+| No call of the callback runs outside a transaction | A helper that reuses a transaction it is given, as `if cur != nil { return fn(cur) }`, also runs the callback outside the one it opens |
+
+The first parameter of a function type that meets them is the callback. A helper that calls itself is read as no helper at its own call.
+
+A helper of another package is known by the fact `invokes[pO.f, pC(T)]`, which the analysis of its package exports. `pO` is the parameter that holds the handle, and `.f` the fields selected from it. `pC` is the callback, and `T` the callback's parameter that is given the transaction. The receiver of a method is parameter 0.
+
+At the call, the scope is read as an invoker's is. The message names the helper as it names an invoker: a method by its name, a function by its package's name and its own. A call is not read when:
+
+| Case | Why |
+| --- | --- |
+| The callback is not a function literal | Its body is not read |
+| The callback is the receiver, or the handle is the receiver of a method expression | The selector names no handle, or no literal |
+| The arguments are one call with several results | There is no function literal to read |
+
+A helper that carries the transaction in a context is not read yet.
+
 ## Begins
 
 A begin is a method recognized as an invoker is. It returns the transaction first, and an error second when it may fail.
@@ -354,7 +398,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
-| A function literal given to a transaction helper of the project, as `s.withTx(ctx, func(tx *sql.Tx) error { ... })` | Only a call of a known invoker opens a scope. Inside the helper, the callback is a function value, whose body is not read |
+| A function literal given to a helper of the project that is not read as one. A helper that opens on a package-level variable is one | See [Helpers that open a transaction](#helpers-that-are-invokers) |
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |

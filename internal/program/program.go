@@ -303,3 +303,16 @@ func Used(instr ssa.Instruction) bool {
 	}
 	return false
 }
+
+// Walk calls visit for each instruction of fn and of the literals inside
+// it.
+func Walk(fn *ssa.Function, visit func(ssa.Instruction)) {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			visit(instr)
+		}
+	}
+	for _, anon := range fn.AnonFuncs {
+		Walk(anon, visit)
+	}
+}

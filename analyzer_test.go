@@ -32,6 +32,7 @@ func TestAnalyzer(t *testing.T) {
 		"mongotx",
 		"reltx",
 		"trmtx",
+		"helpertx",
 		"directives",
 		"generated",
 	)

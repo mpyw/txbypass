@@ -525,6 +525,11 @@ func (p Path) Root() ssa.Value {
 	return p.base
 }
 
+// Fields are the fields p selects from its root, in order.
+func (p Path) Fields() []*types.Var {
+	return p.fields
+}
+
 // Depth is the number of fields p selects from its root.
 func (p Path) Depth() int {
 	return len(p.fields)

@@ -77,28 +77,8 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 		// The begin is in code that no path reaches. It never runs.
 		return
 	}
-	var tx, err ssa.Value = call, nil
-	for _, ref := range *call.Referrers() {
-		if ex, ok := ref.(*ssa.Extract); ok {
-			switch ex.Index {
-			case 0:
-				tx = ex
-			case 1:
-				err = ex
-			}
-		}
-	}
-	var addr *ssa.Alloc
-	for _, ref := range *tx.Referrers() {
-		if st, ok := ref.(*ssa.Store); ok {
-			addr, _ = st.Addr.(*ssa.Alloc)
-		}
-	}
-	r := region.New(call, tx, err, addr, c.closer, c.paths)
-	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: []handle.Path{c.paths.Of(tx)}}
-	if addr != nil {
-		s.txs = append(s.txs, c.paths.Of(addr))
-	}
+	r := region.Begun(call, c.closer, c.paths)
+	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: r.Txs()}
 	// The receiver of a method call is always evaluated as a value.
 	outerRef, _ := c.prog.Ref(fn, b.Outer.X)
 	outer := c.paths.Of(outerRef.X).With(handle.Promoted(c.pass.TypesInfo.Selections[b.Outer]))

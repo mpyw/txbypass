@@ -133,8 +133,9 @@ func Given(db *sql.DB, run func(func() error)) {
 	db.Exec("after the closure was given away")
 }
 
-// A function value whose body is unknown is taken to keep it open.
-func Unknown(db *sql.DB, f func(*sql.Tx)) {
+// A function value whose body is unknown is taken to keep it open. Unknown
+// runs it inside the transaction, so it is a helper of its own.
+func Unknown(db *sql.DB, f func(*sql.Tx)) { // want Unknown:`^invokes\[p0, p1\(0\)\]$`
 	tx, _ := db.Begin()
 	f(tx)
 	db.Exec("after an unknown function") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`

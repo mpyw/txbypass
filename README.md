@@ -195,6 +195,46 @@ The exact receivers and signatures are in [design/rules.md](design/rules.md#invo
 > [!NOTE]
 > A transaction begun on one dedicated connection is not read. `*sql.Conn`, `*pgx.Conn`, `*pgxpool.Conn`, `bun.Conn`, `bob.Conn` and go-pg's `*pg.Conn` are such connections. A statement on the connection runs inside the transaction, so it bypasses nothing. A savepoint, a transaction opened on a transaction, is not read either, for the same reason. The `Tx` of upper/db is no savepoint on a transaction: it begins another transaction on the pool.
 
+### Helpers of your own
+
+A function of your project that opens a transaction and runs a callback in it is read as an invoker too. No configuration is needed, and a helper in another package works the same way.
+
+```go
+func (s *Store) withTx(
+	ctx context.Context,
+	fn func(*sql.Tx) error,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
+func (s *Store) Place(ctx context.Context) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		// s.db bypasses the transaction opened with
+		// withTx; use tx instead
+		_, err := s.db.ExecContext(ctx, audit)
+		return err
+	})
+}
+```
+
+The helper may open the transaction with a begin, as above, or with the callback of an invoker or of another helper.
+
+| A helper is not read when | Why |
+| --- | --- |
+| It may call the callback outside the transaction, as `if cur != nil { return fn(cur) }` | Every use inside would be reported on that path |
+| It stores the callback, passes it on, or runs it with `go` or `defer` | The callback may run outside the transaction |
+| It opens on a package-level variable, or on a handle a call returns | Only a parameter, or a field of one, can name the handle at the call |
+| It carries the transaction in a context | Not read yet |
+
+The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers).
+
 ### `outer-handle`
 
 Inside a transaction, every use of the handle it was opened on is reported. The transaction can be opened in two ways.
@@ -976,7 +1016,7 @@ func (r *Repo) place(tx *gorm.DB) error {
 <td>
 
 ```go
-s.withTx(ctx, func(tx *sql.Tx) error {
+s.reuse(ctx, cur, func(tx *sql.Tx) error {
 	_, err := s.db.ExecContext(ctx, q)
 	return err
 })
@@ -984,7 +1024,7 @@ s.withTx(ctx, func(tx *sql.Tx) error {
 
 </td>
 <td>⚠️</td>
-<td>A literal given to a transaction helper of your own is not read. Only a call of a known invoker opens a scope. Inside the helper, the callback is a function value</td>
+<td>A helper that may run the callback outside the transaction is not read as one. See <a href="#helpers-of-your-own">Helpers of your own</a></td>
 </tr>
 <tr>
 <td>

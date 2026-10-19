@@ -63,7 +63,7 @@ func (c *checker) scopeOuter(o txcall.Invoker, fn *ssa.Function) (handle.Path, b
 	if !ok {
 		return handle.Path{}, false
 	}
-	return c.paths.Of(ref.X).With(promoted), true
+	return c.paths.Of(ref.X).With(promoted).With(o.Fields), true
 }
 
 // scopeBindsBoth reports whether e is an argument of a call, or a field of
