@@ -232,7 +232,9 @@ The helper may open the transaction with a begin, as above, or with the callback
 A helper that returns the transaction it begins is read as a begin:
 
 ```go
-func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
+func (s *Store) begin(
+	ctx context.Context,
+) (*sql.Tx, error) {
 	return s.db.BeginTx(ctx, nil)
 }
 
@@ -246,17 +248,168 @@ defer tx.Rollback()
 s.db.ExecContext(ctx, audit)
 ```
 
-| A helper is not read when | Why |
-| --- | --- |
-| It may call the callback outside the transaction, as `if cur != nil { return fn(cur) }` | Every use inside would be reported on that path |
-| It stores the callback, passes it on, or runs it with `go` or `defer` | The callback may run outside the transaction |
-| It opens on a package-level variable, or on a handle a call returns | Only a parameter, or a field of one, can name the handle at the call |
-| It carries the transaction in a context | Not read yet |
-| It returns the transaction wrapped in a struct, or one it was given | The struct is not followed. A transaction it was given is not new |
-| It defers a call given the transaction it returns, as `defer tx.Rollback()` | The deferred call may end the transaction before the caller uses it |
-| It gives the address of its error to a call, as `defer annotate(&err)` | The call may return an open transaction beside an error |
-| It takes two callbacks | Only the first that runs inside the transaction is read |
-| It is a method with a pointer receiver, called on a struct held by value, as `s := Store{db: db}` then `s.withTx(...)` | The call takes the address of `s`, and a method of the module given it may change what `s.db` holds |
+<details>
+<summary>Helpers that are not read, so a bypass in a callback given to one is not reported</summary>
+
+<table>
+<thead>
+<tr><th>Helper</th><th>Why it is not read</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+func (s *Store) reuse(
+	ctx context.Context,
+	cur *sql.Tx,
+	fn func(*sql.Tx) error,
+) error {
+	if cur != nil {
+		return fn(cur)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	// ...
+}
+```
+
+</td>
+<td>It may call the callback outside the transaction it opens. Every use inside would be reported on that path</td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) withTx(
+	ctx context.Context,
+	fn func(*sql.Tx) error,
+) error {
+	s.hooks = append(s.hooks, fn)
+	// ...
+	go fn(tx)
+	// ...
+}
+```
+
+</td>
+<td>It stores the callback, passes it on, or runs it with <code>go</code> or <code>defer</code>. The callback may run outside the transaction</td>
+</tr>
+<tr>
+<td>
+
+```go
+var db *sql.DB
+
+func withTx(
+	ctx context.Context,
+	fn func(*sql.Tx) error,
+) error {
+	tx, err := db.BeginTx(ctx, nil)
+	// ...
+}
+```
+
+</td>
+<td>It opens on a package-level variable, or on a handle a call returns. Only a parameter, or a field of one, can name the handle at the call</td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) withTx(
+	ctx context.Context,
+	fn func(context.Context) error,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	// ...
+	return fn(ctxWithTx(ctx, tx))
+}
+```
+
+</td>
+<td>It carries the transaction in a context. Its body is not read for that yet. <a href="#declaring-helpers">Declare it</a></td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) begin(
+	ctx context.Context,
+) (*Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	return &Tx{tx}, err
+}
+```
+
+</td>
+<td>It returns the transaction wrapped in a struct, or one it was given. The struct is not followed, and a transaction it was given is not new</td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) begin(
+	ctx context.Context,
+) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return tx, nil
+}
+```
+
+</td>
+<td>It defers a call given the transaction it returns. The call may end the transaction before the caller uses it</td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) begin(
+	ctx context.Context,
+) (tx *sql.Tx, err error) {
+	defer annotate(&err)
+	return s.db.BeginTx(ctx, nil)
+}
+```
+
+</td>
+<td>It gives the address of its error to a call. The call may return an open transaction beside an error</td>
+</tr>
+<tr>
+<td>
+
+```go
+func (s *Store) withTx(
+	ctx context.Context,
+	pre func(*sql.Tx) error,
+	fn func(*sql.Tx) error,
+) error
+```
+
+</td>
+<td>It takes two callbacks. Only the first that runs inside the transaction is read, here <code>pre</code></td>
+</tr>
+<tr>
+<td>
+
+```go
+s := Store{db: db}
+s.withTx(ctx, func(tx *sql.Tx) error {
+	_, err := s.db.ExecContext(ctx, q)
+	return err
+})
+```
+
+</td>
+<td>It is a method with a pointer receiver, called on a struct held by value. The call takes the address of <code>s</code>, and a method of the module given it may change what <code>s.db</code> holds</td>
+</tr>
+</tbody>
+</table>
+
+</details>
 
 The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
 
@@ -285,7 +438,7 @@ type Tx interface {
 | `//txbypass:begins` | A call returns a transaction, open |
 | `//txbypass:closes` | A call ends every transaction it is given, its receiver included |
 
-The handle is the receiver. The callback is the first parameter of a function type. It is given the transaction at its first parameter that may be one, which is not a number, a string, a bool, an error, a context or a function. A callback that takes a context and no transaction gets the transaction in the context, and [`outer-context`](#outer-context) reads it. The exact rules are in [design/rules.md](design/rules.md#declared-helpers).
+The handle is the receiver. The callback is the first parameter of a function type. It is given the transaction at its first parameter that may be one. A number, a string, a bool, an error, a context or a function may not. A callback that takes a context and no transaction gets the transaction in the context, and [`outer-context`](#outer-context) reads it. The exact rules are in [design/rules.md](design/rules.md#declared-helpers).
 
 For code you cannot edit, pass the names in a flag:
 
