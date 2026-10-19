@@ -365,3 +365,43 @@ func Handled(ctx context.Context, m *Mgr) error {
 	}
 	return m.Exec(ctx, "after")
 }
+
+// AnyEnder ends what it is given, typed as any. Any value may be a
+// transaction, so AnyEnder holds none itself.
+type AnyEnder struct{}
+
+// End ends v.
+//
+//txbypass:closes
+func (*AnyEnder) End(v any) error { return nil } // want End:`^closes\[0 1\]$`
+
+// endAny ends tx, and not e, which is no transaction.
+func endAny(e *AnyEnder, tx *sql.Tx) error { return e.End(tx) } // want endAny:`^closes\[1\]$`
+
+// Ticket is a transaction that is a named interface with no method: only
+// its manager ends it.
+type Ticket interface{}
+
+// Desk begins and ends tickets.
+type Desk struct{}
+
+//txbypass:begins
+func (*Desk) Open(ctx context.Context) (Ticket, error) { return nil, nil } // want Open:`^begins\[p0\]$`
+
+//txbypass:closes
+func (*Desk) Close(t Ticket) error { return nil } // want Close:`^closes\[0 1\]$`
+
+// closeTicket ends t through its desk, and not d, which is no transaction.
+func closeTicket(d *Desk, t Ticket) error { return d.Close(t) } // want closeTicket:`^closes\[1\]$`
+
+// Logger is given to an end beside the transaction. It is no transaction.
+type Logger struct{}
+
+// Journal ends a handle, and logs to l.
+type Journal struct{}
+
+//txbypass:closes
+func (*Journal) End(why string, h *Handle, l *Logger) error { return nil } // want End:`^closes\[0 1 2 3\]$`
+
+// logged ends h, and not l, which is no transaction.
+func logged(j *Journal, h *Handle, l *Logger) error { return j.End("done", h, l) } // want logged:`^closes\[1\]$`

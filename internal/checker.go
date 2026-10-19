@@ -38,9 +38,8 @@ type checker struct {
 	// declared holds the functions of the package that a directive
 	// declares, by kind, once the declaration fits the signature.
 	declared map[directive.Kind]map[*types.Func]bool
-	// holdsDeclared remembers, for each type asked about, whether a method
-	// of it is declared to end a transaction. methodSets builds the method
-	// sets it reads.
+	// holdsDeclared remembers, for each type asked about, whether it is a
+	// transaction. methodSets builds the method sets it reads.
 	//
 	//declscope:private
 	holdsDeclared typeutil.Map
@@ -101,28 +100,30 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 //
 //declscope:shared // run.go hands it to closer and helper, and asks it of signatures
 func (c *checker) holds(t types.Type) bool {
-	if txcall.Holds(t) || c.declaredTx(t) {
-		return true
-	}
 	if v := c.holdsDeclared.At(t); v != nil {
 		return v.(bool)
 	}
-	found := false
+	found := txcall.Holds(t) || c.declaredTx(t) || c.endsReceiver(t)
+	c.holdsDeclared.Set(t, found)
+	return found
+}
+
+// endsReceiver reports whether a value of type t has a method declared, here
+// or in the package that declares the method, to end its receiver alone.
+func (c *checker) endsReceiver(t types.Type) bool {
 	for _, sel := range typeutil.IntuitiveMethodSet(t, &c.methodSets) {
 		m := sel.Obj().(*types.Func)
 		var f closer.Fact
 		ends := c.declares(directive.KindCloses, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0)
 		// A declared end of the receiver alone, as tx.Done(err), makes
 		// the receiver a transaction. One given a value that may be a
-		// transaction, as m.End(tx), ends that one: the receiver is what
-		// ends it.
-		if ends && !slices.ContainsFunc(checkerParamTypes(m), checkerTxLike) {
-			found = true
-			break
+		// transaction, as m.End(tx) or m.End(v any), ends that one: the
+		// receiver is what ends it.
+		if ends && !checkerTakesTx(m) {
+			return true
 		}
 	}
-	c.holdsDeclared.Set(t, found)
-	return found
+	return false
 }
 
 // begins reports whether fn is a begin: one of a library, one a directive
@@ -144,14 +145,15 @@ func (c *checker) begins(fn *types.Func) bool {
 	return fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
 }
 
-// checkerParamTypes lists the types of the parameters of m, not its
-// receiver.
-func checkerParamTypes(m *types.Func) []types.Type {
-	var out []types.Type
+// checkerTakesTx reports whether m takes a parameter, not its receiver,
+// that may be a transaction.
+func checkerTakesTx(m *types.Func) bool {
 	for p := range m.Signature().Params().Variables() {
-		out = append(out, p.Type())
+		if checkerMayBeTx(p.Type()) {
+			return true
+		}
 	}
-	return out
+	return false
 }
 
 // declaredTx reports whether t is the type of a transaction that a declared
@@ -190,18 +192,35 @@ func (c *checker) readTxTypes(fn *types.Func) {
 		pt := sig.Params().At(i).Type()
 		if (declared || slices.Contains(f.Params, first+i)) && checkerTxLike(pt) {
 			c.txTypes.Set(pt, true)
+			// A declaration ends every input, but only its first that may
+			// be a transaction is one, as tx in End(tx, log). An input
+			// after it, as a logger, is no transaction type.
+			if declared {
+				return
+			}
 		}
 	}
 }
 
-// checkerTxLike reports whether a value of type t may be a transaction: it
-// is not a number, a string, an error, a context or a function.
+// checkerTxLike reports whether t is a type of transaction that a declared
+// end may take: one that may be a transaction, and not the empty interface,
+// which names no type. A named interface with no method may be an opaque
+// handle.
 func checkerTxLike(t types.Type) bool {
-	switch u := t.Underlying().(type) {
+	if i, ok := types.Unalias(t).(*types.Interface); ok && i.Empty() {
+		return false
+	}
+	return checkerMayBeTx(t)
+}
+
+// checkerMayBeTx reports whether a value of type t may be a transaction: it
+// is not a number, a string, a bool, an error, a context or a function.
+func checkerMayBeTx(t types.Type) bool {
+	switch t.Underlying().(type) {
 	case *types.Basic, *types.Signature:
 		return false
 	case *types.Interface:
-		return !types.Identical(t, types.Universe.Lookup("error").Type()) && !txcall.IsContext(t) && u.NumMethods() > 0
+		return !types.Identical(t, types.Universe.Lookup("error").Type()) && !txcall.IsContext(t)
 	}
 	return true
 }
