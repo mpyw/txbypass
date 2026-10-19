@@ -487,3 +487,29 @@ func Optioned(ctx context.Context, db *OptDB, o *Opts) error {
 	db.With(o).Exec(ctx, "q") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	return tx.End(o)
 }
+
+// ValOptTx is OptTx with an end on its value, not its pointer.
+type ValOptTx struct{}
+
+//txbypass:closes
+func (ValOptTx) End(o *Opts) error { return nil } // want End:`^closes\[0 1\]$`
+
+// ValOptDB begins ValOptTx.
+type ValOptDB struct{}
+
+//txbypass:begins
+func (*ValOptDB) Begin(ctx context.Context) (*ValOptTx, error) { return nil, nil } // want Begin:`^begins\[p0\]$`
+
+func (*ValOptDB) Exec(ctx context.Context, q string) error { return nil }
+
+// With gives the database itself, bound to options.
+func (db *ValOptDB) With(o *Opts) *ValOptDB { return db }
+
+func ValOptioned(ctx context.Context, db *ValOptDB, o *Opts) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	db.With(o).Exec(ctx, "q") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.End(o)
+}

@@ -183,11 +183,30 @@ func (c *checker) declaredTx(t types.Type) bool {
 		for _, fn := range fns {
 			c.readBeginTxType(fn)
 		}
+		// The ends are read against the begins alone, and recorded once
+		// all are read. A type one end takes then never turns another's
+		// receiver into a transaction, whatever order the map gives.
+		var ends []types.Type
 		for _, fn := range fns {
-			c.readEndTxTypes(fn)
+			ends = append(ends, c.readEndTxTypes(fn)...)
+		}
+		for _, t := range ends {
+			c.txTypes.Set(t, true)
 		}
 	}
 	return c.txTypes.At(t) != nil
+}
+
+// txRecv reports whether a method on a receiver of type t ends its
+// receiver: t has a method that ends one by its name, or a begin returns
+// it. A method on the value or on the pointer counts either way, as a
+// begin of *T with an end on T.
+func (c *checker) txRecv(t types.Type) bool {
+	alt := types.Type(types.NewPointer(t))
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
+		alt = p.Elem()
+	}
+	return txcall.Holds(t) || c.txTypes.At(t) != nil || c.txTypes.At(alt) != nil
 }
 
 // readBeginTxType records the type of the transaction fn returns, when it
@@ -200,19 +219,19 @@ func (c *checker) readBeginTxType(fn *types.Func) {
 	}
 }
 
-// readEndTxTypes records the type of the transaction a declared end, or an
+// readEndTxTypes lists the type of the transaction a declared end, or an
 // end of another package, takes. A method of a transaction, one with an
 // ending method or one a begin returns, ends its receiver: its inputs,
 // as options, are no transaction types.
-func (c *checker) readEndTxTypes(fn *types.Func) {
+func (c *checker) readEndTxTypes(fn *types.Func) []types.Type {
 	sig := fn.Signature()
-	if recv := sig.Recv(); recv != nil && (txcall.Holds(recv.Type()) || c.txTypes.At(recv.Type()) != nil) {
-		return
+	if recv := sig.Recv(); recv != nil && c.txRecv(recv.Type()) {
+		return nil
 	}
 	var f closer.Fact
 	declared := c.declares(directive.KindCloses, fn)
 	if !declared && (fn.Pkg() == c.pass.Pkg || !c.pass.ImportObjectFact(fn.Origin(), &f)) {
-		return
+		return nil
 	}
 	// A directive of another package declares every input too.
 	declared = declared || f.Declared
@@ -220,18 +239,20 @@ func (c *checker) readEndTxTypes(fn *types.Func) {
 	if sig.Recv() != nil {
 		first = 1
 	}
+	var out []types.Type
 	for i := range sig.Params().Len() {
 		pt := sig.Params().At(i).Type()
 		if (declared || slices.Contains(f.Params, first+i)) && checkerTxLike(pt) {
-			c.txTypes.Set(pt, true)
+			out = append(out, pt)
 			// A declaration ends every input, but only its first that may
 			// be a transaction is one, as tx in End(tx, log). An input
 			// after it, as a logger, is no transaction type.
 			if declared {
-				return
+				return out
 			}
 		}
 	}
+	return out
 }
 
 // checkerTxLike reports whether t is a type of transaction that a declared
