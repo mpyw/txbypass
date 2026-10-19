@@ -338,9 +338,8 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []helperTra
 				return true
 			}
 			lit := h.prog.Func(o.Callback)
-			obj := h.pass.TypesInfo.Defs[o.Tx]
-			i := slices.IndexFunc(lit.Params, func(p *ssa.Parameter) bool { return p.Object() == obj })
-			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer, nests: o.Nests})
+			tx := program.Param(lit, h.pass.TypesInfo.Defs[o.Tx])
+			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(tx)}, outer: outer, nests: o.Nests})
 			return true
 		}
 		b, ok := txcall.BeginCall(h.pass.TypesInfo, call, h.beginShape)

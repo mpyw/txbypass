@@ -9,6 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/txcall"
 )
@@ -36,10 +37,10 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 		}
 		// A named result that a deferred literal reads is returned through
 		// a load of what the return stored.
-		if region.Stored(ret.Results[0], beginNilConst) {
+		if region.Stored(ret.Results[0], program.IsNil) {
 			// No transaction is returned. The caller has to read an error
 			// beside it, or it reads a begin that did not happen.
-			if len(ret.Results) < 2 || region.Stored(ret.Results[1], beginNilConst) {
+			if len(ret.Results) < 2 || region.Stored(ret.Results[1], program.IsNil) {
 				return nil
 			}
 			continue
@@ -54,12 +55,6 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 		shape = &s
 	}
 	return shape
-}
-
-// beginNilConst reports whether v is the constant nil.
-func beginNilConst(v ssa.Value) bool {
-	c, ok := v.(*ssa.Const)
-	return ok && c.IsNil()
 }
 
 // beginErrRewritten reports whether v, an error result, is a load of a
@@ -107,34 +102,10 @@ func beginErrSet(fv *ssa.FreeVar) bool {
 		case *ssa.UnOp, *ssa.DebugRef:
 		case *ssa.Store:
 			// A store of fv itself, rather than into it, hands it on.
-			if ref.Addr != fv || !beginUnderNotNil(ref.Block(), fv) {
+			if ref.Addr != fv || !program.UnderNotNil(ref.Block(), fv) {
 				return true
 			}
 		default:
-			return true
-		}
-	}
-	return false
-}
-
-// beginUnderNotNil reports whether b runs only where fv holds an error
-// that is not nil: it is dominated by the true edge of fv != nil.
-func beginUnderNotNil(b *ssa.BasicBlock, fv *ssa.FreeVar) bool {
-	for c := b; c.Idom() != nil; c = c.Idom() {
-		p := c.Idom()
-		cond, ok := p.Instrs[len(p.Instrs)-1].(*ssa.If)
-		if !ok || !p.Succs[0].Dominates(b) {
-			continue
-		}
-		cmp, ok := cond.Cond.(*ssa.BinOp)
-		if !ok || cmp.Op != token.NEQ {
-			continue
-		}
-		x, y := cmp.X, cmp.Y
-		if beginNilConst(x) {
-			x, y = y, x
-		}
-		if load, ok := x.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == fv && beginNilConst(y) {
 			return true
 		}
 	}
