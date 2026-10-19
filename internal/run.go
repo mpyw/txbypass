@@ -54,7 +54,7 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 		c.paths = handle.NewPaths(runModule(pass.Module), c.declared)
 		c.closer = closer.New(pass, c.paths, c.declared)
 		c.closer.Export(c.prog)
-		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declared)
+		c.helpers = helper.NewHelpers(pass, c.prog, c.paths, c.closer, c.declared)
 		c.helpers.Export()
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not
@@ -94,7 +94,7 @@ func runNeedsProgram(pass *analysis.Pass, decl *declared.Set) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
 				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
-				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n) || decl.Calls(n)
+				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.CallsHelper(pass, n) || decl.Calls(n)
 			case *ast.FuncDecl:
 				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature(), decl.Holds)
 			case *ast.FuncLit:
