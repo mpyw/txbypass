@@ -36,6 +36,8 @@ func TestAnalyzer(t *testing.T) {
 		"reltx",
 		"trmtx",
 		"helpertx",
+		"declaredlib",
+		"declaredtx",
 		"directives",
 		"generated",
 	)
@@ -83,6 +85,33 @@ func TestFlags(t *testing.T) {
 		if f.DefValue != want {
 			t.Errorf("flag %s defaults to %s, want %s", name, f.DefValue, want)
 		}
+	}
+}
+
+// TestDeclaredFlags runs with -invokes, -begins and -closes set, which
+// declare the helpers of a library flagtx calls.
+func TestDeclaredFlags(t *testing.T) {
+	setFlag(t, "invokes", "(flaglib.Manager).InTx,(flaglib.Store).WithTx")
+	setFlag(t, "begins", "(*flaglib.Manager).Begin")
+	setFlag(t, "closes", "(flaglib.Tx).Finish")
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flaglib", "flagtx")
+}
+
+// TestDeclaredFlagAddsUp keeps the names of a flag given twice.
+func TestDeclaredFlagAddsUp(t *testing.T) {
+	setFlag(t, "invokes", "(flaglib.Manager).InTx")
+	setFlag(t, "invokes", "flaglib.Other")
+	f := txbypass.Analyzer.Flags.Lookup("invokes")
+	if got, want := f.Value.String(), "(flaglib.Manager).InTx,flaglib.Other"; got != want {
+		t.Errorf("-invokes = %q, want %q", got, want)
+	}
+}
+
+// TestDeclaredFlagRejectsMisspelling refuses a name that is not spelled like
+// a function, since a typo would switch its declaration off in silence.
+func TestDeclaredFlagRejectsMisspelling(t *testing.T) {
+	if err := txbypass.Analyzer.Flags.Set("invokes", "InTx"); err == nil {
+		t.Error("-invokes=InTx was accepted")
 	}
 }
 

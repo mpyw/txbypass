@@ -25,6 +25,7 @@ internal/                the rules: one flat package, one namespace per file
   outer_context.go       outer-context
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //txbypass: comments
+internal/funcname/       the names -invokes, -begins and -closes take
 internal/txcall/         the calls that open a transaction: the tables, and ent's shape
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
@@ -39,7 +40,8 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | Package | Why it stands alone |
 | --- | --- |
 | `rule` | Names only. Flags, messages and directives all spell them |
-| `directive` | Reads comments and source text only |
+| `directive` | Reads comments and source text only, and the types a declaring directive names |
+| `funcname` | Reads and spells names of functions only |
 | `txcall` | Reads syntax and types only. It knows nothing of rules |
 | `program` | Builds the SSA form, and maps syntax to it. It knows nothing of handles |
 | `handle` | Reads SSA values only |
@@ -158,6 +160,17 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | A literal's parameter is a helper's transaction only when the literal is given as the helper's callback | A helper may take two literals. The other one may be given the handle itself, so a transaction opened on it is no savepoint |
 | A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
 | `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
+
+## Declared helpers
+
+| Decision | Why |
+| --- | --- |
+| Three directives, `invokes`, `begins` and `closes`, with no arguments | A transaction is opened by invoking a callback or by beginning, and ended by a call. The verbs say which. Open and begin read the same, so invoke names the callback kind |
+| Read the shape from the signature | An interface method has no body. The defaults fit a transaction manager: the receiver is the handle, and the callback takes the transaction, or a context that carries it |
+| A body of the package that opens on one handle names it | A declared method of a struct that holds two handles would report every use of the struct otherwise |
+| Flag names are matched where they are called, by `funcname.Key`, as errlogreturn's `-sinks` is | Every pass sees the same flags, so no fact is needed. A directive is seen only where it is written, so it exports a fact |
+| A declaration wins over the body | A declaration is for code the reader knows better than the body says |
+| A declared end ends any input, the receiver of an interface method included | An interface method's receiver is the transaction, as `tx.Done(err)` is. A name that is not `Commit` or `Rollback` is otherwise not an end |
 
 ## Scopes that build or rebind
 

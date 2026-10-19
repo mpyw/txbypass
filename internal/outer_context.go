@@ -27,10 +27,11 @@ func (c *checker) checkOuterContext(o txcall.Invoker, fn *ssa.Function) {
 		return
 	}
 	// An invoker that nests, as go-transaction-manager's Do or go-rel's
-	// Transaction, given the context of another one's callback, joins that
-	// transaction or opens a savepoint in it. A statement with the outer
+	// Transaction, or one declared to carry its transaction in a context,
+	// given the context of another one's callback, joins that transaction
+	// or opens a savepoint in it. A statement with the outer
 	// context runs inside it.
-	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && o.Nests && scopeGiven(p, func(fn *types.Func, _, i int) bool { return txcall.CallbackContext(fn, i) }) {
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && o.Nests && scopeGiven(p, c.helpers.GivesContext) {
 		return
 	}
 	s := txScope{root: o.Callback.Body, fn: c.prog.Func(o.Callback), openedWith: o.Name, tx: o.Tx, unnamed: "the callback's context"}

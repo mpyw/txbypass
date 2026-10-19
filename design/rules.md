@@ -327,7 +327,7 @@ A transaction given to a function value or an interface method, whose body is no
 
 ### Helpers
 
-A function ends its parameter when its body calls one of the ending methods on it. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read.
+A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read. A method declared as an end counts when it takes nothing else that may be a transaction. A number, a string, a bool, an error, a context or a function may not. So `tx.Done(err)` makes `tx` one, and `m.End(tx)` does not make `m` one. A type that a declared begin the package calls returns is a transaction too. So is the first parameter of a declared end that may be a transaction, as `h` in `End(h *Handle, l *Logger)`. A parameter after it, as the logger, is not. A declared end may be a method of a transaction: one with an ending method, or one a begin returns, as `T` or `*T`. It ends its receiver, and a parameter of it, as options in `tx.End(opts)`, is not a transaction. It may have no method, as an opaque handle that only its manager ends, or be a named interface with no method. The empty interface `any` names no type, so it is not one.
 
 | The function is | It is read |
 | --- | --- |
@@ -362,6 +362,54 @@ Firestore's client builds the references a transaction reads and writes, as in `
 | The receiver | Be a struct, or a pointer to one, whose every field can hold the transaction or is a `*sql.Stmt`. The `Queries` of sqlc holds only its `DBTX`, and with `emit_prepared_queries` a statement per query. A struct that holds more, as a logger or metrics, is not only a database: its other members are no uses |
 
 The call itself is not a use, and neither is a chain built on it, as in `q.WithTx(tx).CreateUser(ctx)`. A callback whose transaction parameter is unnamed rebinds nothing.
+
+## Declared helpers
+
+A helper whose body cannot be read is declared. That is an interface method, as a transaction manager given by dependency injection, or a function of a package you cannot edit. A declaration also wins over what a body would say.
+
+| Declare | With | It says |
+| --- | --- | --- |
+| An invoker | `//txbypass:invokes`, or `-invokes` | A call opens a transaction, and runs the callback inside it |
+| A begin | `//txbypass:begins`, or `-begins` | A call returns a transaction, open |
+| An end | `//txbypass:closes`, or `-closes` | A call ends every transaction it is given, its receiver included |
+
+The directive goes in the doc comment of a function, a method, or an interface method, or trails an interface method. A flag takes a comma-separated list of names, spelled as `go/types` spells them:
+
+| Kind | Spelling |
+| --- | --- |
+| A function | `example.com/db.InTx` |
+| A method | `(example.com/db.Manager).InTx`. The `*` of a pointer receiver may be written or left out |
+| A method of a generic type | `(example.com/db.Store[T]).InTx`. The type arguments may be written with any names, or left out |
+
+A name not spelled this way stops the run. A name spelled right that names nothing is not reported. A method is named by the type that declares it, not by a type that embeds it. A flag given twice declares the names of both. A declaration by a flag that the signature does not fit is not reported, and the body is read as it would be without the flag.
+
+What a declaration says is read from the signature:
+
+| Part | Read as |
+| --- | --- |
+| The handle | The receiver of a method. For a function, its first parameter that is neither a `context.Context` nor of a function type. A body of the package that opens every transaction on one parameter, or one field of it, names that instead, as `s.db` for a method of `s` |
+| The callback of an invoker | The first parameter of a function type |
+| The transaction the callback is given | The callback's first parameter that may be a transaction: not a number, a string, a bool, an error, a context or a function |
+| A callback that takes a context and no transaction | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter. Called with the context of another such callback, it joins that transaction, as go-transaction-manager's `Do` does |
+| The transaction a begin returns | Its first result. A second result is its error, and has to be an `error` |
+
+A declaration that the signature does not fit is reported, and declares nothing:
+
+| Directive | Reported when |
+| --- | --- |
+| `invokes` | There is no parameter of a function type, no handle, or a callback that takes neither a transaction nor a context. A callback that takes only a context needs a context parameter of the invoker |
+| `begins` | There is no result or more than two. The first is a number, a string, a bool, an error, a context or a function, or a second is not an `error`. There is no handle |
+| `closes` | There is no receiver and no parameter |
+
+A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.
+
+What is a transaction is read from the types, and these are not read as one:
+
+| Case | Read as |
+| --- | --- |
+| A declared end of the receiver that takes options, as `tx.Done(opts ...Option)`, where no begin the package sees returns the receiver's type | The options are the transaction. Declare a begin that returns the type, or end it with no argument |
+| A transaction type known only from the callback of a declared invoker | No transaction type. Declare a begin that returns it |
+| An invoker or a begin function whose handle is not its first parameter that is neither a context nor a function | The first such parameter is the handle. Put the handle first, or make it a method of the handle |
 
 ## `outer-handle`
 
@@ -416,13 +464,18 @@ A use is reported at the start of the expression that names the handle. For `r.d
 | An unknown rule name | Reported: `unknown rule x in txbypass:ignore`. The known rules beside it still apply. An ignore whose rules are all unknown is not also reported as unused |
 | An empty rule name, as in `outer-handle, // reason` | Reported: `empty rule name in txbypass:ignore`. The known rules beside it still apply |
 | An ignore that silences nothing | Reported: `unused txbypass:ignore directive`. An ignore that covers a rule turned off by a flag is not reported: that rule did not run. A bare ignore covers every rule |
+| `//txbypass:invokes`, `//txbypass:begins`, `//txbypass:closes` | Declares a helper. See [Declared helpers](#declared-helpers) |
+| One of them with text after the name that is not behind `//` | Reported: `txbypass:invokes takes no argument; write a reason after //` |
+| One of them anywhere but the doc comment of a function, a method or an interface method | Reported: `txbypass:invokes belongs in the doc comment of a function or an interface method` |
 | Any other `//txbypass:` directive | Reported: `unknown directive txbypass:x` |
 
-A directive in a generated file is not read.
+A directive in a generated file is not read, except one that declares a helper. A generator may write one into what it generates. A problem with it is not reported there.
 
 ## Flags
 
 Each rule has a boolean flag of its name. Every rule is on by default. The golangci-lint plugin takes the same names, as keys of its `settings`. A rule left out keeps its default, and an unknown name is an error.
+
+`-invokes`, `-begins` and `-closes` declare helpers by name. See [Declared helpers](#declared-helpers). The plugin takes each as a list, one name per item.
 
 ## Gaps
 

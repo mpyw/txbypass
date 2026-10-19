@@ -1,16 +1,21 @@
 // Package directive reads the //txbypass: comments in a package.
 //
-// One directive exists. //txbypass:ignore <rules> // <reason> silences the
-// named rules, or every rule when none is named. On a line of its own it
-// silences the line below. After code on the same line, it silences that
-// line only. The reason is required, so that the next reader can tell a
-// decision from a shortcut. Any other directive is reported.
+// //txbypass:ignore <rules> // <reason> silences the named rules, or every
+// rule when none is named. On a line of its own it silences the line below.
+// After code on the same line, it silences that line only. The reason is
+// required, so that the next reader can tell a decision from a shortcut.
+//
+// //txbypass:invokes, //txbypass:begins and //txbypass:closes declare what
+// a function, a method or an interface method does with a transaction. They
+// go in its doc comment, or trail an interface method. Any other directive
+// is reported.
 package directive
 
 import (
 	"bytes"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"slices"
 	"strings"
 
@@ -24,10 +29,35 @@ const tool = "txbypass"
 
 // Set is what the directives in a package say.
 type Set struct {
-	fset     *token.FileSet
-	ignores  map[string]map[int][]*ignore
-	all      []*ignore
-	problems []Problem
+	fset         *token.FileSet
+	ignores      map[string]map[int][]*ignore
+	all          []*ignore
+	problems     []Problem
+	declarations []Declaration
+}
+
+// Kind is what a declaring directive says a function does.
+type Kind string
+
+// The declaring directives.
+const (
+	// KindInvokes declares an invoker: it opens a transaction and runs a
+	// callback inside it.
+	KindInvokes Kind = "invokes"
+	// KindBegins declares a begin: it returns a transaction.
+	KindBegins Kind = "begins"
+	// KindCloses declares an end: it ends every transaction it is given.
+	KindCloses Kind = "closes"
+)
+
+// Kinds lists the declaring directives, in the order the flags list them.
+var Kinds = []Kind{KindInvokes, KindBegins, KindCloses}
+
+// Declaration is one declaring directive, and the function it declares.
+type Declaration struct {
+	Obj  *types.Func
+	Kind Kind
+	Pos  token.Pos
 }
 
 // Problem is a directive that is malformed or unknown.
@@ -45,13 +75,21 @@ type ignore struct {
 }
 
 // Scan reads the directives in files. src returns the text of a file, which
-// tells a directive on a line of its own from one after code. A generated
-// file is skipped: nothing is reported in it, so neither its ignores nor its
-// problems mean anything.
-func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error)) *Set {
+// tells a directive on a line of its own from one after code. info gives
+// the function a declaring directive declares. Of a generated file, only
+// the declarations are read.
+func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error), info *types.Info) *Set {
 	s := &Set{fset: fset, ignores: make(map[string]map[int][]*ignore)}
 	for _, f := range files {
-		if Generated(f) {
+		generated := Generated(f)
+		// A generator may write a declaration into what it generates, so
+		// declarations are read there too. Nothing else is: nothing is
+		// reported in a generated file, so neither its ignores nor its
+		// problems mean anything.
+		if info != nil {
+			s.scanDeclarations(f, info, generated)
+		}
+		if generated {
 			continue
 		}
 		name := fset.PositionFor(f.Pos(), false).Filename
@@ -59,6 +97,81 @@ func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]b
 		s.scanFile(f, name, text)
 	}
 	return s
+}
+
+// scanDeclarations reads the declaring directives of f, and reports one
+// with an argument, or one that is not in the doc comment of a function or
+// an interface method. In a generated file, nothing is reported.
+func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
+	report := s.report
+	if generated {
+		report = func(*ast.Comment, string) {}
+	}
+	// placed holds the kind of each declaring directive, and claimed those
+	// in the doc comment of a function or an interface method.
+	placed := make(map[*ast.Comment]Kind)
+	claimed := make(map[*ast.Comment]bool)
+	for _, cg := range f.Comments {
+		for _, cm := range cg.List {
+			d, ok := parse(cm)
+			if !ok || !declaring(d.name) {
+				continue
+			}
+			if strings.TrimSpace(d.args) != "" {
+				report(cm, "txbypass:"+d.name+" takes no argument; write a reason after //")
+				continue
+			}
+			placed[cm] = Kind(d.name)
+		}
+	}
+	if len(placed) == 0 {
+		return
+	}
+	claim := func(doc *ast.CommentGroup, id *ast.Ident) {
+		if doc == nil {
+			return
+		}
+		for _, cm := range doc.List {
+			kind, ok := placed[cm]
+			if !ok {
+				continue
+			}
+			claimed[cm] = true
+			s.declarations = append(s.declarations, Declaration{Obj: info.Defs[id].(*types.Func), Kind: kind, Pos: cm.Pos()})
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncDecl:
+			claim(n.Doc, n.Name)
+		case *ast.InterfaceType:
+			for _, m := range n.Methods.List {
+				if len(m.Names) == 1 {
+					claim(m.Doc, m.Names[0])
+					claim(m.Comment, m.Names[0])
+				}
+			}
+		}
+		return true
+	})
+	for _, cg := range f.Comments {
+		for _, cm := range cg.List {
+			if kind, ok := placed[cm]; ok && !claimed[cm] {
+				report(cm, "txbypass:"+string(kind)+" belongs in the doc comment of a function or an interface method")
+			}
+		}
+	}
+}
+
+// declaring reports whether name is a declaring directive.
+func declaring(name string) bool {
+	return slices.Contains(Kinds, Kind(name))
+}
+
+// Declarations lists the declaring directives, in the order of the files
+// and of the declarations in them.
+func (s *Set) Declarations() []Declaration {
+	return s.declarations
 }
 
 func (s *Set) scanFile(f *ast.File, name string, text []byte) {
@@ -70,6 +183,9 @@ func (s *Set) scanFile(f *ast.File, name string, text []byte) {
 		for _, cm := range cg.List {
 			d, ok := parse(cm)
 			if !ok {
+				continue
+			}
+			if declaring(d.name) {
 				continue
 			}
 			if d.name != "ignore" {

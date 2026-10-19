@@ -38,6 +38,10 @@ import (
 // letting them go. The receiver of a method is parameter 0.
 type Fact struct {
 	Params []int
+	// Declared is true when a //txbypass:closes directive, not the body,
+	// says so. Params then holds every input, and only the first that may
+	// be a transaction is one.
+	Declared bool
 }
 
 // AFact marks Fact as an analysis fact.
@@ -49,6 +53,15 @@ func (f *Fact) String() string { return fmt.Sprintf("closes%v", f.Params) }
 type Closer struct {
 	pass  *analysis.Pass
 	paths *handle.Paths
+	// declared reports whether a function is declared, by a directive of
+	// the package or a flag, to end every transaction it is given.
+	declared func(*types.Func) bool
+	// holds reports whether a value of a type is a transaction.
+	holds func(types.Type) bool
+	// ends holds, for each function asked about, the inputs a declaration
+	// or a fact of another package says it ends, since every call is asked
+	// about.
+	ends map[*types.Func]closerEnds
 	// known holds, for each function and root that has been asked about,
 	// whether the function ends the transaction rooted at that parameter or
 	// free variable. Every answer starts false and only turns true, in a
@@ -66,6 +79,13 @@ type Closer struct {
 	solving bool
 }
 
+// closerEnds is the inputs a declared function ends: all of them, or
+// those in params, the receiver of a method as 0.
+type closerEnds struct {
+	all    bool
+	params []int
+}
+
 // closerKey is a function, and the parameter or free variable of it that
 // holds a transaction.
 type closerKey struct {
@@ -73,9 +93,14 @@ type closerKey struct {
 	root ssa.Value
 }
 
-// New is a Closer for pass, which reads handles through paths.
-func New(pass *analysis.Pass, paths *handle.Paths) *Closer {
-	return &Closer{pass: pass, paths: paths, known: make(map[closerKey]bool)}
+// New is a Closer for pass, which reads handles through paths. declared
+// reports whether a function is declared to end every transaction it is
+// given.
+//
+// holds reports whether a value of a type is a transaction: it has a method
+// that ends one, by its name or by a declaration.
+func New(pass *analysis.Pass, paths *handle.Paths, declared func(*types.Func) bool, holds func(types.Type) bool) *Closer {
+	return &Closer{pass: pass, paths: paths, declared: declared, holds: holds, ends: make(map[*types.Func]closerEnds), known: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -116,6 +141,9 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 
 // callEnds reports whether a call may end the transaction.
 func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
+	if c.declaredEnds(call, txs) {
+		return true
+	}
 	if recv, name, ok := receiver(call); ok && txcall.Ending(name) && !takesFunc(call.Signature()) && c.within(recv, txs) {
 		return true
 	}
@@ -124,7 +152,7 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 		return false
 	}
 	for i, arg := range call.Args {
-		if c.within(arg, txs) && txcall.Holds(arg.Type()) && c.paramEnds(fn, i) {
+		if c.within(arg, txs) && c.holds(arg.Type()) && c.paramEnds(fn, i) {
 			return true
 		}
 	}
@@ -133,6 +161,47 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 			if c.within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// declaredEnds reports whether call calls a function declared to end what
+// it is given, and gives it the transaction. A declaration of another
+// package says so in its fact, which an interface method has too: its body
+// is never read. The fact is read whatever the transaction's type, as a
+// declared begin may return one with no method txbypass knows ends it.
+func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
+	var fn *types.Func
+	if call.IsInvoke() {
+		fn = call.Method
+	} else if callee := call.StaticCallee(); callee != nil {
+		fn, _ = callee.Object().(*types.Func)
+	}
+	if fn == nil {
+		return false
+	}
+	e, ok := c.ends[fn]
+	if !ok {
+		var f Fact
+		e.all = c.declared(fn)
+		if !e.all && fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), &f) {
+			e.params = f.Params
+		}
+		c.ends[fn] = e
+	}
+	ends := func(i int) bool { return e.all || slices.Contains(e.params, i) }
+	// The receiver of an interface method is parameter 0, and not in Args.
+	first := 0
+	if call.IsInvoke() {
+		if ends(0) && c.within(call.Value, txs) {
+			return true
+		}
+		first = 1
+	}
+	for i, v := range call.Args {
+		if ends(first+i) && c.within(v, txs) {
+			return true
 		}
 	}
 	return false
@@ -305,9 +374,14 @@ func (c *Closer) Export(prog *program.Program) {
 		if !ok {
 			continue
 		}
+		if c.declared(obj) {
+			// A directive's fact is exported already. A flag declares the
+			// function in every package it is called from.
+			continue
+		}
 		var params []int
 		for i, p := range fn.Params {
-			if txcall.Holds(p.Type()) && c.rootEnds(fn, p) {
+			if c.holds(p.Type()) && c.rootEnds(fn, p) {
 				params = append(params, i)
 			}
 		}

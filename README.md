@@ -118,7 +118,7 @@ plugins:
     version: v0.1.0
 ```
 
-Turn it on in `.golangci.yml`. Each key under `settings` is a rule's name, as the flags take it. A rule left out keeps its default. An unknown name stops the run:
+Turn it on in `.golangci.yml`. Each key under `settings` is a rule's name, as the flags take it, or `invokes`, `begins` or `closes`. A rule left out keeps its default. An unknown name stops the run:
 
 ```yaml
 version: "2"
@@ -132,6 +132,9 @@ linters:
         description: Transaction bypass linter
         settings:
           outer-handle: true
+          # One function per item, not comma-separated.
+          invokes:
+            - (example.com/db.Manager).InTx
 ```
 
 Then build and run it:
@@ -256,6 +259,51 @@ s.db.ExecContext(ctx, audit)
 | It is a method with a pointer receiver, called on a struct held by value, as `s := Store{db: db}` then `s.withTx(...)` | The call takes the address of `s`, and a method of the module given it may change what `s.db` holds |
 
 The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
+
+### Declaring helpers
+
+A helper whose body cannot be read has to be declared. That is usually an interface method, as a transaction manager given by dependency injection.
+
+```go
+type Store interface {
+	//txbypass:invokes
+	WithTx(ctx context.Context, fn func(q Querier) error) error
+
+	//txbypass:begins
+	Begin(ctx context.Context) (Tx, error)
+}
+
+type Tx interface {
+	//txbypass:closes
+	Done(err error) error
+}
+```
+
+| Directive | Declares |
+| --- | --- |
+| `//txbypass:invokes` | A call opens a transaction, and runs the callback inside it |
+| `//txbypass:begins` | A call returns a transaction, open |
+| `//txbypass:closes` | A call ends every transaction it is given, its receiver included |
+
+The handle is the receiver. The callback is the first parameter of a function type. It is given the transaction at its first parameter that may be one, which is not a number, a string, a bool, an error, a context or a function. A callback that takes a context and no transaction gets the transaction in the context, and [`outer-context`](#outer-context) reads it. The exact rules are in [design/rules.md](design/rules.md#declared-helpers).
+
+For code you cannot edit, pass the names in a flag:
+
+```bash
+txbypass \
+  -invokes '(example.com/db.Manager).InTx' \
+  -begins '(example.com/db.Manager).Begin' \
+  -closes '(example.com/db.Tx).Done' \
+  ./...
+```
+
+| Kind | Spelling |
+| --- | --- |
+| A function | `example.com/db.InTx` |
+| A method | `(example.com/db.Manager).InTx` |
+| A method with a pointer receiver | `(*example.com/db.Manager).InTx`. The `*` may be left out |
+
+A name not spelled this way stops the run. A name that is spelled right but names nothing is not reported, so check the package path.
 
 ### `outer-handle`
 

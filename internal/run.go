@@ -15,8 +15,10 @@ import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/ctrlflow"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
@@ -40,12 +42,13 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	for _, p := range c.directives.Problems() {
 		c.reportf(p.Pos, p.Message)
 	}
-	if runNeedsProgram(pass) {
+	c.runDeclarations()
+	if runNeedsProgram(pass, c.declares, c.holds) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
-		c.paths = handle.NewPaths(runModule(pass.Module))
-		c.closer = closer.New(pass, c.paths)
+		c.paths = handle.NewPaths(runModule(pass.Module), c.begins, c.holds)
+		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.KindCloses, fn) }, c.holds)
 		c.closer.Export(c.prog)
-		c.helpers = helper.New(pass, c.prog, c.paths, c.closer)
+		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declares, c.holds)
 		c.helpers.Export()
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not
@@ -65,6 +68,43 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	return nil, nil
 }
 
+// runDeclarations checks each declaring directive against the signature it
+// declares, and exports the fact of each that fits, so that a package that
+// calls the function reads it. One that does not fit is reported, and
+// declares nothing.
+func (c *checker) runDeclarations() {
+	for _, d := range c.directives.Declarations() {
+		var fact analysis.Fact
+		var problem string
+		switch d.Kind {
+		case directive.KindInvokes:
+			var s txcall.InvokerShape
+			s, problem = txcall.DeclaredInvoker(d.Obj)
+			fact = &helper.Invokes{Shape: s}
+		case directive.KindBegins:
+			var s txcall.BeginShape
+			s, problem = txcall.DeclaredBegin(d.Obj)
+			fact = &helper.Begins{Shape: s}
+		case directive.KindCloses:
+			var params []int
+			params, problem = txcall.DeclaredCloser(d.Obj)
+			fact = &closer.Fact{Params: params, Declared: true}
+		}
+		if problem != "" {
+			// Nothing is reported in a generated file.
+			if !c.inGenerated(d.Pos) {
+				c.reportf(d.Pos, "txbypass:"+string(d.Kind)+" "+problem)
+			}
+			continue
+		}
+		if c.declared[d.Kind] == nil {
+			c.declared[d.Kind] = make(map[*types.Func]bool)
+		}
+		c.declared[d.Kind][d.Obj] = true
+		c.pass.ExportObjectFact(d.Obj, fact)
+	}
+}
+
 // runModule is the path of module, or empty when there is none. go vet
 // gives no module for a package outside any, as the standard library, and
 // nogo gives none at all. The path is empty outside module mode too.
@@ -77,19 +117,19 @@ func runModule(module *analysis.Module) string {
 
 // runNeedsProgram reports whether the package calls an invoker or a begin,
 // or has a function with a parameter that has a method that ends a
-// transaction.
-func runNeedsProgram(pass *analysis.Pass) bool {
+// transaction. declares tells a function that a flag declares.
+func runNeedsProgram(pass *analysis.Pass, declares func(directive.Kind, *types.Func) bool, holds func(types.Type) bool) bool {
 	found := false
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
 				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
-				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n)
+				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n) || runCallsDeclared(pass, n, declares)
 			case *ast.FuncDecl:
-				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature())
+				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature(), holds)
 			case *ast.FuncLit:
-				found = found || runTakesTx(pass.TypesInfo.TypeOf(n).(*types.Signature))
+				found = found || runTakesTx(pass.TypesInfo.TypeOf(n).(*types.Signature), holds)
 			}
 			return !found
 		})
@@ -97,14 +137,21 @@ func runNeedsProgram(pass *analysis.Pass) bool {
 	return found
 }
 
+// runCallsDeclared reports whether call calls a function declared as an
+// invoker or a begin.
+func runCallsDeclared(pass *analysis.Pass, call *ast.CallExpr, declares func(directive.Kind, *types.Func) bool) bool {
+	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
+	return ok && (declares(directive.KindInvokes, fn) || declares(directive.KindBegins, fn))
+}
+
 // runTakesTx reports whether a function of signature sig takes a value that
 // has a method that ends a transaction, as its receiver or a parameter.
-func runTakesTx(sig *types.Signature) bool {
-	if sig.Recv() != nil && txcall.Holds(sig.Recv().Type()) {
+func runTakesTx(sig *types.Signature, holds func(types.Type) bool) bool {
+	if sig.Recv() != nil && holds(sig.Recv().Type()) {
 		return true
 	}
 	for p := range sig.Params().Variables() {
-		if txcall.Holds(p.Type()) {
+		if holds(p.Type()) {
 			return true
 		}
 	}

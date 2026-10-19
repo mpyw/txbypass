@@ -37,6 +37,15 @@ func TestPluginSettingsTurnRulesOff(t *testing.T) {
 	analysistest.Run(t, testdata(t), a, "outerhandleoff")
 }
 
+func TestPluginSettingsDeclareHelpers(t *testing.T) {
+	a := buildAnalyzer(t, map[string]any{
+		"invokes": []any{"(flaglib.Manager).InTx", "(flaglib.Store).WithTx"},
+		"begins":  []any{"(*flaglib.Manager).Begin"},
+		"closes":  []any{"(flaglib.Tx).Finish"},
+	})
+	analysistest.Run(t, testdata(t), a, "flagtx")
+}
+
 func TestPluginRejectsBadSettings(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -44,7 +53,11 @@ func TestPluginRejectsBadSettings(t *testing.T) {
 		want     string
 	}{
 		{"an unknown rule", map[string]any{"outer": true}, `unknown rule "outer"`},
-		{"a value that is not a bool", map[string]any{"outer-handle": "yes"}, "decoding settings"},
+		{"a value that is not a bool", map[string]any{"outer-handle": "yes"}, `rule "outer-handle" in settings takes true or false`},
+		{"a declaration that is not a list", map[string]any{"invokes": "flaglib.InTx"}, "invokes in settings: takes a list of functions"},
+		{"a declaration with an item that is not a string", map[string]any{"begins": []any{1}}, "begins in settings: takes a list of functions"},
+		{"a name not spelled like a function", map[string]any{"closes": []any{"Finish"}}, "closes in settings: "},
+		{"two names in one item", map[string]any{"closes": []any{"a.B, c.D"}}, "holds more than one name"},
 		{"settings that are not a map", []any{"outer-handle"}, "decoding settings"},
 	}
 	for _, tt := range tests {
