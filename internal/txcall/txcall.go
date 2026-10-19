@@ -280,7 +280,9 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 	}
 	cb += first
 	takes := declaredParams(params[cb].Underlying().(*types.Signature))
-	s := InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, func(t types.Type) bool { return !IsContext(t) })}
+	// The transaction is the first input that may be one. A context, an
+	// attempt number or an error beside it is none.
+	s := InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, MayBeTx)}
 	if s.Tx >= 0 {
 		outer, ok := declaredOuter(fn.Signature(), params)
 		if !ok {
@@ -289,13 +291,13 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 		s.Outer = outer
 		return s, ""
 	}
-	if len(takes) == 0 {
+	if !slices.ContainsFunc(takes, IsContext) {
 		return InvokerShape{}, "needs a callback that takes a transaction or a context"
 	}
 	// A transaction manager that carries the transaction in a context
 	// joins the one its context carries, as go-transaction-manager's Do
 	// does.
-	s.Tx, s.InContext, s.Nests = 0, true, true
+	s.Tx, s.InContext, s.Nests = slices.IndexFunc(takes, IsContext), true, true
 	s.Outer = slices.IndexFunc(params, IsContext)
 	if s.Outer < 0 {
 		return InvokerShape{}, "needs a context parameter, since the callback takes only a context"

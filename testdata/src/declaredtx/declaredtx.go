@@ -419,3 +419,42 @@ type Lease interface {
 
 // release ends l through its declared end.
 func release(l Lease) error { return l.Release() } // want release:`^closes\[0\]$`
+
+// AnyPool begins a transaction typed as any. The empty interface names no
+// type, so it does not make every value of it a transaction.
+type AnyPool struct{}
+
+//txbypass:begins
+func (*AnyPool) Begin(ctx context.Context) (any, error) { return nil, nil } // want Begin:`^begins\[p0\]$`
+
+// Where filters on v, and gives the pool back, as gorm's Where does. It
+// takes any, which is no transaction, so it binds nothing new.
+func (p *AnyPool) Where(v any) *AnyPool { return p }
+
+func (*AnyPool) Exec(ctx context.Context, query string) error { return nil }
+
+func Filtered(ctx context.Context, p *AnyPool) error {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	_ = tx
+	q := p.Where(1)         // want `^p bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return q.Exec(ctx, "q") // want `^q bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+}
+
+// Retrier gives its callback the attempt beside the context that carries
+// the transaction.
+type Retrier interface {
+	//txbypass:invokes
+	Retry(ctx context.Context, fn func(ctx context.Context, attempt int) error) error // want Retry:`^invokes\[p1, p2\(0\), context\]$`
+}
+
+func Retried(ctx context.Context, r Retrier) error {
+	return r.Retry(ctx, func(txCtx context.Context, attempt int) error {
+		return save(ctx) // want `^ctx bypasses the transaction opened with Retry; use txCtx instead \[outer-context\]$`
+	})
+}
+
+//txbypass:invokes // the callback takes only a number // want `^txbypass:invokes needs a callback that takes a transaction or a context$`
+func numbered(db *sql.DB, fn func(n int) error) error { return nil }

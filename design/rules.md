@@ -389,8 +389,8 @@ What a declaration says is read from the signature:
 | --- | --- |
 | The handle | The receiver of a method. For a function, its first parameter that is neither a `context.Context` nor of a function type. A body of the package that opens every transaction on one parameter, or one field of it, names that instead, as `s.db` for a method of `s` |
 | The callback of an invoker | The first parameter of a function type |
-| The transaction the callback is given | The callback's first parameter that is not a `context.Context` |
-| A callback that takes only a context | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter. Called with the context of another such callback, it joins that transaction, as go-transaction-manager's `Do` does |
+| The transaction the callback is given | The callback's first parameter that may be a transaction: not a number, a string, a bool, an error, a context or a function |
+| A callback that takes a context and no transaction | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter. Called with the context of another such callback, it joins that transaction, as go-transaction-manager's `Do` does |
 | The transaction a begin returns | Its first result. A second result is its error, and has to be an `error` |
 
 A declaration that the signature does not fit is reported, and declares nothing:
@@ -398,7 +398,7 @@ A declaration that the signature does not fit is reported, and declares nothing:
 | Directive | Reported when |
 | --- | --- |
 | `invokes` | There is no parameter of a function type, no handle, or a callback that takes neither a transaction nor a context. A callback that takes only a context needs a context parameter of the invoker |
-| `begins` | There is no result or more than two. The first is a number, a string or a bool, or a second is not an `error`. There is no handle |
+| `begins` | There is no result or more than two. The first is a number, a string, a bool, an error, a context or a function, or a second is not an `error`. There is no handle |
 | `closes` | There is no receiver and no parameter |
 
 A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.

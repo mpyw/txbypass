@@ -167,9 +167,12 @@ func (c *checker) declaredTx(t types.Type) bool {
 		// A declaration of the package counts where it is defined, so a
 		// helper beside it that takes its transaction is read even before
 		// anything calls it.
+		// A function is named by many identifiers, and is read once.
+		read := make(map[*types.Func]bool)
 		for _, m := range []map[*ast.Ident]types.Object{c.pass.TypesInfo.Uses, c.pass.TypesInfo.Defs} {
 			for _, obj := range m {
-				if fn, ok := obj.(*types.Func); ok {
+				if fn, ok := obj.(*types.Func); ok && !read[fn] {
+					read[fn] = true
 					c.readTxTypes(fn)
 				}
 			}
@@ -182,7 +185,8 @@ func (c *checker) declaredTx(t types.Type) bool {
 // it is a declared begin or end, or an end of another package.
 func (c *checker) readTxTypes(fn *types.Func) {
 	sig := fn.Signature()
-	if !txcall.IsBeginFunc(fn) && c.begins(fn) && sig.Results().Len() > 0 {
+	// A begin that returns any names no type, as an end that takes it does.
+	if !txcall.IsBeginFunc(fn) && c.begins(fn) && sig.Results().Len() > 0 && checkerTxLike(sig.Results().At(0).Type()) {
 		c.txTypes.Set(sig.Results().At(0).Type(), true)
 	}
 	var f closer.Fact
