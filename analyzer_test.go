@@ -36,6 +36,7 @@ func TestAnalyzer(t *testing.T) {
 		"reltx",
 		"trmtx",
 		"helpertx",
+		"declaredlib",
 		"declaredtx",
 		"directives",
 		"generated",
@@ -93,7 +94,7 @@ func TestDeclaredFlags(t *testing.T) {
 	setFlag(t, "invokes", "(flaglib.Manager).InTx,(flaglib.Store).WithTx")
 	setFlag(t, "begins", "(*flaglib.Manager).Begin")
 	setFlag(t, "closes", "(flaglib.Tx).Finish")
-	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flagtx")
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flaglib", "flagtx")
 }
 
 // TestDeclaredFlagAddsUp keeps the names of a flag given twice.

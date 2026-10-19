@@ -13,12 +13,12 @@ type Manager struct {
 }
 
 // InTx runs fn in a transaction on m.DB.
-func (m *Manager) InTx(ctx context.Context, fn func(*sql.Tx) error) error {
+func (m *Manager) InTx(ctx context.Context, fn func(*sql.Tx) error) error { // want InTx:`^invokes\[p0, p2\(0\)\]$`
 	return m.run(ctx, fn)
 }
 
 // Begin begins a transaction on m.DB.
-func (m *Manager) Begin(ctx context.Context) (*Tx, error) { return nil, nil }
+func (m *Manager) Begin(ctx context.Context) (*Tx, error) { return nil, nil } // want Begin:`^begins\[p0\]$`
 
 // Tx is a transaction of the library.
 type Tx struct{ tx *sql.Tx }

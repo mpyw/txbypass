@@ -301,3 +301,14 @@ func FinishedThrough(ctx context.Context, db DB, p *declaredlib.Pool) error {
 	}
 	return p.Exec(ctx, "after")
 }
+
+// Ender ends the transactions it is given. It holds none itself.
+type Ender struct{}
+
+// End ends tx.
+//
+//txbypass:closes
+func (*Ender) End(tx *sql.Tx) error { return nil } // want End:`^closes\[0 1\]$`
+
+// endWith ends tx, and not e, which is no transaction.
+func endWith(e *Ender, tx *sql.Tx) error { return e.End(tx) } // want endWith:`^closes\[1\]$`

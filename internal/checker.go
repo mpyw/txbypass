@@ -90,7 +90,7 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 
 // holds reports whether a value of type t is a transaction: it has a method
 // that ends one, by its name, as Commit, or by a declaration, here or in
-// the package that declares the method.
+// the package that declares the method, that takes no other transaction.
 //
 //declscope:shared // run.go hands it to closer and helper, and asks it of signatures
 func (c *checker) holds(t types.Type) bool {
@@ -105,6 +105,12 @@ func (c *checker) holds(t types.Type) bool {
 		for sel := range mset.Methods() {
 			m := sel.Obj().(*types.Func)
 			var f closer.Fact
+			// A declared end of the receiver alone, as tx.Done(err), makes
+			// the receiver a transaction. One given a transaction, as
+			// m.End(tx), ends that one: the receiver is what ends it.
+			if checkerTakesTx(m) {
+				continue
+			}
 			if c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0) {
 				found = true
 			}
@@ -123,12 +129,24 @@ func (c *checker) begins(fn *types.Func) bool {
 	return txcall.IsBeginFunc(fn) || c.declares(directive.Begins, fn) || fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
 }
 
+// checkerTakesTx reports whether a method takes a transaction, by the name
+// of a method of its type, as a *sql.Tx.
+func checkerTakesTx(m *types.Func) bool {
+	for p := range m.Signature().Params().Variables() {
+		if txcall.Holds(p.Type()) {
+			return true
+		}
+	}
+	return false
+}
+
 // declares reports whether fn is declared as kind: by a directive of the
 // package, or by a flag.
 //
 //declscope:shared // run.go hands it to closer and helper
 func (c *checker) declares(kind directive.Kind, fn *types.Func) bool {
-	if c.declared[kind][fn.Origin()] {
+	fn = fn.Origin()
+	if c.declared[kind][fn] {
 		return true
 	}
 	// Key formats a name, and every call is asked about: no flag, no name.
@@ -136,6 +154,8 @@ func (c *checker) declares(kind directive.Kind, fn *types.Func) bool {
 	if len(names) == 0 {
 		return false
 	}
+	// Keyed by the origin, as funcname.Key reads it, so the instances of a
+	// generic function share one name.
 	key, ok := c.keys[fn]
 	if !ok {
 		key = funcname.Key(fn)
