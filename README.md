@@ -250,6 +250,8 @@ s.db.ExecContext(ctx, audit)
 | It opens on a package-level variable, or on a handle a call returns | Only a parameter, or a field of one, can name the handle at the call |
 | It carries the transaction in a context | Not read yet |
 | It returns the transaction wrapped in a struct, or one it was given | The struct is not followed. A transaction it was given is not new |
+| It defers a call given the transaction it returns, as `defer tx.Rollback()` | The deferred call may end the transaction before the caller uses it |
+| It gives the address of its error to a call, as `defer annotate(&err)` | The call may return an open transaction beside an error |
 
 The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
 

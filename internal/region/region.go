@@ -126,12 +126,13 @@ func (r *Region) Txs() []handle.Path {
 // GivesErr reports whether v, returned beside the transaction, is the
 // begin's error, or nil. For a begin with no error result, as gorm's Begin,
 // the begin's error is the transaction's Error field. A named result that a
-// deferred literal reads lives in memory, so v may be a load of it.
+// deferred literal reads lives in memory, so v may be a load of it, and
+// return tx, nil stores the nil there first.
 func (r *Region) GivesErr(v ssa.Value) bool {
-	if c, ok := v.(*ssa.Const); ok && c.IsNil() {
-		return true
-	}
-	return r.holdsErr(v)
+	return Stored(v, func(x ssa.Value) bool {
+		c, ok := x.(*ssa.Const)
+		return ok && c.IsNil() || r.isBeginErr(x)
+	})
 }
 
 // solve computes the state before each instruction of fn, whose entry is in
@@ -284,15 +285,20 @@ func (r *Region) isErr(v, other ssa.Value) bool {
 // holdsErr reports whether v is the begin's error, or a load of a variable
 // in memory that last stored it on every path.
 func (r *Region) holdsErr(v ssa.Value) bool {
-	return r.loaded(v, r.isBeginErr, make(map[*ssa.UnOp]bool))
+	return Stored(v, r.isBeginErr)
 }
 
-// loaded reports whether v is a value that is accepts, or a load of a
+// Stored reports whether v is a value that is accepts, or a load of a
 // variable in memory that last stored such a value on every path. A value
 // stored may itself be such a load: a return of named results, before
-// deferred calls, loads each result and stores it back. A load met again
-// around a loop leaves the answer to the other paths.
-func (r *Region) loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp]bool) bool {
+// deferred calls, loads each result and stores it back.
+func Stored(v ssa.Value, is func(ssa.Value) bool) bool {
+	return loaded(v, is, make(map[*ssa.UnOp]bool))
+}
+
+// loaded is Stored. A load met again around a loop leaves the answer to the
+// other paths.
+func loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp]bool) bool {
 	if is(v) {
 		return true
 	}
@@ -304,7 +310,7 @@ func (r *Region) loaded(v ssa.Value, is func(ssa.Value) bool, seen map[*ssa.UnOp
 		return true
 	}
 	seen[load] = true
-	return lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return r.loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
+	return lastStored(load.Block(), slices.Index(load.Block().Instrs, ssa.Instruction(load)), load.X, func(x ssa.Value) bool { return loaded(x, is, seen) }, make(map[*ssa.BasicBlock]bool))
 }
 
 // isBeginErr reports whether v is the begin's error itself: its error

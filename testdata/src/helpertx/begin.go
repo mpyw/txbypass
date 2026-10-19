@@ -433,3 +433,141 @@ func (s *Store) beginNilFirst(ctx context.Context) (tx *sql.Tx, err error) { // 
 	tx, err = s.db.BeginTx(ctx, nil)
 	return tx, err
 }
+
+// beginNamedEarly returns nil and the transaction through named results,
+// which a deferred literal reads. Each return stores its values first.
+func (s *Store) beginNamedEarly(ctx context.Context) (tx *sql.Tx, err error) { // want beginNamedEarly:`^begins\[p0\.db\]$`
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("begin: %w", err)
+		}
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// beginNamedNone may begin nothing, with no error, through named results.
+func (s *Store) beginNamedNone(ctx context.Context, on bool) (tx *sql.Tx, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("begin: %w", err)
+		}
+	}()
+	if !on {
+		return nil, nil
+	}
+	return s.db.BeginTx(ctx, nil)
+}
+
+// beginRolledBackLater rolls the transaction back in a deferred literal.
+func (s *Store) beginRolledBackLater(ctx context.Context) (tx *sql.Tx, err error) {
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+func setErrSetup(err *error) { *err = errSetup }
+
+// beginDeferSet hands its error to a deferred function that may set it.
+func (s *Store) beginDeferSet(ctx context.Context) (tx *sql.Tx, err error) {
+	defer setErrSetup(&err)
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
+
+// beginChecked hands its error to a function that may set it, after the
+// begin succeeded.
+func (s *Store) beginChecked(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	setErrSetup(&err)
+	return tx, err
+}
+
+var errSink *error
+
+// beginSunk keeps the address of its error where code elsewhere may set it.
+func (s *Store) beginSunk(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	errSink = &err
+	if err != nil {
+		return nil, err
+	}
+	return tx, err
+}
+
+// beginSunkLater keeps the address of its error in a deferred literal.
+func (s *Store) beginSunkLater(ctx context.Context) (tx *sql.Tx, err error) {
+	defer func() {
+		errSink = &err
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
+
+func (s *Store) Rewritten(ctx context.Context) error {
+	early, err := s.beginNamedEarly(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q") // want `^s\.db bypasses the transaction opened with beginNamedEarly; use early instead \[outer-handle\]$`
+	if err := early.Commit(); err != nil {
+		return err
+	}
+	none, err := s.beginNamedNone(ctx, false)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if none != nil {
+		return none.Commit()
+	}
+	later, err := s.beginRolledBackLater(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if err := later.Commit(); err != nil {
+		return err
+	}
+	set, err := s.beginDeferSet(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if err := set.Commit(); err != nil {
+		return err
+	}
+	checked, err := s.beginChecked(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if err := checked.Commit(); err != nil {
+		return err
+	}
+	sunk, err := s.beginSunk(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if err := sunk.Commit(); err != nil {
+		return err
+	}
+	sunkLater, err := s.beginSunkLater(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	return sunkLater.Commit()
+}

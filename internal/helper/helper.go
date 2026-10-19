@@ -240,10 +240,12 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 		if !ok || b == fn.Recover {
 			continue
 		}
-		if helperNil(ret.Results[0]) {
+		// A named result that a deferred literal reads is returned through
+		// a load of what the return stored.
+		if region.Stored(ret.Results[0], helperNil) {
 			// No transaction is returned. The caller has to read an error
 			// beside it, or it reads a begin that did not happen.
-			if len(ret.Results) < 2 || helperNil(ret.Results[1]) {
+			if len(ret.Results) < 2 || region.Stored(ret.Results[1], helperNil) {
 				return nil
 			}
 			continue
@@ -266,10 +268,12 @@ func helperNil(v ssa.Value) bool {
 	return ok && c.IsNil()
 }
 
-// helperRewritten reports whether v, an error result, is a load of a named
-// result that a function literal may set to another error. A literal that
-// sets it only where it is not nil, as one that wraps it, leaves a nil
-// error nil, so a transaction returned beside it stays the begin's.
+// helperRewritten reports whether v, an error result, is a load of a
+// variable that a function literal may set to another error, or whose
+// address is handed on, as defer annotate(&err) or check(&err) does. A
+// literal that sets it only where it is not nil, as one that wraps it,
+// leaves a nil error nil, so a transaction returned beside it stays the
+// begin's. A store of the function's own is followed by the region.
 func helperRewritten(v ssa.Value) bool {
 	load, ok := v.(*ssa.UnOp)
 	if !ok || load.Op != token.MUL {
@@ -280,15 +284,21 @@ func helperRewritten(v ssa.Value) bool {
 		return false
 	}
 	for _, ref := range *alloc.Referrers() {
-		mc, ok := ref.(*ssa.MakeClosure)
-		if !ok {
-			continue
-		}
-		lit := mc.Fn.(*ssa.Function)
-		for i, b := range mc.Bindings {
-			if b == alloc && helperWrites(lit.FreeVars[i]) {
+		switch ref := ref.(type) {
+		case *ssa.UnOp, *ssa.DebugRef:
+		case *ssa.Store:
+			if ref.Addr != alloc {
 				return true
 			}
+		case *ssa.MakeClosure:
+			lit := ref.Fn.(*ssa.Function)
+			for i, b := range ref.Bindings {
+				if b == alloc && helperWrites(lit.FreeVars[i]) {
+					return true
+				}
+			}
+		default:
+			return true
 		}
 	}
 	return false
@@ -302,7 +312,8 @@ func helperWrites(fv *ssa.FreeVar) bool {
 		switch ref := ref.(type) {
 		case *ssa.UnOp, *ssa.DebugRef:
 		case *ssa.Store:
-			if ref.Addr == fv && !helperUnderNotNil(ref.Block(), fv) {
+			// A store of fv itself, rather than into it, hands it on.
+			if ref.Addr != fv || !helperUnderNotNil(ref.Block(), fv) {
 				return true
 			}
 		default:
@@ -341,7 +352,7 @@ func helperUnderNotNil(b *ssa.BasicBlock, fv *ssa.FreeVar) bool {
 func (h *Helpers) returned(fn *ssa.Function, ret *ssa.Return, txs []transaction) (txcall.BeginShape, bool) {
 	v := h.paths.Of(ret.Results[0])
 	for _, t := range txs {
-		if t.region == nil || t.fn != fn || !t.region.Inside(ret) || !slices.ContainsFunc(t.txs, v.Equal) {
+		if t.region == nil || t.fn != fn || !t.region.Inside(ret) || !slices.ContainsFunc(t.txs, v.Equal) || h.deferredOn(fn, t.txs) {
 			continue
 		}
 		// A second result tells the caller whether the begin failed. Any
@@ -355,6 +366,32 @@ func (h *Helpers) returned(fn *ssa.Function, ret *ssa.Return, txs []transaction)
 		}
 	}
 	return txcall.BeginShape{}, false
+}
+
+// deferredOn reports whether a deferred call of fn is given a value of txs,
+// as defer tx.Rollback() is, or a literal that holds one. It runs after the
+// return, so it may end the transaction before the caller uses it. The
+// region does not see it: a deferred call ends nothing where it is written.
+func (h *Helpers) deferredOn(fn *ssa.Function, txs []handle.Path) bool {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			d, ok := instr.(*ssa.Defer)
+			if !ok {
+				continue
+			}
+			vals := append([]ssa.Value{d.Call.Value}, d.Call.Args...)
+			if mc, ok := d.Call.Value.(*ssa.MakeClosure); ok {
+				vals = append(vals, mc.Bindings...)
+			}
+			for _, v := range vals {
+				p := h.paths.Of(v)
+				if slices.ContainsFunc(txs, p.Within) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // helperParam is the parameter of fn that outer is rooted at, and the
