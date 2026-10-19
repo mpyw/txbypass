@@ -237,6 +237,9 @@ type InvokerShape struct {
 	// the parameter of the callback that it gives the transaction.
 	Callback int
 	Tx       int
+	// Nests is Invoker.Nests, for the invoker or begin the helper opens
+	// with.
+	Nests bool
 }
 
 // InvokerOfShape reports the invoker that call is, when it calls fn, a
@@ -255,7 +258,7 @@ func InvokerOfShape(info *types.Info, call *ast.CallExpr, fn *types.Func, s Invo
 	if !ok {
 		return Invoker{}, false
 	}
-	return Invoker{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Callback: lit, Tx: paramIdent(lit, s.Tx)}, true
+	return Invoker{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Callback: lit, Tx: paramIdent(lit, s.Tx), Nests: s.Nests}, true
 }
 
 // BeginShape is where a helper of the project that returns a transaction
@@ -266,6 +269,8 @@ type BeginShape struct {
 	// selected from it, by name.
 	Outer  int
 	Fields []string
+	// Nests is Begin.Nests, for the begin the helper opens with.
+	Nests bool
 }
 
 // shapeOuter is the expression that gives the handle a call of fn opens
@@ -277,13 +282,16 @@ func shapeOuter(info *types.Info, call *ast.CallExpr, fn *types.Func, i int, nam
 		// A method expression takes its receiver as an argument, and its
 		// selector names no handle.
 		sel, ok := methodSelector(info, call)
-		if !ok {
+		if !ok || len(names) == 0 && dedicated(info.TypeOf(sel.X)) {
 			return nil, false, nil, false
 		}
 		return sel, true, shapeFields(sig.Recv().Type(), names), true
 	}
 	e, ok := shapeArg(call, fn, i)
-	if !ok {
+	// A dedicated connection, or a transaction that holds one, given as the
+	// handle itself makes the transaction a savepoint on it, as it does for
+	// an invoker of a library.
+	if !ok || len(names) == 0 && (dedicated(info.TypeOf(e)) || dedicatedBegin(info.TypeOf(e))) {
 		return nil, false, nil, false
 	}
 	return e, false, shapeFields(shapeParam(sig, i), names), true
@@ -516,7 +524,7 @@ func BeginCall(info *types.Info, call *ast.CallExpr, helper func(*types.Func) (B
 	if !ok {
 		return Begin{}, false
 	}
-	return Begin{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Call: call}, true
+	return Begin{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Call: call, Nests: s.Nests}, true
 }
 
 // IsBegin reports whether call is a call of a begin.

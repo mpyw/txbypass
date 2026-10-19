@@ -149,13 +149,16 @@ The first parameter of a function type that meets them is the callback. A helper
 
 A helper of another package is known by the fact `invokes[pO.f, pC(T)]`, which the analysis of its package exports. `pO` is the parameter that holds the handle, and `.f` the fields selected from it. `pC` is the callback, and `T` the callback's parameter that is given the transaction. The receiver of a method is parameter 0.
 
-At the call, the scope is read as an invoker's is. The message names the helper as it names an invoker: a method by its name, a function by its package's name and its own. A call is not read when:
+At the call, the scope is read as an invoker's is. The message names the helper as it names an invoker: a method by its name, a function by its package's name and its own. A helper may open with an invoker or a begin that opens a [savepoint](#savepoints) on a transaction. Called on a transaction, such a helper opens a savepoint too, and its scope is not read. A call is not read when:
 
 | Case | Why |
 | --- | --- |
 | The callback is not a function literal | Its body is not read |
 | The callback is the receiver, or the handle is the receiver of a method expression | The selector names no handle, or no literal |
 | The arguments are one call with several results | There is no function literal to read |
+| The handle given is one dedicated connection, or a transaction that holds one, as pgx's `Tx` | See [Dedicated connections](#dedicated-connections) |
+
+A transaction that a helper gives its callback, or that a helper returns, is a transaction for [Savepoints](#savepoints) too.
 
 A helper may begin its transaction with a [helper that is a begin](#helpers-that-are-begins). A helper that carries the transaction in a context is not read yet.
 

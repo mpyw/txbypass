@@ -46,27 +46,6 @@ type txScope struct {
 	builds bool
 }
 
-// scopeOuter is the handle that outer gives, in fn, with fields selected
-// from it. When outer is the selector of a method call, the handle is its
-// receiver, through the embedded fields its promotion passes. An invoker
-// or a begin gives its handle this way.
-//
-//declscope:shared // both rules find the handle or the context outside the scope through it
-func (c *checker) scopeOuter(outer ast.Expr, receiver bool, fields []*types.Var, fn *ssa.Function) (handle.Path, bool) {
-	expr := outer
-	var promoted []*types.Var
-	if receiver {
-		sel := outer.(*ast.SelectorExpr)
-		expr = sel.X
-		promoted = handle.Promoted(c.pass.TypesInfo.Selections[sel])
-	}
-	ref, ok := c.prog.Ref(fn, expr)
-	if !ok {
-		return handle.Path{}, false
-	}
-	return c.paths.Of(ref.X).With(promoted).With(fields), true
-}
-
 // scopeBindsBoth reports whether e is an argument of a call, or a field of
 // a literal, that takes the transaction too. A constructor newStore(s.db,
 // tx), or a literal &Store{db: s.db, tx: tx}, keeps the handle beside the

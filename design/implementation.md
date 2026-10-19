@@ -58,7 +58,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | --- | --- |
 | No `//declscope:core` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:shared`, with the file that calls it | `run.go` calls into each rule's file |
-| `scope.go` holds what both rules read a scope with | Each name carries `scope`: `txScope`, `scopeOuter`, `reportScopeUses`, `scopeRuns` |
+| `scope.go` holds what both rules read a scope with | Each name carries `scope`: `txScope`, `reportScopeUses`, `scopeRuns` |
 
 ## The SSA form
 
@@ -147,10 +147,11 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | The outer handle is a parameter, and the fields selected from it, by name | A fact is gob-encoded, so it cannot hold a `*types.Var`. The caller finds the fields again in the type of its argument |
 | Every call of the callback must be inside a transaction it is given | A helper that may run the callback outside makes every use inside a false report on that path. A miss is better than a false report |
 | A callback given anywhere else is no helper | It may run where this analysis does not follow it |
-| A helper that calls itself reads as no helper there, and the answer is kept | A ring of helpers is rare. A fixpoint was not added, since it would only find more helpers in code that is rare |
+| A helper that calls itself reads as no helper there, and the answer is kept | A ring of helpers is rare. In a ring of two, the one read second may see the first as no helper, so the answer may depend on the order. A fixpoint was not added, since it would only find more helpers in code that is rare |
 | Take the first parameter that qualifies | Two callbacks run in one transaction are rare, and the first is the usual one |
 | A helper that returns a transaction is a begin of its own kind, with the fact `begins` | The region is read where the result is kept, as for a library's begin. The helper's error result is the begin's error, so `if err != nil` leaves the region as it does after `BeginTx` |
 | Every return of a begin helper gives `nil` or a transaction still open there | A helper that commits before it returns, or hands back one it was given, would open a region on a closed or foreign transaction |
+| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
 | `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 
 ## Scopes that build or rebind

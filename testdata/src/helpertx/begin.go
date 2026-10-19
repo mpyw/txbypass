@@ -198,3 +198,49 @@ func viaNilBegin(ctx context.Context, fn func(*sql.Tx) error) error {
 	defer tx.Rollback()
 	return fn(tx)
 }
+
+// ===== Savepoints on a helper's transaction =====
+
+// A savepoint on the transaction a helper gives its callback runs on that
+// transaction's connection.
+func (r *Repo) SavepointInHelper(v any) error {
+	return r.InTx(func(tx *gorm.DB) error {
+		return tx.Transaction(func(sp *gorm.DB) error {
+			return tx.Create(v).Error
+		})
+	})
+}
+
+// So does one on the transaction a helper begins.
+func (r *Repo) SavepointOnBegun(v any) error {
+	tx := r.beginGorm()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if err := tx.Transaction(func(sp *gorm.DB) error {
+		return tx.Create(v).Error
+	}); err != nil {
+		return err
+	}
+	return tx.Commit().Error
+}
+
+// rolledBack rolls the transaction back when it returns, so the caller
+// gets one that has ended.
+func (s *Store) rolledBack(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return tx, nil
+}
+
+func (s *Store) RolledBack(ctx context.Context) error {
+	tx, err := s.rolledBack(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "q")
+	return errors.Join(err, tx.Commit())
+}

@@ -20,8 +20,8 @@ import (
 //
 //declscope:shared // run.go calls it for every invoker
 func (c *checker) checkOuterHandle(o txcall.Invoker, fn *ssa.Function) {
-	outer, ok := c.scopeOuter(o.Outer, o.Receiver, o.Fields, fn)
-	if !ok || o.Nests && outerHandleSavepoint(outer) {
+	outer, ok := c.helpers.Outer(fn, o.Outer, o.Receiver, o.Fields)
+	if !ok || o.Nests && c.outerHandleSavepoint(outer) {
 		return
 	}
 	lit := c.prog.Func(o.Callback)
@@ -77,8 +77,8 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 		// The begin is in code that no path reaches. It never runs.
 		return
 	}
-	outer, ok := c.scopeOuter(b.Outer, b.Receiver, b.Fields, fn)
-	if !ok || b.Nests && outerHandleSavepoint(outer) {
+	outer, ok := c.helpers.Outer(fn, b.Outer, b.Receiver, b.Fields)
+	if !ok || b.Nests && c.outerHandleSavepoint(outer) {
 		return
 	}
 	r := region.Begun(call, c.closer, c.paths)
@@ -93,25 +93,26 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 // transaction's connection, and so does a statement on the transaction:
 // it bypasses nothing. outer is a transaction when it is a begin's result,
 // as gorm's tx := db.Begin(), or the transaction a callback is given, as
-// gorm's tx in db.Transaction(func(tx *gorm.DB) error { ... }).
-func outerHandleSavepoint(outer handle.Path) bool {
+// gorm's tx in db.Transaction(func(tx *gorm.DB) error { ... }). A helper
+// of the project that begins or invokes gives a transaction too.
+func (c *checker) outerHandleSavepoint(outer handle.Path) bool {
 	switch root := outer.Root().(type) {
 	case *ssa.Extract:
-		return root.Index == 0 && outerHandleBegun(root.Tuple)
+		return root.Index == 0 && c.outerHandleBegun(root.Tuple)
 	case *ssa.Call:
-		return outerHandleBegun(root)
+		return c.outerHandleBegun(root)
 	case *ssa.Parameter:
-		return scopeGiven(root, txcall.CallbackTx)
+		return scopeGiven(root, c.helpers.GivesTx)
 	}
 	return false
 }
 
 // outerHandleBegun reports whether v is the call of a begin.
-func outerHandleBegun(v ssa.Value) bool {
+func (c *checker) outerHandleBegun(v ssa.Value) bool {
 	call, ok := v.(*ssa.Call)
 	if !ok {
 		return false
 	}
 	fn, ok := scopeCallee(call.Common())
-	return ok && txcall.IsBeginFunc(fn)
+	return ok && c.helpers.IsBegin(fn)
 }

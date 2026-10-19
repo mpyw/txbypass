@@ -240,3 +240,21 @@ func (s *Store) write(tx *sql.Tx) error {
 	_, err := s.db.Exec("audit")
 	return err
 }
+
+// gormTx runs fn in gorm's Transaction, which opens a savepoint when db is
+// a transaction.
+func gormTx(db *gorm.DB, fn func(*gorm.DB) error) error { // want gormTx:`^invokes\[p0, p1\(0\)\]$`
+	return db.Transaction(func(tx *gorm.DB) error {
+		return fn(tx)
+	})
+}
+
+// A savepoint opened through a helper runs on the outer transaction's
+// connection, as one opened by gorm's Transaction does.
+func Savepoint(db *gorm.DB, v any) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		return gormTx(tx, func(sp *gorm.DB) error {
+			return tx.Create(v).Error
+		})
+	})
+}

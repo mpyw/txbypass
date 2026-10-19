@@ -118,6 +118,19 @@ func (h *Helpers) BeginOf(n ast.Node) (txcall.Begin, bool) {
 	return txcall.BeginOf(h.pass.TypesInfo, n, h.beginShape)
 }
 
+// GivesTx reports whether fn is an invoker whose callback takes the
+// transaction itself as its parameter i: one of a library, or a helper.
+func (h *Helpers) GivesTx(fn *types.Func, i int) bool {
+	s, ok := h.invokerShape(fn)
+	return txcall.CallbackTx(fn, i) || ok && s.Tx == i
+}
+
+// IsBegin reports whether fn is a begin: one of a library, or a helper.
+func (h *Helpers) IsBegin(fn *types.Func) bool {
+	_, ok := h.beginShape(fn)
+	return txcall.IsBeginFunc(fn) || ok
+}
+
 // Calls reports whether call calls a helper of another package.
 func Calls(pass *analysis.Pass, call *ast.CallExpr) bool {
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
@@ -216,7 +229,7 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 			continue
 		}
 		s, ok := h.returned(fn, ret, txs)
-		if !ok || shape != nil && (shape.Outer != s.Outer || !slices.Equal(shape.Fields, s.Fields)) {
+		if !ok || shape != nil && (shape.Outer != s.Outer || !slices.Equal(shape.Fields, s.Fields) || shape.Nests != s.Nests) {
 			return nil
 		}
 		shape = &s
@@ -233,7 +246,7 @@ func (h *Helpers) returned(fn *ssa.Function, ret *ssa.Return, txs []transaction)
 			continue
 		}
 		if outer, fields, ok := helperParam(fn, t.outer); ok {
-			return txcall.BeginShape{Outer: outer, Fields: fields}, true
+			return txcall.BeginShape{Outer: outer, Fields: fields, Nests: t.nests}, true
 		}
 	}
 	return txcall.BeginShape{}, false
@@ -266,6 +279,9 @@ type transaction struct {
 	txs []handle.Path
 	// outer is the handle the transaction is opened on.
 	outer handle.Path
+	// nests reports whether the transaction is a savepoint when outer is
+	// a transaction, as Invoker.Nests does.
+	nests bool
 }
 
 // transactions lists the transactions that fn, whose declaration is decl,
@@ -280,14 +296,14 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transacti
 		}
 		in := h.prog.Enclosing(fn, stack, n)
 		if o, ok := h.InvokerOf(call); ok && !o.InContext && !o.Builds && o.Tx != nil {
-			outer, ok := h.outer(in, o.Outer, o.Receiver, o.Fields)
+			outer, ok := h.Outer(in, o.Outer, o.Receiver, o.Fields)
 			if !ok {
 				return true
 			}
 			lit := h.prog.Func(o.Callback)
 			obj := h.pass.TypesInfo.Defs[o.Tx]
 			i := slices.IndexFunc(lit.Params, func(p *ssa.Parameter) bool { return p.Object() == obj })
-			txs = append(txs, transaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer})
+			txs = append(txs, transaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer, nests: o.Nests})
 			return true
 		}
 		b, ok := txcall.BeginCall(h.pass.TypesInfo, call, h.beginShape)
@@ -298,21 +314,21 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transacti
 		if !ok {
 			return true
 		}
-		outer, ok := h.outer(in, b.Outer, b.Receiver, b.Fields)
+		outer, ok := h.Outer(in, b.Outer, b.Receiver, b.Fields)
 		if !ok {
 			return true
 		}
 		r := region.Begun(begin, h.closer, h.paths)
-		txs = append(txs, transaction{fn: in, region: r, txs: r.Txs(), outer: outer})
+		txs = append(txs, transaction{fn: in, region: r, txs: r.Txs(), outer: outer, nests: b.Nests})
 		return true
 	})
 	return txs
 }
 
-// outer is the handle that expr gives, in fn, as an invoker or a begin
+// Outer is the handle that expr gives, in fn, as an invoker or a begin
 // gives its handle: the receiver of a method, through the embedded fields
 // its promotion passes, then fields.
-func (h *Helpers) outer(fn *ssa.Function, expr ast.Expr, receiver bool, fields []*types.Var) (handle.Path, bool) {
+func (h *Helpers) Outer(fn *ssa.Function, expr ast.Expr, receiver bool, fields []*types.Var) (handle.Path, bool) {
 	var promoted []*types.Var
 	if receiver {
 		sel := expr.(*ast.SelectorExpr)
@@ -372,7 +388,7 @@ func (h *Helpers) runInside(fn *ssa.Function, call ssa.CallInstruction, txs []tr
 			continue
 		}
 		if outer, fields, ok := helperParam(fn, t.outer); ok {
-			return txcall.InvokerShape{Outer: outer, Fields: fields, Tx: at}, true
+			return txcall.InvokerShape{Outer: outer, Fields: fields, Tx: at, Nests: t.nests}, true
 		}
 	}
 	return txcall.InvokerShape{}, false
@@ -402,7 +418,8 @@ func (h *Helpers) gives(instr ssa.Instruction, cb handle.Path) bool {
 	return false
 }
 
-// shapeEqual reports whether a and b are one shape.
+// shapeEqual reports whether a and b, read from two calls of one callback,
+// are one shape. The callback is set once the calls agree.
 func shapeEqual(a, b txcall.InvokerShape) bool {
-	return a.Outer == b.Outer && slices.Equal(a.Fields, b.Fields) && a.Callback == b.Callback && a.Tx == b.Tx
+	return a.Outer == b.Outer && slices.Equal(a.Fields, b.Fields) && a.Tx == b.Tx && a.Nests == b.Nests
 }

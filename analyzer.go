@@ -25,8 +25,9 @@ var Analyzer = &analysis.Analyzer{
 	URL:      "https://github.com/mpyw/txbypass",
 	Requires: []*analysis.Analyzer{ctrlflow.Analyzer},
 	// The facts say which parameters a function ends, and which function
-	// is an invoker, so that a helper of another package is seen.
-	FactTypes: []analysis.Fact{new(closer.Fact), new(helper.Invokes)},
+	// is an invoker or a begin, so that a helper of another package is
+	// seen. Every fact type is listed here, or go vet cannot encode it.
+	FactTypes: []analysis.Fact{new(closer.Fact), new(helper.Invokes), new(helper.Begins)},
 	Run:       runAnalyzer,
 }
 
