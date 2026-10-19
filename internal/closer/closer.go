@@ -49,6 +49,9 @@ func (f *Fact) String() string { return fmt.Sprintf("closes%v", f.Params) }
 type Closer struct {
 	pass  *analysis.Pass
 	paths *handle.Paths
+	// declared reports whether a function is declared, by a directive of
+	// the package or a flag, to end every transaction it is given.
+	declared func(*types.Func) bool
 	// known holds, for each function and root that has been asked about,
 	// whether the function ends the transaction rooted at that parameter or
 	// free variable. Every answer starts false and only turns true, in a
@@ -73,9 +76,11 @@ type closerKey struct {
 	root ssa.Value
 }
 
-// New is a Closer for pass, which reads handles through paths.
-func New(pass *analysis.Pass, paths *handle.Paths) *Closer {
-	return &Closer{pass: pass, paths: paths, known: make(map[closerKey]bool)}
+// New is a Closer for pass, which reads handles through paths. declared
+// reports whether a function is declared to end every transaction it is
+// given.
+func New(pass *analysis.Pass, paths *handle.Paths, declared func(*types.Func) bool) *Closer {
+	return &Closer{pass: pass, paths: paths, declared: declared, known: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -116,6 +121,9 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 
 // callEnds reports whether a call may end the transaction.
 func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
+	if c.declaredEnds(call, txs) {
+		return true
+	}
 	if recv, name, ok := receiver(call); ok && txcall.Ending(name) && !takesFunc(call.Signature()) && c.within(recv, txs) {
 		return true
 	}
@@ -133,6 +141,36 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 			if c.within(b, txs) && c.rootEnds(fn, fn.FreeVars[i]) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// declaredEnds reports whether call calls a function declared to end what
+// it is given, and gives it the transaction. A declaration of another
+// package says so in its fact, which an interface method has too: its body
+// is never read.
+func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
+	var fn *types.Func
+	inputs := call.Args
+	if call.IsInvoke() {
+		fn = call.Method
+		inputs = append([]ssa.Value{call.Value}, call.Args...)
+	} else if callee := call.StaticCallee(); callee != nil {
+		fn, _ = callee.Object().(*types.Func)
+	}
+	if fn == nil {
+		return false
+	}
+	var f Fact
+	declared := c.declared(fn)
+	imported := call.IsInvoke() && c.pass.ImportObjectFact(fn, &f)
+	if !declared && !imported {
+		return false
+	}
+	for i, v := range inputs {
+		if (declared || slices.Contains(f.Params, i)) && c.within(v, txs) {
+			return true
 		}
 	}
 	return false
@@ -303,6 +341,10 @@ func (c *Closer) Export(prog *program.Program) {
 	for _, fn := range prog.Funcs() {
 		obj, ok := fn.Object().(*types.Func)
 		if !ok {
+			continue
+		}
+		if c.declared(obj) {
+			// The declaration's fact is exported already.
 			continue
 		}
 		var params []int

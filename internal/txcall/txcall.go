@@ -240,6 +240,9 @@ type InvokerShape struct {
 	// Nests is Invoker.Nests, for the invoker or begin the helper opens
 	// with.
 	Nests bool
+	// InContext is Invoker.InContext: the callback is given a context that
+	// carries the transaction, at Tx, and Outer is the invoker's context.
+	InContext bool
 }
 
 // InvokerOfShape reports the invoker that call is, when it calls fn, a
@@ -258,7 +261,101 @@ func InvokerOfShape(info *types.Info, call *ast.CallExpr, fn *types.Func, s Invo
 	if !ok {
 		return Invoker{}, false
 	}
-	return Invoker{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Callback: lit, Tx: paramIdent(lit, s.Tx), Nests: s.Nests}, true
+	return Invoker{Name: displayName(fn), Outer: outer, Receiver: receiver, Fields: fields, Callback: lit, Tx: paramIdent(lit, s.Tx), Nests: s.Nests, InContext: s.InContext}, true
+}
+
+// DeclaredInvoker is the shape that a declaration of fn as an invoker says,
+// read from its signature. It is empty, with the problem, when the
+// signature does not fit.
+func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
+	params := declaredParams(fn.Signature())
+	// The receiver is the handle, never the callback.
+	first := 0
+	if fn.Signature().Recv() != nil {
+		first = 1
+	}
+	cb := slices.IndexFunc(params[first:], declaredFunc)
+	if cb < 0 {
+		return InvokerShape{}, "needs a parameter of a function type"
+	}
+	cb += first
+	takes := declaredParams(params[cb].Underlying().(*types.Signature))
+	s := InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, func(t types.Type) bool { return !declaredContext(t) })}
+	if s.Tx >= 0 {
+		outer, ok := declaredOuter(fn.Signature(), params)
+		if !ok {
+			return InvokerShape{}, "needs a handle: a receiver, or a parameter that is neither a context nor a function"
+		}
+		s.Outer = outer
+		return s, ""
+	}
+	if len(takes) == 0 {
+		return InvokerShape{}, "needs a callback that takes a transaction or a context"
+	}
+	s.Tx, s.InContext = 0, true
+	s.Outer = slices.IndexFunc(params, declaredContext)
+	if s.Outer < 0 {
+		return InvokerShape{}, "needs a context parameter, since the callback takes only a context"
+	}
+	return s, ""
+}
+
+// DeclaredBegin is the shape that a declaration of fn as a begin says, or
+// the problem with it.
+func DeclaredBegin(fn *types.Func) (BeginShape, string) {
+	res := fn.Signature().Results()
+	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
+		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
+	}
+	outer, ok := declaredOuter(fn.Signature(), declaredParams(fn.Signature()))
+	if !ok {
+		return BeginShape{}, "needs a handle: a receiver, or a parameter that is neither a context nor a function"
+	}
+	return BeginShape{Outer: outer}, ""
+}
+
+// DeclaredCloser is the problem with a declaration of fn as an end, or
+// empty when it fits.
+func DeclaredCloser(fn *types.Func) string {
+	if len(declaredParams(fn.Signature())) == 0 {
+		return "needs a receiver or a parameter"
+	}
+	return ""
+}
+
+// declaredParams lists the types of the parameters of sig, the receiver
+// first.
+func declaredParams(sig *types.Signature) []types.Type {
+	var out []types.Type
+	if sig.Recv() != nil {
+		out = append(out, sig.Recv().Type())
+	}
+	for p := range sig.Params().Variables() {
+		out = append(out, p.Type())
+	}
+	return out
+}
+
+// declaredOuter is the parameter that holds the handle: the receiver, or
+// the first parameter that is neither a context nor a function.
+func declaredOuter(sig *types.Signature, params []types.Type) (int, bool) {
+	if sig.Recv() != nil {
+		return 0, true
+	}
+	i := slices.IndexFunc(params, func(t types.Type) bool { return !declaredContext(t) && !declaredFunc(t) })
+	return i, i >= 0
+}
+
+// declaredFunc reports whether t is a function type.
+func declaredFunc(t types.Type) bool {
+	_, ok := t.Underlying().(*types.Signature)
+	return ok
+}
+
+// declaredContext reports whether t is context.Context.
+func declaredContext(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "context" && n.Obj().Name() == "Context"
 }
 
 // BeginShape is where a helper of the project that returns a transaction

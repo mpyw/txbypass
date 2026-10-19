@@ -363,6 +363,46 @@ Firestore's client builds the references a transaction reads and writes, as in `
 
 The call itself is not a use, and neither is a chain built on it, as in `q.WithTx(tx).CreateUser(ctx)`. A callback whose transaction parameter is unnamed rebinds nothing.
 
+## Declared helpers
+
+A helper whose body cannot be read is declared. That is an interface method, as a transaction manager given by dependency injection, or a function of a package you cannot edit. A declaration also wins over what a body would say.
+
+| Declare | With | It says |
+| --- | --- | --- |
+| An invoker | `//txbypass:invokes`, or `-invokes` | A call opens a transaction, and runs the callback inside it |
+| A begin | `//txbypass:begins`, or `-begins` | A call returns a transaction, open |
+| An end | `//txbypass:closes`, or `-closes` | A call ends every transaction it is given, its receiver included |
+
+The directive goes in the doc comment of a function, a method, or an interface method, or trails an interface method. A flag takes a comma-separated list of names, spelled as `go/types` spells them:
+
+| Kind | Spelling |
+| --- | --- |
+| A function | `example.com/db.InTx` |
+| A method | `(example.com/db.Manager).InTx`. The `*` of a pointer receiver may be written or left out |
+| A method of a generic type | `(example.com/db.Store[T]).InTx` |
+
+A name not spelled this way stops the run. A name spelled right that names nothing is not reported.
+
+What a declaration says is read from the signature:
+
+| Part | Read as |
+| --- | --- |
+| The handle | The receiver of a method. For a function, its first parameter that is neither a `context.Context` nor of a function type. A body of the package that opens every transaction on one parameter, or one field of it, names that instead, as `s.db` for a method of `s` |
+| The callback of an invoker | The first parameter of a function type |
+| The transaction the callback is given | The callback's first parameter that is not a `context.Context` |
+| A callback that takes only a context | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter |
+| The transaction a begin returns | Its first result. A second result is its error, and has to be an `error` |
+
+A declaration that the signature does not fit is reported, and declares nothing:
+
+| Directive | Reported when |
+| --- | --- |
+| `invokes` | There is no parameter of a function type, no handle, or a callback that takes neither a transaction nor a context. A callback that takes only a context needs a context parameter of the invoker |
+| `begins` | There is no result, more than two, a second that is not an `error`, or no handle |
+| `closes` | There is no receiver and no parameter |
+
+A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.
+
 ## `outer-handle`
 
 In each scope opened on a handle, each expression that names the outer handle is reported. So is each expression that names a handle the scope rebinds with `WithTx`.
@@ -416,6 +456,9 @@ A use is reported at the start of the expression that names the handle. For `r.d
 | An unknown rule name | Reported: `unknown rule x in txbypass:ignore`. The known rules beside it still apply. An ignore whose rules are all unknown is not also reported as unused |
 | An empty rule name, as in `outer-handle, // reason` | Reported: `empty rule name in txbypass:ignore`. The known rules beside it still apply |
 | An ignore that silences nothing | Reported: `unused txbypass:ignore directive`. An ignore that covers a rule turned off by a flag is not reported: that rule did not run. A bare ignore covers every rule |
+| `//txbypass:invokes`, `//txbypass:begins`, `//txbypass:closes` | Declares a helper. See [Declared helpers](#declared-helpers) |
+| One of them with text after the name that is not behind `//` | Reported: `txbypass:invokes takes no argument; write a reason after //` |
+| One of them anywhere but the doc comment of a function, a method or an interface method | Reported: `txbypass:invokes belongs in the doc comment of a function or an interface method` |
 | Any other `//txbypass:` directive | Reported: `unknown directive txbypass:x` |
 
 A directive in a generated file is not read.
@@ -423,6 +466,8 @@ A directive in a generated file is not read.
 ## Flags
 
 Each rule has a boolean flag of its name. Every rule is on by default. The golangci-lint plugin takes the same names, as keys of its `settings`. A rule left out keeps its default, and an unknown name is an error.
+
+`-invokes`, `-begins` and `-closes` declare helpers by name. See [Declared helpers](#declared-helpers). The plugin takes each as a list, one name per item.
 
 ## Gaps
 

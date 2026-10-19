@@ -3,12 +3,14 @@ package internal
 import (
 	"cmp"
 	"go/token"
+	"go/types"
 	"slices"
 
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/funcname"
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
@@ -31,6 +33,9 @@ type checker struct {
 	// helpers says which calls are invokers: a library's, and
 	// the helpers of the project.
 	helpers *helper.Helpers
+	// declared holds the functions of the package that a directive
+	// declares, by kind, once the declaration fits the signature.
+	declared map[directive.Kind]map[*types.Func]bool
 	//declscope:private
 	cfg Config
 	// generated holds the files marked as generated, by name. Nothing is
@@ -55,7 +60,8 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 	c := &checker{
 		pass:       pass,
 		cfg:        cfg,
-		directives: directive.Scan(pass.Fset, pass.Files, pass.ReadFile),
+		directives: directive.Scan(pass.Fset, pass.Files, pass.ReadFile, pass.TypesInfo),
+		declared:   make(map[directive.Kind]map[*types.Func]bool),
 		generated:  make(map[string]bool),
 		reported:   make(map[rule.Name]map[token.Pos]bool),
 	}
@@ -65,6 +71,14 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 		}
 	}
 	return c
+}
+
+// declares reports whether fn is declared as kind: by a directive of the
+// package, or by a flag.
+//
+//declscope:shared // run.go hands it to closer and helper
+func (c *checker) declares(kind directive.Kind, fn *types.Func) bool {
+	return c.declared[kind][fn.Origin()] || c.cfg.Declared[kind][funcname.Key(fn)]
 }
 
 // report reports msg at pos for rule r, unless r is off, an ignore silences

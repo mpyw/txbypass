@@ -25,6 +25,7 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
@@ -40,7 +41,11 @@ type Invokes struct {
 func (*Invokes) AFact() {}
 
 func (f *Invokes) String() string {
-	return fmt.Sprintf("invokes[p%d%s, p%d(%d)]", f.Shape.Outer, helperFields(f.Shape.Fields), f.Shape.Callback, f.Shape.Tx)
+	ctx := ""
+	if f.Shape.InContext {
+		ctx = ", context"
+	}
+	return fmt.Sprintf("invokes[p%d%s, p%d(%d)%s]", f.Shape.Outer, helperFields(f.Shape.Fields), f.Shape.Callback, f.Shape.Tx, ctx)
 }
 
 // Begins says that a function returns a transaction it begins, and on
@@ -67,10 +72,11 @@ func helperFields(names []string) string {
 
 // Helpers finds the helpers, for one pass.
 type Helpers struct {
-	pass   *analysis.Pass
-	prog   *program.Program
-	paths  *handle.Paths
-	closer *closer.Closer
+	pass     *analysis.Pass
+	prog     *program.Program
+	paths    *handle.Paths
+	closer   *closer.Closer
+	declares func(directive.Kind, *types.Func) bool
 	// decls holds the declared functions of the package, by object.
 	decls map[*types.Func]*ast.FuncDecl
 	// invokers and begins hold the shape of each function of the package
@@ -83,10 +89,12 @@ type Helpers struct {
 	txs map[*ssa.Function][]transaction
 }
 
-// New finds the helpers of pass, whose SSA form is prog.
-func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer) *Helpers {
+// New finds the helpers of pass, whose SSA form is prog. declares reports
+// whether a function is declared as an invoker or a begin, by a directive of
+// the package or a flag. A declaration wins over the body.
+func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, declares func(directive.Kind, *types.Func) bool) *Helpers {
 	h := &Helpers{
-		pass: pass, prog: prog, paths: paths, closer: c, decls: make(map[*types.Func]*ast.FuncDecl),
+		pass: pass, prog: prog, paths: paths, closer: c, declares: declares, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
 		txs: make(map[*ssa.Function][]transaction),
 	}
@@ -132,7 +140,7 @@ func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
 		return true
 	}
 	s, ok := h.invokerShape(fn)
-	return ok && s.Callback == arg && s.Tx == i
+	return ok && !s.InContext && s.Callback == arg && s.Tx == i
 }
 
 // IsBegin reports whether fn is a begin: one of a library, or a helper.
@@ -168,14 +176,53 @@ func (h *Helpers) Export() {
 
 // invokerShape is the shape of fn, when it is an invoker.
 func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
+	if h.declares(directive.Invokes, fn) {
+		s, problem := txcall.DeclaredInvoker(fn.Origin())
+		if !s.InContext {
+			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
+		}
+		return s, problem == ""
+	}
 	var f Invokes
 	return helperShape(h, fn, h.invokers, &f, func() txcall.InvokerShape { return f.Shape }, h.readInvoker)
 }
 
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
+	if h.declares(directive.Begins, fn) {
+		s, problem := txcall.DeclaredBegin(fn.Origin())
+		s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
+		return s, problem == ""
+	}
 	var f Begins
 	return helperShape(h, fn, h.begins, &f, func() txcall.BeginShape { return f.Shape }, h.readBegin)
+}
+
+// declaredOuter is the handle a declared fn opens on. A body of the
+// package that opens every transaction on one handle, a parameter or a
+// field of one, names it, as s.db for a method of s. Otherwise it is the
+// parameter the signature gives, outer.
+func (h *Helpers) declaredOuter(fn *types.Func, outer int) (int, []string, bool) {
+	decl, ok := h.decls[fn.Origin()]
+	if !ok {
+		return outer, nil, false
+	}
+	sfn := h.prog.Func(decl)
+	var found *transaction
+	for _, t := range h.transactions(sfn, decl) {
+		if found != nil && !found.outer.Equal(t.outer) {
+			return outer, nil, false
+		}
+		found = &t
+	}
+	if found == nil {
+		return outer, nil, false
+	}
+	i, fields, ok := helperParam(sfn, found.outer)
+	if !ok {
+		return outer, nil, false
+	}
+	return i, fields, found.nests
 }
 
 // helperShape is the shape of fn: read from its body when it is of the

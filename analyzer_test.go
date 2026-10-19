@@ -36,6 +36,7 @@ func TestAnalyzer(t *testing.T) {
 		"reltx",
 		"trmtx",
 		"helpertx",
+		"declaredtx",
 		"directives",
 		"generated",
 	)
@@ -83,6 +84,23 @@ func TestFlags(t *testing.T) {
 		if f.DefValue != want {
 			t.Errorf("flag %s defaults to %s, want %s", name, f.DefValue, want)
 		}
+	}
+}
+
+// TestDeclaredFlags runs with -invokes, -begins and -closes set, which
+// declare the helpers of a library flagtx calls.
+func TestDeclaredFlags(t *testing.T) {
+	setFlag(t, "invokes", "(flaglib.Manager).InTx")
+	setFlag(t, "begins", "(*flaglib.Manager).Begin")
+	setFlag(t, "closes", "(flaglib.Tx).Finish")
+	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flagtx")
+}
+
+// TestDeclaredFlagRejectsMisspelling refuses a name that is not spelled like
+// a function, since a typo would switch its declaration off in silence.
+func TestDeclaredFlagRejectsMisspelling(t *testing.T) {
+	if err := txbypass.Analyzer.Flags.Set("invokes", "InTx"); err == nil {
+		t.Error("-invokes=InTx was accepted")
 	}
 }
 

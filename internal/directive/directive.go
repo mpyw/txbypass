@@ -1,16 +1,21 @@
 // Package directive reads the //txbypass: comments in a package.
 //
-// One directive exists. //txbypass:ignore <rules> // <reason> silences the
-// named rules, or every rule when none is named. On a line of its own it
-// silences the line below. After code on the same line, it silences that
-// line only. The reason is required, so that the next reader can tell a
-// decision from a shortcut. Any other directive is reported.
+// //txbypass:ignore <rules> // <reason> silences the named rules, or every
+// rule when none is named. On a line of its own it silences the line below.
+// After code on the same line, it silences that line only. The reason is
+// required, so that the next reader can tell a decision from a shortcut.
+//
+// //txbypass:invokes, //txbypass:begins and //txbypass:closes declare what
+// a function, a method or an interface method does with a transaction. They
+// go in its doc comment, or trail an interface method. Any other directive
+// is reported.
 package directive
 
 import (
 	"bytes"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"slices"
 	"strings"
 
@@ -24,10 +29,32 @@ const tool = "txbypass"
 
 // Set is what the directives in a package say.
 type Set struct {
-	fset     *token.FileSet
-	ignores  map[string]map[int][]*ignore
-	all      []*ignore
-	problems []Problem
+	fset         *token.FileSet
+	ignores      map[string]map[int][]*ignore
+	all          []*ignore
+	problems     []Problem
+	declarations []Declaration
+}
+
+// Kind is what a declaring directive says a function does.
+type Kind string
+
+// The declaring directives.
+const (
+	// Invokes declares an invoker: it opens a transaction and runs a
+	// callback inside it.
+	Invokes Kind = "invokes"
+	// Begins declares a begin: it returns a transaction.
+	Begins Kind = "begins"
+	// Closes declares an end: it ends every transaction it is given.
+	Closes Kind = "closes"
+)
+
+// Declaration is one declaring directive, and the function it declares.
+type Declaration struct {
+	Obj  *types.Func
+	Kind Kind
+	Pos  token.Pos
 }
 
 // Problem is a directive that is malformed or unknown.
@@ -45,10 +72,11 @@ type ignore struct {
 }
 
 // Scan reads the directives in files. src returns the text of a file, which
-// tells a directive on a line of its own from one after code. A generated
-// file is skipped: nothing is reported in it, so neither its ignores nor its
-// problems mean anything.
-func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error)) *Set {
+// tells a directive on a line of its own from one after code. info gives
+// the function a declaring directive declares. A generated file is skipped:
+// nothing is reported in it, so neither its ignores nor its problems mean
+// anything.
+func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error), info *types.Info) *Set {
 	s := &Set{fset: fset, ignores: make(map[string]map[int][]*ignore)}
 	for _, f := range files {
 		if Generated(f) {
@@ -57,8 +85,82 @@ func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]b
 		name := fset.PositionFor(f.Pos(), false).Filename
 		text, _ := src(name)
 		s.scanFile(f, name, text)
+		s.scanDeclarations(f, info)
 	}
 	return s
+}
+
+// scanDeclarations reads the declaring directives of f, and reports one
+// with an argument, or one that is not in the doc comment of a function or
+// an interface method.
+func (s *Set) scanDeclarations(f *ast.File, info *types.Info) {
+	placed := make(map[*ast.Comment]Kind)
+	for _, cg := range f.Comments {
+		for _, cm := range cg.List {
+			d, ok := parse(cm)
+			if !ok || !declaring(d.name) {
+				continue
+			}
+			if strings.TrimSpace(d.args) != "" {
+				s.report(cm, "txbypass:"+d.name+" takes no argument; write a reason after //")
+				continue
+			}
+			placed[cm] = ""
+		}
+	}
+	if len(placed) == 0 {
+		return
+	}
+	claim := func(doc *ast.CommentGroup, id *ast.Ident) {
+		if doc == nil {
+			return
+		}
+		for _, cm := range doc.List {
+			if _, ok := placed[cm]; !ok {
+				continue
+			}
+			d, _ := parse(cm)
+			placed[cm] = Kind(d.name)
+			s.declarations = append(s.declarations, Declaration{Obj: info.Defs[id].(*types.Func), Kind: Kind(d.name), Pos: cm.Pos()})
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncDecl:
+			claim(n.Doc, n.Name)
+		case *ast.InterfaceType:
+			for _, m := range n.Methods.List {
+				if len(m.Names) == 1 {
+					claim(m.Doc, m.Names[0])
+					claim(m.Comment, m.Names[0])
+				}
+			}
+		}
+		return true
+	})
+	for _, cg := range f.Comments {
+		for _, cm := range cg.List {
+			if kind, ok := placed[cm]; ok && kind == "" {
+				d, _ := parse(cm)
+				s.report(cm, "txbypass:"+d.name+" belongs in the doc comment of a function or an interface method")
+			}
+		}
+	}
+}
+
+// declaring reports whether name is a declaring directive.
+func declaring(name string) bool {
+	switch Kind(name) {
+	case Invokes, Begins, Closes:
+		return true
+	}
+	return false
+}
+
+// Declarations lists the declaring directives, in the order of the files
+// and of the declarations in them.
+func (s *Set) Declarations() []Declaration {
+	return s.declarations
 }
 
 func (s *Set) scanFile(f *ast.File, name string, text []byte) {
@@ -70,6 +172,9 @@ func (s *Set) scanFile(f *ast.File, name string, text []byte) {
 		for _, cm := range cg.List {
 			d, ok := parse(cm)
 			if !ok {
+				continue
+			}
+			if declaring(d.name) {
 				continue
 			}
 			if d.name != "ignore" {

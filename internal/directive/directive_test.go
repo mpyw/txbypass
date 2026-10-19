@@ -19,7 +19,8 @@ func scanSource(t *testing.T, name, src string) (*token.FileSet, *ast.File, *Set
 		t.Fatal(err)
 	}
 	read := func(string) ([]byte, error) { return []byte(src), nil }
-	return fset, f, Scan(fset, []*ast.File{f}, read)
+	// No declaring directive is read here, so no types are needed.
+	return fset, f, Scan(fset, []*ast.File{f}, read, nil)
 }
 
 // lineStart is the position of the start of line in f.
