@@ -1201,10 +1201,8 @@ func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) b
 	switch made := made.(type) {
 	case ssa.CallInstruction:
 		calls = append(calls, made)
-	case *ssa.MakeClosure:
-		values, calls = scopePassed(made, values, nil)
-	case *ssa.ChangeType:
-		values, calls = scopePassed(made, values, nil)
+	case *ssa.MakeClosure, *ssa.ChangeType:
+		values, calls = scopePassed(made.(ssa.Value), values, nil)
 	}
 	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
 		fn, ok := scopeCallee(call.Common())

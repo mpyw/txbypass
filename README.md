@@ -252,6 +252,8 @@ s.db.ExecContext(ctx, audit)
 | It returns the transaction wrapped in a struct, or one it was given | The struct is not followed. A transaction it was given is not new |
 | It defers a call given the transaction it returns, as `defer tx.Rollback()` | The deferred call may end the transaction before the caller uses it |
 | It gives the address of its error to a call, as `defer annotate(&err)` | The call may return an open transaction beside an error |
+| It takes two callbacks | Only the first that runs inside the transaction is read |
+| It is a method with a pointer receiver, called on a struct held by value, as `s := Store{db: db}` then `s.withTx(...)` | The call takes the address of `s`, and a method of the module given it may change what `s.db` holds |
 
 The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
 

@@ -145,7 +145,7 @@ A function is a helper when all of these hold:
 | The callback is only called, or compared with `nil`. It is not stored, passed on, or called by `go` or `defer` | It might then run outside the transaction. A guard such as `if fn == nil { return errNoFunc }` hands it nowhere |
 | No call of the callback runs outside a transaction | A helper that reuses a transaction it is given, as `if cur != nil { return fn(cur) }`, also runs the callback outside the one it opens |
 
-The first parameter of a function type that meets them is the callback. A helper that calls itself is read as no helper at its own call.
+The first parameter of a function type that meets them is the callback. A second callback that runs inside the transaction too is not read. A helper that calls itself is read as no helper at its own call.
 
 A helper of another package is known by the fact `invokes[pO.f, pC(T)]`, which the analysis of its package exports. `pO` is the parameter that holds the handle, and `.f` the fields selected from it. `pC` is the callback, and `T` the callback's parameter that is given the transaction. The receiver of a method is parameter 0.
 
@@ -429,7 +429,8 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
-| A function literal given to a helper of the project that is not read as one. A helper that opens on a package-level variable is one | See [Helpers that are invokers](#helpers-that-are-invokers) |
+| A function literal given to a helper of the project that is not read as one. A helper that opens on a package-level variable is one |
+| A helper method with a pointer receiver, called on a struct held by value | The call takes the variable's address. A method of the module given an address may change what it holds, so the variable is no known handle after it | See [Helpers that are invokers](#helpers-that-are-invokers) |
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |
