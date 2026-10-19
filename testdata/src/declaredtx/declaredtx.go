@@ -458,3 +458,32 @@ func Retried(ctx context.Context, r Retrier) error {
 
 //txbypass:invokes // the callback takes only a number // want `^txbypass:invokes needs a callback that takes a transaction or a context$`
 func numbered(db *sql.DB, fn func(n int) error) error { return nil }
+
+// Opts tells an end how to end. It is no transaction.
+type Opts struct{ Force bool }
+
+// OptTx is a transaction that a begin returns, and ends with options.
+type OptTx struct{}
+
+//txbypass:closes
+func (*OptTx) End(o *Opts) error { return nil } // want End:`^closes\[0 1\]$`
+
+// OptDB begins OptTx.
+type OptDB struct{}
+
+//txbypass:begins
+func (*OptDB) Begin(ctx context.Context) (*OptTx, error) { return nil, nil } // want Begin:`^begins\[p0\]$`
+
+func (*OptDB) Exec(ctx context.Context, q string) error { return nil }
+
+// With gives the database itself, bound to options.
+func (db *OptDB) With(o *Opts) *OptDB { return db }
+
+func Optioned(ctx context.Context, db *OptDB, o *Opts) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	db.With(o).Exec(ctx, "q") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
+	return tx.End(o)
+}

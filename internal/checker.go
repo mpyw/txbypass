@@ -169,25 +169,45 @@ func (c *checker) declaredTx(t types.Type) bool {
 		// anything calls it.
 		// A function is named by many identifiers, and is read once.
 		read := make(map[*types.Func]bool)
+		var fns []*types.Func
 		for _, m := range []map[*ast.Ident]types.Object{c.pass.TypesInfo.Uses, c.pass.TypesInfo.Defs} {
 			for _, obj := range m {
 				if fn, ok := obj.(*types.Func); ok && !read[fn] {
 					read[fn] = true
-					c.readTxTypes(fn)
+					fns = append(fns, fn)
 				}
 			}
+		}
+		// The begins come first: a declared end of a transaction they
+		// return takes its receiver as the transaction, not an input.
+		for _, fn := range fns {
+			c.readBeginTxType(fn)
+		}
+		for _, fn := range fns {
+			c.readEndTxTypes(fn)
 		}
 	}
 	return c.txTypes.At(t) != nil
 }
 
-// readTxTypes records the types of the transactions fn gives or takes, when
-// it is a declared begin or end, or an end of another package.
-func (c *checker) readTxTypes(fn *types.Func) {
+// readBeginTxType records the type of the transaction fn returns, when it
+// is a declared begin or a begin of another package.
+func (c *checker) readBeginTxType(fn *types.Func) {
 	sig := fn.Signature()
 	// A begin that returns any names no type, as an end that takes it does.
 	if !txcall.IsBeginFunc(fn) && c.begins(fn) && sig.Results().Len() > 0 && checkerTxLike(sig.Results().At(0).Type()) {
 		c.txTypes.Set(sig.Results().At(0).Type(), true)
+	}
+}
+
+// readEndTxTypes records the type of the transaction a declared end, or an
+// end of another package, takes. A method of a transaction, one with an
+// ending method or one a begin returns, ends its receiver: its inputs,
+// as options, are no transaction types.
+func (c *checker) readEndTxTypes(fn *types.Func) {
+	sig := fn.Signature()
+	if recv := sig.Recv(); recv != nil && (txcall.Holds(recv.Type()) || c.txTypes.At(recv.Type()) != nil) {
+		return
 	}
 	var f closer.Fact
 	declared := c.declares(directive.KindCloses, fn)

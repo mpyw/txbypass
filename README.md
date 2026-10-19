@@ -285,7 +285,7 @@ type Tx interface {
 | `//txbypass:begins` | A call returns a transaction, open |
 | `//txbypass:closes` | A call ends every transaction it is given, its receiver included |
 
-The handle is the receiver. The callback is the first parameter of a function type. It is given the transaction at its first parameter that may be one, which is not a number, a string, an error or a context. A callback that takes a context and no transaction gets the transaction in the context, and [`outer-context`](#outer-context) reads it. The exact rules are in [design/rules.md](design/rules.md#declared-helpers).
+The handle is the receiver. The callback is the first parameter of a function type. It is given the transaction at its first parameter that may be one, which is not a number, a string, a bool, an error, a context or a function. A callback that takes a context and no transaction gets the transaction in the context, and [`outer-context`](#outer-context) reads it. The exact rules are in [design/rules.md](design/rules.md#declared-helpers).
 
 For code you cannot edit, pass the names in a flag:
 
