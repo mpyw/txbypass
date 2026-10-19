@@ -104,7 +104,10 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 	if generated {
 		report = func(*ast.Comment, string) {}
 	}
+	// placed holds the kind of each declaring directive, and claimed those
+	// in the doc comment of a function or an interface method.
 	placed := make(map[*ast.Comment]Kind)
+	claimed := make(map[*ast.Comment]bool)
 	for _, cg := range f.Comments {
 		for _, cm := range cg.List {
 			d, ok := parse(cm)
@@ -115,7 +118,7 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 				report(cm, "txbypass:"+d.name+" takes no argument; write a reason after //")
 				continue
 			}
-			placed[cm] = ""
+			placed[cm] = Kind(d.name)
 		}
 	}
 	if len(placed) == 0 {
@@ -126,12 +129,12 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 			return
 		}
 		for _, cm := range doc.List {
-			if _, ok := placed[cm]; !ok {
+			kind, ok := placed[cm]
+			if !ok {
 				continue
 			}
-			d, _ := parse(cm)
-			placed[cm] = Kind(d.name)
-			s.declarations = append(s.declarations, Declaration{Obj: info.Defs[id].(*types.Func), Kind: Kind(d.name), Pos: cm.Pos()})
+			claimed[cm] = true
+			s.declarations = append(s.declarations, Declaration{Obj: info.Defs[id].(*types.Func), Kind: kind, Pos: cm.Pos()})
 		}
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -150,9 +153,8 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 	})
 	for _, cg := range f.Comments {
 		for _, cm := range cg.List {
-			if kind, ok := placed[cm]; ok && kind == "" {
-				d, _ := parse(cm)
-				report(cm, "txbypass:"+d.name+" belongs in the doc comment of a function or an interface method")
+			if kind, ok := placed[cm]; ok && !claimed[cm] {
+				report(cm, "txbypass:"+string(kind)+" belongs in the doc comment of a function or an interface method")
 			}
 		}
 	}

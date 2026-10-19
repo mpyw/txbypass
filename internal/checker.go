@@ -100,20 +100,21 @@ func (c *checker) holds(t types.Type) bool {
 	if v := c.holdsDeclared.At(t); v != nil {
 		return v.(bool)
 	}
+	// Held as no transaction while its methods are read, so that a method
+	// that takes a value of t again ends the walk.
+	c.holdsDeclared.Set(t, false)
 	found := false
-	for _, mset := range []*types.MethodSet{c.methodSets.MethodSet(t), c.methodSets.MethodSet(types.NewPointer(t))} {
-		for sel := range mset.Methods() {
-			m := sel.Obj().(*types.Func)
-			var f closer.Fact
-			// A declared end of the receiver alone, as tx.Done(err), makes
-			// the receiver a transaction. One given a transaction, as
-			// m.End(tx), ends that one: the receiver is what ends it.
-			if checkerTakesTx(m) {
-				continue
-			}
-			if c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0) {
-				found = true
-			}
+	for _, sel := range typeutil.IntuitiveMethodSet(t, &c.methodSets) {
+		m := sel.Obj().(*types.Func)
+		var f closer.Fact
+		// A declared end of the receiver alone, as tx.Done(err), makes
+		// the receiver a transaction. One given a transaction, as
+		// m.End(tx), ends that one: the receiver is what ends it.
+		if checkerTakesTx(m, c.holds) {
+			continue
+		}
+		if c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0) {
+			found = true
 		}
 	}
 	c.holdsDeclared.Set(t, found)
@@ -129,11 +130,11 @@ func (c *checker) begins(fn *types.Func) bool {
 	return txcall.IsBeginFunc(fn) || c.declares(directive.Begins, fn) || fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
 }
 
-// checkerTakesTx reports whether a method takes a transaction, by the name
-// of a method of its type, as a *sql.Tx.
-func checkerTakesTx(m *types.Func) bool {
+// checkerTakesTx reports whether a method takes a transaction, a value of a
+// type that holds says is one.
+func checkerTakesTx(m *types.Func, holds func(types.Type) bool) bool {
 	for p := range m.Signature().Params().Variables() {
-		if txcall.Holds(p.Type()) {
+		if holds(p.Type()) {
 			return true
 		}
 	}

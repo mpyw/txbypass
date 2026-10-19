@@ -312,3 +312,16 @@ func (*Ender) End(tx *sql.Tx) error { return nil } // want End:`^closes\[0 1\]$`
 
 // endWith ends tx, and not e, which is no transaction.
 func endWith(e *Ender, tx *sql.Tx) error { return e.End(tx) } // want endWith:`^closes\[1\]$`
+
+// TxEnder ends the declared transactions it is given. It holds none
+// itself, though its end takes a Tx, which txbypass knows by a declaration
+// only.
+type TxEnder struct{}
+
+// End ends tx.
+//
+//txbypass:closes
+func (*TxEnder) End(tx Tx) error { return nil } // want End:`^closes\[0 1\]$`
+
+// endTx ends tx, and not e, which is no transaction.
+func endTx(e *TxEnder, tx Tx) error { return e.End(tx) } // want endTx:`^closes\[1\]$`

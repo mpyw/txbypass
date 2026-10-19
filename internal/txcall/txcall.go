@@ -304,11 +304,8 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 // the problem with it.
 func DeclaredBegin(fn *types.Func) (BeginShape, string) {
 	res := fn.Signature().Results()
-	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
-		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
-	}
 	// A transaction is a value with methods. A number or a string is none.
-	if _, basic := res.At(0).Type().Underlying().(*types.Basic); basic {
+	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) || declaredBasic(res.At(0).Type()) {
 		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
 	}
 	outer, ok := declaredOuter(fn.Signature(), declaredParams(fn.Signature()))
@@ -354,6 +351,12 @@ func declaredOuter(sig *types.Signature, params []types.Type) (int, bool) {
 	}
 	i := slices.IndexFunc(params, func(t types.Type) bool { return !IsContext(t) && !declaredFunc(t) })
 	return i, i >= 0
+}
+
+// declaredBasic reports whether t is a basic type, as a number or a string.
+func declaredBasic(t types.Type) bool {
+	_, ok := t.Underlying().(*types.Basic)
+	return ok
 }
 
 // declaredFunc reports whether t is a function type.
