@@ -14,6 +14,7 @@ package helper
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"slices"
 	"strconv"
@@ -146,7 +147,7 @@ func (h *Helpers) IsBegin(fn *types.Func) bool {
 // Calls reports whether call calls a helper of another package.
 func Calls(pass *analysis.Pass, call *ast.CallExpr) bool {
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
-	return ok && (pass.ImportObjectFact(fn.Origin(), new(Invokes)) || pass.ImportObjectFact(fn.Origin(), new(Begins)))
+	return ok && fn.Pkg() != pass.Pkg && (pass.ImportObjectFact(fn.Origin(), new(Invokes)) || pass.ImportObjectFact(fn.Origin(), new(Begins)))
 }
 
 // Export exports the facts of each helper of the package.
@@ -239,8 +240,16 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 		if !ok || b == fn.Recover {
 			continue
 		}
-		if c, ok := ret.Results[0].(*ssa.Const); ok && c.IsNil() {
+		if helperNil(ret.Results[0]) {
+			// No transaction is returned. The caller has to read an error
+			// beside it, or it reads a begin that did not happen.
+			if len(ret.Results) < 2 || helperNil(ret.Results[1]) {
+				return nil
+			}
 			continue
+		}
+		if len(ret.Results) == 2 && helperRewritten(ret.Results[1]) {
+			return nil
 		}
 		s, ok := h.returned(fn, ret, txs)
 		if !ok || shape != nil && !beginShapeEqual(*shape, s) {
@@ -249,6 +258,82 @@ func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 		shape = &s
 	}
 	return shape
+}
+
+// helperNil reports whether v is the constant nil.
+func helperNil(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	return ok && c.IsNil()
+}
+
+// helperRewritten reports whether v, an error result, is a load of a named
+// result that a function literal may set to another error. A literal that
+// sets it only where it is not nil, as one that wraps it, leaves a nil
+// error nil, so a transaction returned beside it stays the begin's.
+func helperRewritten(v ssa.Value) bool {
+	load, ok := v.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL {
+		return false
+	}
+	alloc, ok := load.X.(*ssa.Alloc)
+	if !ok {
+		return false
+	}
+	for _, ref := range *alloc.Referrers() {
+		mc, ok := ref.(*ssa.MakeClosure)
+		if !ok {
+			continue
+		}
+		lit := mc.Fn.(*ssa.Function)
+		for i, b := range mc.Bindings {
+			if b == alloc && helperWrites(lit.FreeVars[i]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// helperWrites reports whether a literal may set fv to an error that is
+// not nil where it held nil: by a store not under fv != nil, or by handing
+// fv on.
+func helperWrites(fv *ssa.FreeVar) bool {
+	for _, ref := range *fv.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.UnOp, *ssa.DebugRef:
+		case *ssa.Store:
+			if ref.Addr == fv && !helperUnderNotNil(ref.Block(), fv) {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// helperUnderNotNil reports whether b runs only where fv holds an error
+// that is not nil: it is dominated by the true edge of fv != nil.
+func helperUnderNotNil(b *ssa.BasicBlock, fv *ssa.FreeVar) bool {
+	for c := b; c.Idom() != nil; c = c.Idom() {
+		p := c.Idom()
+		cond, ok := p.Instrs[len(p.Instrs)-1].(*ssa.If)
+		if !ok || !p.Succs[0].Dominates(b) {
+			continue
+		}
+		cmp, ok := cond.Cond.(*ssa.BinOp)
+		if !ok || cmp.Op != token.NEQ {
+			continue
+		}
+		x, y := cmp.X, cmp.Y
+		if helperNil(x) {
+			x, y = y, x
+		}
+		if load, ok := x.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == fv && helperNil(y) {
+			return true
+		}
+	}
+	return false
 }
 
 // returned is the shape of a begin in fn whose transaction ret returns,
@@ -428,7 +513,10 @@ func (h *Helpers) gives(instr ssa.Instruction, cb handle.Path) bool {
 	case *ssa.DebugRef, *ssa.BinOp:
 		return false
 	case *ssa.Store:
-		if _, local := instr.Addr.(*ssa.Alloc); local {
+		// Only a variable written once, as a whole, gives the callback at
+		// every load. One written more than once is a value of its own, and
+		// a use of it is not seen as the callback's.
+		if alloc, local := instr.Addr.(*ssa.Alloc); local && h.paths.Of(alloc).Equal(cb) {
 			return false
 		}
 	}

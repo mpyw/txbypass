@@ -210,6 +210,31 @@ func (s *Store) Kept(ctx context.Context) error {
 	})
 }
 
+// keepCopy keeps fn in a literal, through a captured variable written
+// twice. A load of such a variable is a value of its own, not the callback.
+func (s *Store) keepCopy(ctx context.Context, trace bool, fn func(*sql.Tx) error) error {
+	h := fn
+	if trace {
+		h = fn
+	}
+	s.hooks = append(s.hooks, func(tx *sql.Tx) error { return h(tx) })
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
+func (s *Store) KeptCopy(ctx context.Context) error {
+	return s.keepCopy(ctx, false, func(tx *sql.Tx) error {
+		_, err := s.db.ExecContext(ctx, "audit")
+		return err
+	})
+}
+
 // background runs fn in a goroutine, which may outlive the transaction.
 func (s *Store) background(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)

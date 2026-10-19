@@ -106,8 +106,12 @@ func Begun(begin *ssa.Call, c *closer.Closer, paths *handle.Paths) *Region {
 	}
 	var addr *ssa.Alloc
 	for _, ref := range *tx.Referrers() {
+		// A store to a field, after the variable's own, does not forget the
+		// variable.
 		if st, ok := ref.(*ssa.Store); ok {
-			addr, _ = st.Addr.(*ssa.Alloc)
+			if a, ok := st.Addr.(*ssa.Alloc); ok {
+				addr = a
+			}
 		}
 	}
 	return build(begin, tx, err, addr, c, paths)

@@ -367,3 +367,69 @@ func (r *Repo) GormErr(v any) error {
 	r.db.Create(v)
 	return other.Commit().Error
 }
+
+// maybeBegin may begin nothing, with no error.
+func (s *Store) maybeBegin(ctx context.Context, on bool) (*sql.Tx, error) {
+	if !on {
+		return nil, nil
+	}
+	return s.db.BeginTx(ctx, nil)
+}
+
+// beginOverride may set its error after the begin succeeded.
+func (s *Store) beginOverride(ctx context.Context, fail bool) (tx *sql.Tx, err error) {
+	defer func() {
+		if fail {
+			err = errSetup
+		}
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
+
+// beginReset hands its error to a function that may set it.
+func (s *Store) beginReset(ctx context.Context) (tx *sql.Tx, err error) {
+	defer func() {
+		reset(&err)
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
+
+func reset(err *error) { *err = nil }
+
+func (s *Store) MaybeBegun(ctx context.Context) error {
+	tx, err := s.maybeBegin(ctx, false)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if tx != nil {
+		return tx.Commit()
+	}
+	over, err := s.beginOverride(ctx, true)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	if err := over.Commit(); err != nil {
+		return err
+	}
+	reset, err := s.beginReset(ctx)
+	if err != nil {
+		return err
+	}
+	s.db.ExecContext(ctx, "q")
+	return reset.Commit()
+}
+
+// beginNilFirst wraps its error under nil != err.
+func (s *Store) beginNilFirst(ctx context.Context) (tx *sql.Tx, err error) { // want beginNilFirst:`^begins\[p0\.db\]$`
+	defer func() {
+		if nil != err {
+			err = fmt.Errorf("begin: %w", err)
+		}
+	}()
+	tx, err = s.db.BeginTx(ctx, nil)
+	return tx, err
+}
