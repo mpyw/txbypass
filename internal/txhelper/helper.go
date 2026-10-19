@@ -182,7 +182,7 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
-		if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" {
+		if s, problem := declared.Invoker(fn.Origin()); problem == "" {
 			if !s.InContext {
 				s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 			}
@@ -200,7 +200,7 @@ func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
-		if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
+		if s, problem := declared.Begin(fn.Origin()); problem == "" {
 			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 			return s, true
 		}

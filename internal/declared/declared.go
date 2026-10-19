@@ -2,6 +2,10 @@
 // tables of libraries: the helpers that a directive or a flag declares,
 // and the types whose values are transactions.
 //
+// What a declaration says is read from the signature it declares, by
+// Invoker and Begin: which parameter is the handle, which is the callback,
+// and what the callback is given.
+//
 // A directive is seen only in the package that holds it, so its
 // declaration is exported as a fact, which the analysis of a package that
 // imports it reads. A flag is seen by every pass alike, so its names are
@@ -71,15 +75,15 @@ func New(pass *analysis.Pass, flags map[directive.Kind]map[string]bool, decls []
 		switch d.Kind {
 		case directive.KindInvokes:
 			var shape txcall.InvokerShape
-			shape, problem = txcall.DeclaredInvoker(d.Obj)
+			shape, problem = Invoker(d.Obj)
 			f = &fact.Invokes{Shape: shape}
 		case directive.KindBegins:
 			var shape txcall.BeginShape
-			shape, problem = txcall.DeclaredBegin(d.Obj)
+			shape, problem = Begin(d.Obj)
 			f = &fact.Begins{Shape: shape}
 		case directive.KindCloses:
 			var params []int
-			params, problem = txcall.DeclaredCloser(d.Obj)
+			params, problem = closerParams(d.Obj)
 			f = &fact.Closes{Params: params, Declared: true}
 		}
 		if problem != "" {
@@ -134,7 +138,7 @@ func (s *Set) Begins(fn *types.Func) bool {
 	// A flag's declaration that the signature does not fit declares
 	// nothing, as it does for the helpers.
 	if s.Declares(directive.KindBegins, fn) {
-		if _, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
+		if _, problem := Begin(fn.Origin()); problem == "" {
 			return true
 		}
 	}
@@ -294,4 +298,105 @@ func txLike(t types.Type) bool {
 		return false
 	}
 	return txcall.MayBeTx(t)
+}
+
+// Invoker is the shape that a declaration of fn as an invoker says,
+// read from its signature. It is empty, with the problem, when the
+// signature does not fit.
+func Invoker(fn *types.Func) (txcall.InvokerShape, string) {
+	params := paramTypes(fn.Signature())
+	// The receiver is the handle, never the callback.
+	first := 0
+	if fn.Signature().Recv() != nil {
+		first = 1
+	}
+	cb := slices.IndexFunc(params[first:], isFuncType)
+	if cb < 0 {
+		return txcall.InvokerShape{}, "needs a parameter of a function type"
+	}
+	cb += first
+	takes := paramTypes(params[cb].Underlying().(*types.Signature))
+	// The transaction is the first input that may be one. A context, an
+	// attempt number or an error beside it is none.
+	s := txcall.InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, txcall.MayBeTx)}
+	if s.Tx >= 0 {
+		outer, ok := handleParam(fn.Signature(), params)
+		if !ok {
+			return txcall.InvokerShape{}, "needs a handle: a receiver, or a parameter that is neither a context nor a function"
+		}
+		s.Outer = outer
+		return s, ""
+	}
+	if !slices.ContainsFunc(takes, txcall.IsContext) {
+		return txcall.InvokerShape{}, "needs a callback that takes a transaction or a context"
+	}
+	// A transaction manager that carries the transaction in a context
+	// joins the one its context carries, as go-transaction-manager's Do
+	// does.
+	s.Tx, s.InContext, s.Nests = slices.IndexFunc(takes, txcall.IsContext), true, true
+	s.Outer = slices.IndexFunc(params, txcall.IsContext)
+	if s.Outer < 0 {
+		return txcall.InvokerShape{}, "needs a context parameter, since the callback takes only a context"
+	}
+	return s, ""
+}
+
+// Begin is the shape that a declaration of fn as a begin says, or
+// the problem with it.
+func Begin(fn *types.Func) (txcall.BeginShape, string) {
+	res := fn.Signature().Results()
+	// A number, a string, an error, a context or a function is no
+	// transaction.
+	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) || !txcall.MayBeTx(res.At(0).Type()) {
+		return txcall.BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
+	}
+	outer, ok := handleParam(fn.Signature(), paramTypes(fn.Signature()))
+	if !ok {
+		return txcall.BeginShape{}, "needs a handle: a receiver, or a parameter that is neither a context nor a function"
+	}
+	return txcall.BeginShape{Outer: outer}, ""
+}
+
+// closerParams lists the parameters that a declaration of fn as an end
+// says it ends: every one, the receiver of a method as 0. It is empty, with
+// the problem, when fn takes nothing.
+func closerParams(fn *types.Func) ([]int, string) {
+	n := len(paramTypes(fn.Signature()))
+	if n == 0 {
+		return nil, "needs a receiver or a parameter"
+	}
+	params := make([]int, n)
+	for i := range params {
+		params[i] = i
+	}
+	return params, ""
+}
+
+// paramTypes lists the types of the parameters of sig, the receiver
+// first.
+func paramTypes(sig *types.Signature) []types.Type {
+	var out []types.Type
+	if sig.Recv() != nil {
+		out = append(out, sig.Recv().Type())
+	}
+	for p := range sig.Params().Variables() {
+		out = append(out, p.Type())
+	}
+	return out
+}
+
+// handleParam is the parameter that holds the handle: the receiver, or
+// the first parameter that is neither a context nor a function.
+func handleParam(sig *types.Signature, params []types.Type) (int, bool) {
+	if sig.Recv() != nil {
+		return 0, true
+	}
+	i := slices.IndexFunc(params, func(t types.Type) bool { return !txcall.IsContext(t) && !isFuncType(t) })
+	return i, i >= 0
+}
+
+// isFuncType reports whether t is a function type.
+func isFuncType(t types.Type) bool {
+	_, ok := t.Underlying().(*types.Signature)
+	return ok
 }
