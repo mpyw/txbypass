@@ -1212,7 +1212,7 @@ func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) b
 	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
 		fn, ok := scopeCallee(call.Common())
 		arg := slices.Index(call.Common().Args, value)
-		if call.Common().IsInvoke() {
+		if call.Common().IsInvoke() && arg >= 0 {
 			// The receiver of an interface method is not among the
 			// arguments.
 			arg++

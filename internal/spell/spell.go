@@ -17,20 +17,18 @@ import (
 
 // Of spells the handle e reaches, as source in package from would: what e
 // begins with, then its first depth fields. A use that reads a field of the
-// handle, as db.Error, is spelled as the handle, db. Embedded fields at the
-// end are left out, as the source leaves them out: s.Create(u) reaches s.DB,
-// and is spelled s. A variable of another package is qualified by its
-// package's name.
+// handle, as db.Error, is spelled as the handle, db. Embedded fields are left
+// out, as the source leaves them out: s.Create(u) reaches s.DB, and is
+// spelled s. db.writer reaches db.dbbase.writer, and is spelled db.writer. A
+// variable of another package is qualified by its package's name.
 func Of(info *types.Info, e ast.Expr, from *types.Package, depth int) string {
 	head, fields := path(info, e, from)
-	fields = fields[:min(depth, len(fields))]
-	for len(fields) > 0 && fields[len(fields)-1].Embedded() {
-		fields = fields[:len(fields)-1]
-	}
 	var b strings.Builder
 	b.WriteString(head)
-	for _, f := range fields {
-		b.WriteString("." + f.Name())
+	for _, f := range fields[:min(depth, len(fields))] {
+		if !f.Embedded() {
+			b.WriteString("." + f.Name())
+		}
 	}
 	return b.String()
 }

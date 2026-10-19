@@ -59,6 +59,16 @@ func RunInTx(ctx context.Context, db *sql.DB, fn func(context.Context, *sql.Tx) 
 	return tx.Commit()
 }
 
+// guarded checks fn against nil first. A comparison hands fn nowhere.
+func (s *Store) guarded(ctx context.Context, fn func(*sql.Tx) error) error { // want guarded:`^invokes\[p0\.db, p2\(0\)\]$`
+	if fn == nil {
+		return errors.New("no function")
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		return fn(tx)
+	})
+}
+
 type Repo struct {
 	db *gorm.DB
 }
@@ -109,6 +119,13 @@ func (r *Repo) Save(v any) error {
 	})
 }
 
+func (s *Store) Guarded(ctx context.Context) error {
+	return s.guarded(ctx, func(tx *sql.Tx) error {
+		_, err := s.db.ExecContext(ctx, "audit") // want `^s\.db bypasses the transaction opened with guarded; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
 // App reaches withTx through the Store it embeds.
 type App struct {
 	*Store
@@ -116,7 +133,7 @@ type App struct {
 
 func (a *App) Run(ctx context.Context) error {
 	return a.withTx(ctx, func(tx *sql.Tx) error {
-		_, err := a.db.ExecContext(ctx, "audit") // want `^a\.Store\.db bypasses the transaction opened with withTx; use tx instead \[outer-handle\]$`
+		_, err := a.db.ExecContext(ctx, "audit") // want `^a\.db bypasses the transaction opened with withTx; use tx instead \[outer-handle\]$`
 		return err
 	})
 }

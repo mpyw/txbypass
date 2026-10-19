@@ -6,9 +6,9 @@ import (
 	"github.com/mpyw/txbypass/internal/txcall"
 )
 
-// TestFactIsAFact pins the marker that makes Fact an analysis fact, and its
+// TestInvokesIsAFact pins the marker that makes Invokes an analysis fact, and its
 // spelling in the fixtures' want comments.
-func TestFactIsAFact(t *testing.T) {
+func TestInvokesIsAFact(t *testing.T) {
 	f := &Invokes{Shape: txcall.InvokerShape{Outer: 0, Fields: []string{"db"}, Callback: 2, Tx: 1}}
 	f.AFact()
 	if got := f.String(); got != "invokes[p0.db, p2(1)]" {
@@ -16,7 +16,7 @@ func TestFactIsAFact(t *testing.T) {
 	}
 }
 
-// TestBeginsIsAFact does for Begins what TestFactIsAFact does for Invokes.
+// TestBeginsIsAFact does for Begins what TestInvokesIsAFact does for Invokes.
 func TestBeginsIsAFact(t *testing.T) {
 	f := &Begins{Shape: txcall.BeginShape{Outer: 1, Fields: []string{"store", "db"}}}
 	f.AFact()

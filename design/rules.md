@@ -142,7 +142,7 @@ A function is a helper when all of these hold:
 | It opens a transaction with an invoker, or a helper, and calls the callback in that invoker's callback. Or it calls the callback in the region of a begin | The callback runs inside the transaction |
 | Each call of the callback is given the transaction, at the same parameter | That parameter is the callback's transaction |
 | The transaction is opened on a parameter, or on a field selected from one. Every call agrees on which | That handle is the outer one. A package-level variable is no parameter |
-| The callback is only called. It is not stored, passed on, or called by `go` or `defer` | It might then run outside the transaction |
+| The callback is only called, or compared with `nil`. It is not stored, passed on, or called by `go` or `defer` | It might then run outside the transaction. A guard such as `if fn == nil { return errNoFunc }` hands it nowhere |
 | No call of the callback runs outside a transaction | A helper that reuses a transaction it is given, as `if cur != nil { return fn(cur) }`, also runs the callback outside the one it opens |
 
 The first parameter of a function type that meets them is the callback. A helper that calls itself is read as no helper at its own call.
@@ -386,7 +386,7 @@ Every report of a rule has one shape. A report about a directive has its own, li
 
 | Part | Spelled as |
 | --- | --- |
-| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields at the end. A variable of another package is qualified by its package's name |
+| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields, as the source leaves them out. `db.writer`, promoted from an embedded `dbbase`, is spelled `db.writer`. A variable of another package is qualified by its package's name |
 | `<call>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
 | `<instead>` | The transaction's variable or parameter. For a handle rebound with `WithTx`, the variable its result is assigned to, or the call as written |
 

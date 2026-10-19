@@ -77,6 +77,9 @@ type Helpers struct {
 	// is known as no helper, so a helper that calls itself ends.
 	invokers map[*types.Func]*txcall.InvokerShape
 	begins   map[*types.Func]*txcall.BeginShape
+	// txs holds the transactions of each function already listed, as both
+	// readers list them for a function that may be either helper.
+	txs map[*ssa.Function][]transaction
 }
 
 // New finds the helpers of pass, whose SSA form is prog.
@@ -84,6 +87,7 @@ func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *clo
 	h := &Helpers{
 		pass: pass, prog: prog, paths: paths, closer: c, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
+		txs: make(map[*ssa.Function][]transaction),
 	}
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
@@ -304,6 +308,9 @@ type transaction struct {
 // opens. A transaction that opens a savepoint, or rides in a context, is
 // left out.
 func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transaction {
+	if txs, ok := h.txs[fn]; ok {
+		return txs
+	}
 	txs := []transaction{}
 	ast.PreorderStack(decl.Body, nil, func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -338,6 +345,7 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transacti
 		txs = append(txs, transaction{fn: in, region: r, txs: r.Txs(), outer: outer, nests: b.Nests})
 		return true
 	})
+	h.txs[fn] = txs
 	return txs
 }
 
@@ -413,10 +421,11 @@ func (h *Helpers) runInside(fn *ssa.Function, call ssa.CallInstruction, txs []tr
 // gives reports whether instr hands the callback cb on, other than by
 // calling it: as an argument, a stored value, or one edge of a phi. A store
 // into a local variable moves nothing out of reach: the loads of it are the
-// callback again. A debug reference does nothing.
+// callback again. A debug reference does nothing, and neither does a
+// comparison: a function is only compared with nil, as if fn == nil does.
 func (h *Helpers) gives(instr ssa.Instruction, cb handle.Path) bool {
 	switch instr := instr.(type) {
-	case *ssa.DebugRef:
+	case *ssa.DebugRef, *ssa.BinOp:
 		return false
 	case *ssa.Store:
 		if _, local := instr.Addr.(*ssa.Alloc); local {
