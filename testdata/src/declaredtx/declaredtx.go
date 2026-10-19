@@ -153,7 +153,7 @@ func onGlobal(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error { /
 //txbypass:closes
 func finish(tx *sql.Tx) {} // want finish:`^closes\[0\]$`
 
-func Finished(ctx context.Context, db *sql.DB, other Tx, dbs DB) error {
+func Finished(ctx context.Context, db *sql.DB, other Tx, dbs DB) error { // want Finished:`^closes\[2\]$`
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -241,4 +241,26 @@ func Generated(ctx context.Context, g Gen) error {
 		_, err := g.ExecContext(ctx, "q") // want `^g bypasses the transaction opened with InTx; use tx instead \[outer-handle\]$`
 		return err
 	})
+}
+
+// finishTx ends tx through its declared end, so it ends tx too.
+func finishTx(tx Tx) error { return tx.Done(nil) } // want finishTx:`^closes\[0\]$`
+
+func FinishedThrough(ctx context.Context, db DB, p *declaredlib.Pool) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := finishTx(tx); err != nil {
+		return err
+	}
+	db.ExecContext(ctx, "after")
+	s, err := p.Open(ctx)
+	if err != nil {
+		return err
+	}
+	if err := declaredlib.EndSession(s); err != nil {
+		return err
+	}
+	return p.Exec(ctx, "after")
 }

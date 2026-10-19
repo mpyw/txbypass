@@ -25,3 +25,21 @@ type Tx struct{ tx *sql.Tx }
 
 // Finish ends the transaction.
 func (t *Tx) Finish() error { return nil }
+
+// Store opens on DB, as its body says, which the fact of WithTx records.
+type Store struct {
+	DB    *sql.DB
+	Audit *sql.DB
+}
+
+// WithTx runs fn in a transaction on s.DB.
+func (s *Store) WithTx(ctx context.Context, fn func(*sql.Tx) error) error { // want WithTx:`^invokes\[p0\.DB, p2\(0\)\]$`
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

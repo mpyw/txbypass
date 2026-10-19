@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/types"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -21,15 +22,19 @@ func Parse(list string) (map[string]bool, error) {
 }
 
 // ParseEach reads a list that holds one name per item, as the plugin's
-// settings take it. An item with a comma outside brackets is refused, since
-// it would otherwise pass as one name that matches nothing.
+// settings take it. An item with two names, split by a comma outside
+// brackets, is refused, since it would otherwise pass as one name that
+// matches nothing. A trailing comma, as in "a.F,", leaves one name.
 func ParseEach(names []string) (map[string]bool, error) {
+	var each []string
 	for _, s := range names {
-		if len(split(s)) > 1 {
+		parts := slices.DeleteFunc(split(s), func(p string) bool { return strings.TrimSpace(p) == "" })
+		if len(parts) > 1 {
 			return nil, fmt.Errorf("%q holds more than one name; give one per item", s)
 		}
+		each = append(each, parts...)
 	}
-	return parseNames(names)
+	return parseNames(each)
 }
 
 // parseNames reads each name. The * of a pointer receiver and the type

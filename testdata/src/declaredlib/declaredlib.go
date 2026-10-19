@@ -39,3 +39,6 @@ func (*Pool) Exec(ctx context.Context, query string) error { return nil }
 //
 //txbypass:begins
 func (*Pool) Open(ctx context.Context) (*Session, error) { return nil, nil } // want Open:`^begins\[p0\]$`
+
+// EndSession ends s through its declared end, so it ends s too.
+func EndSession(s *Session) error { return s.End() } // want EndSession:`^closes\[0\]$`

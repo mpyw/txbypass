@@ -55,6 +55,7 @@ func TestParseEach(t *testing.T) {
 		{name: "none", names: nil, want: nil},
 		{name: "one per item", names: []string{"a.F", " (*b.T).M "}, want: []string{"(b.T).M", "a.F"}},
 		{name: "a comma inside type arguments", names: []string{"(m.L[K, V]).Report"}, want: []string{"(m.L).Report"}},
+		{name: "a trailing comma", names: []string{"a.F,"}, want: []string{"a.F"}},
 		{name: "two names in one item", names: []string{"a.F,b.G"}, wantErr: true},
 		{name: "a misspelled name", names: []string{"garbage(("}, wantErr: true},
 	}

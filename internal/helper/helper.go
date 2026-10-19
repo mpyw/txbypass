@@ -77,6 +77,8 @@ type Helpers struct {
 	paths    *handle.Paths
 	closer   *closer.Closer
 	declares func(directive.Kind, *types.Func) bool
+	// holds reports whether a value of a type is a transaction.
+	holds func(types.Type) bool
 	// decls holds the declared functions of the package, by object.
 	decls map[*types.Func]*ast.FuncDecl
 	// invokers and begins hold the shape of each function of the package
@@ -106,9 +108,9 @@ type helperOuter struct {
 // New finds the helpers of pass, whose SSA form is prog. declares reports
 // whether a function is declared as an invoker or a begin, by a directive of
 // the package or a flag. A declaration wins over the body.
-func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, declares func(directive.Kind, *types.Func) bool) *Helpers {
+func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, declares func(directive.Kind, *types.Func) bool, holds func(types.Type) bool) *Helpers {
 	h := &Helpers{
-		pass: pass, prog: prog, paths: paths, closer: c, declares: declares, decls: make(map[*types.Func]*ast.FuncDecl),
+		pass: pass, prog: prog, paths: paths, closer: c, declares: declares, holds: holds, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
 		txs: make(map[*ssa.Function][]transaction), outers: make(map[*types.Func]*helperOuter),
 	}
@@ -194,6 +196,13 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 	// that does not fit is reported. A flag's is not, and the body is read
 	// as it would be without the flag.
 	if h.declares(directive.Invokes, fn) {
+		// The fact of another package was read from the body there, or
+		// from a directive, and names the handle more closely than the
+		// signature does.
+		var f Invokes
+		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
+			return f.Shape, true
+		}
 		if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" {
 			if !s.InContext {
 				s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
@@ -208,6 +217,10 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
 	if h.declares(directive.Begins, fn) {
+		var f Begins
+		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
+			return f.Shape, true
+		}
 		if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
 			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 			return s, true
@@ -244,11 +257,15 @@ func (h *Helpers) readOuter(fn *types.Func) *helperOuter {
 	}
 	sfn := h.prog.Func(decl)
 	var found *transaction
+	// A savepoint only when every transaction opens one: a call on a
+	// transaction then opens a savepoint, whichever path it takes.
+	nests := true
 	for _, t := range h.transactions(sfn, decl) {
 		if found != nil && !found.outer.Equal(t.outer) {
 			return &helperOuter{}
 		}
 		found = &t
+		nests = nests && t.nests
 	}
 	if found == nil {
 		return &helperOuter{}
@@ -257,7 +274,7 @@ func (h *Helpers) readOuter(fn *types.Func) *helperOuter {
 	if !ok {
 		return &helperOuter{}
 	}
-	return &helperOuter{param: i, fields: fields, nests: found.nests, found: true}
+	return &helperOuter{param: i, fields: fields, nests: nests, found: true}
 }
 
 // helperShape is the shape of fn: read from its body when it is of the
@@ -310,7 +327,7 @@ func (h *Helpers) readInvoker(decl *ast.FuncDecl) *txcall.InvokerShape {
 func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 	fn := h.prog.Func(decl)
 	res := fn.Signature.Results()
-	if res.Len() == 0 || res.Len() > 2 || !txcall.Holds(res.At(0).Type()) || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
+	if res.Len() == 0 || res.Len() > 2 || !h.holds(res.At(0).Type()) || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
 		return nil
 	}
 	txs := h.transactions(fn, decl)

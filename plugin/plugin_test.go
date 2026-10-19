@@ -39,7 +39,7 @@ func TestPluginSettingsTurnRulesOff(t *testing.T) {
 
 func TestPluginSettingsDeclareHelpers(t *testing.T) {
 	a := buildAnalyzer(t, map[string]any{
-		"invokes": []any{"(flaglib.Manager).InTx"},
+		"invokes": []any{"(flaglib.Manager).InTx", "(flaglib.Store).WithTx"},
 		"begins":  []any{"(*flaglib.Manager).Begin"},
 		"closes":  []any{"(flaglib.Tx).Finish"},
 	})

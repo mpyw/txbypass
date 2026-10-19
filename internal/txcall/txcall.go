@@ -280,7 +280,7 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 	}
 	cb += first
 	takes := declaredParams(params[cb].Underlying().(*types.Signature))
-	s := InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, func(t types.Type) bool { return !declaredContext(t) })}
+	s := InvokerShape{Callback: cb, Tx: slices.IndexFunc(takes, func(t types.Type) bool { return !IsContext(t) })}
 	if s.Tx >= 0 {
 		outer, ok := declaredOuter(fn.Signature(), params)
 		if !ok {
@@ -293,7 +293,7 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 		return InvokerShape{}, "needs a callback that takes a transaction or a context"
 	}
 	s.Tx, s.InContext = 0, true
-	s.Outer = slices.IndexFunc(params, declaredContext)
+	s.Outer = slices.IndexFunc(params, IsContext)
 	if s.Outer < 0 {
 		return InvokerShape{}, "needs a context parameter, since the callback takes only a context"
 	}
@@ -318,13 +318,19 @@ func DeclaredBegin(fn *types.Func) (BeginShape, string) {
 	return BeginShape{Outer: outer}, ""
 }
 
-// DeclaredCloser is the problem with a declaration of fn as an end, or
-// empty when it fits.
-func DeclaredCloser(fn *types.Func) string {
-	if len(declaredParams(fn.Signature())) == 0 {
-		return "needs a receiver or a parameter"
+// DeclaredCloser lists the parameters that a declaration of fn as an end
+// says it ends: every one, the receiver of a method as 0. It is empty, with
+// the problem, when fn takes nothing.
+func DeclaredCloser(fn *types.Func) ([]int, string) {
+	n := len(declaredParams(fn.Signature()))
+	if n == 0 {
+		return nil, "needs a receiver or a parameter"
 	}
-	return ""
+	params := make([]int, n)
+	for i := range params {
+		params[i] = i
+	}
+	return params, ""
 }
 
 // declaredParams lists the types of the parameters of sig, the receiver
@@ -346,7 +352,7 @@ func declaredOuter(sig *types.Signature, params []types.Type) (int, bool) {
 	if sig.Recv() != nil {
 		return 0, true
 	}
-	i := slices.IndexFunc(params, func(t types.Type) bool { return !declaredContext(t) && !declaredFunc(t) })
+	i := slices.IndexFunc(params, func(t types.Type) bool { return !IsContext(t) && !declaredFunc(t) })
 	return i, i >= 0
 }
 
@@ -356,8 +362,8 @@ func declaredFunc(t types.Type) bool {
 	return ok
 }
 
-// declaredContext reports whether t is context.Context.
-func declaredContext(t types.Type) bool {
+// IsContext reports whether t is context.Context.
+func IsContext(t types.Type) bool {
 	n, ok := types.Unalias(t).(*types.Named)
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "context" && n.Obj().Name() == "Context"
 }

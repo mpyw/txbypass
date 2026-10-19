@@ -15,6 +15,7 @@ import (
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
 	"github.com/mpyw/txbypass/internal/spell"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // txScope is the code that runs inside one transaction: the body of a
@@ -289,13 +290,7 @@ func scopeParam(sig *types.Signature, i int) types.Type {
 // the call is e's parent.
 func scopeYieldsContext(info *types.Info, e ast.Expr, stack []ast.Node) bool {
 	call, ok := stack[len(stack)-1].(*ast.CallExpr)
-	return ok && call.Fun == e && scopeIsContext(info.TypeOf(call))
-}
-
-// scopeIsContext reports whether t is context.Context.
-func scopeIsContext(t types.Type) bool {
-	named, ok := types.Unalias(t).(*types.Named)
-	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "context" && named.Obj().Name() == "Context"
+	return ok && call.Fun == e && txcall.IsContext(info.TypeOf(call))
 }
 
 // scopeGivenForLater reports whether e is given to a function of the
@@ -1058,7 +1053,7 @@ walk:
 func scopeTakesContext(info *types.Info, call *ast.CallExpr) bool {
 	sig := info.TypeOf(call.Fun).(*types.Signature)
 	for p := range sig.Params().Variables() {
-		if t, ok := types.Unalias(p.Type()).(*types.Named); ok && t.Obj().Pkg() != nil && t.Obj().Pkg().Path() == "context" && t.Obj().Name() == "Context" {
+		if txcall.IsContext(p.Type()) {
 			return true
 		}
 	}

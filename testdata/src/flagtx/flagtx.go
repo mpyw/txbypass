@@ -1,5 +1,5 @@
 // Package flagtx covers helpers declared by flags. It runs with
-// -invokes=(flaglib.Manager).InTx, -begins=(*flaglib.Manager).Begin and
+// -invokes=(flaglib.Manager).InTx,(flaglib.Store).WithTx, -begins=(*flaglib.Manager).Begin and
 // -closes=(flaglib.Tx).Finish.
 package flagtx
 
@@ -28,4 +28,15 @@ func Begun(ctx context.Context, m *flaglib.Manager) error {
 	}
 	_, err = m.DB.ExecContext(ctx, "after")
 	return err
+}
+
+// A flag on a function whose fact names its handle keeps that handle.
+func Stored(ctx context.Context, s *flaglib.Store) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := s.Audit.ExecContext(ctx, "q"); err != nil {
+			return err
+		}
+		_, err := s.DB.ExecContext(ctx, "q") // want `^s\.DB bypasses the transaction opened with WithTx; use tx instead \[outer-handle\]$`
+		return err
+	})
 }

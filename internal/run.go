@@ -43,12 +43,12 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 		c.reportf(p.Pos, p.Message)
 	}
 	c.runDeclarations()
-	if runNeedsProgram(pass, c.declares) {
+	if runNeedsProgram(pass, c.declares, c.holds) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
 		c.paths = handle.NewPaths(runModule(pass.Module))
-		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.Closes, fn) })
+		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.Closes, fn) }, c.holds)
 		c.closer.Export(c.prog)
-		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declares)
+		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declares, c.holds)
 		c.helpers.Export()
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not
@@ -86,8 +86,9 @@ func (c *checker) runDeclarations() {
 			s, problem = txcall.DeclaredBegin(d.Obj)
 			fact = &helper.Begins{Shape: s}
 		case directive.Closes:
-			problem = txcall.DeclaredCloser(d.Obj)
-			fact = &closer.Fact{Params: runAllParams(d.Obj)}
+			var params []int
+			params, problem = txcall.DeclaredCloser(d.Obj)
+			fact = &closer.Fact{Params: params}
 		}
 		if problem != "" {
 			// Nothing is reported in a generated file.
@@ -104,19 +105,6 @@ func (c *checker) runDeclarations() {
 	}
 }
 
-// runAllParams lists every parameter of fn, the receiver of a method as 0.
-func runAllParams(fn *types.Func) []int {
-	n := fn.Signature().Params().Len()
-	if fn.Signature().Recv() != nil {
-		n++
-	}
-	out := make([]int, n)
-	for i := range out {
-		out[i] = i
-	}
-	return out
-}
-
 // runModule is the path of module, or empty when there is none. go vet
 // gives no module for a package outside any, as the standard library, and
 // nogo gives none at all. The path is empty outside module mode too.
@@ -130,7 +118,7 @@ func runModule(module *analysis.Module) string {
 // runNeedsProgram reports whether the package calls an invoker or a begin,
 // or has a function with a parameter that has a method that ends a
 // transaction. declares tells a function that a flag declares.
-func runNeedsProgram(pass *analysis.Pass, declares func(directive.Kind, *types.Func) bool) bool {
+func runNeedsProgram(pass *analysis.Pass, declares func(directive.Kind, *types.Func) bool, holds func(types.Type) bool) bool {
 	found := false
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -139,9 +127,9 @@ func runNeedsProgram(pass *analysis.Pass, declares func(directive.Kind, *types.F
 				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
 				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n) || runCallsDeclared(pass, n, declares)
 			case *ast.FuncDecl:
-				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature())
+				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature(), holds)
 			case *ast.FuncLit:
-				found = found || runTakesTx(pass.TypesInfo.TypeOf(n).(*types.Signature))
+				found = found || runTakesTx(pass.TypesInfo.TypeOf(n).(*types.Signature), holds)
 			}
 			return !found
 		})
@@ -158,12 +146,12 @@ func runCallsDeclared(pass *analysis.Pass, call *ast.CallExpr, declares func(dir
 
 // runTakesTx reports whether a function of signature sig takes a value that
 // has a method that ends a transaction, as its receiver or a parameter.
-func runTakesTx(sig *types.Signature) bool {
-	if sig.Recv() != nil && txcall.Holds(sig.Recv().Type()) {
+func runTakesTx(sig *types.Signature, holds func(types.Type) bool) bool {
+	if sig.Recv() != nil && holds(sig.Recv().Type()) {
 		return true
 	}
 	for p := range sig.Params().Variables() {
-		if txcall.Holds(p.Type()) {
+		if holds(p.Type()) {
 			return true
 		}
 	}

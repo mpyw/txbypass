@@ -90,7 +90,7 @@ func TestFlags(t *testing.T) {
 // TestDeclaredFlags runs with -invokes, -begins and -closes set, which
 // declare the helpers of a library flagtx calls.
 func TestDeclaredFlags(t *testing.T) {
-	setFlag(t, "invokes", "(flaglib.Manager).InTx")
+	setFlag(t, "invokes", "(flaglib.Manager).InTx,(flaglib.Store).WithTx")
 	setFlag(t, "begins", "(*flaglib.Manager).Begin")
 	setFlag(t, "closes", "(flaglib.Tx).Finish")
 	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flagtx")

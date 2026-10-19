@@ -327,7 +327,7 @@ A transaction given to a function value or an interface method, whose body is no
 
 ### Helpers
 
-A function ends its parameter when its body calls one of the ending methods on it. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read.
+A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method, or a method declared as an end, is read.
 
 | The function is | It is read |
 | --- | --- |

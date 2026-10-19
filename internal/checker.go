@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
@@ -15,6 +16,7 @@ import (
 	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/rule"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // checker is one pass's state.
@@ -36,6 +38,14 @@ type checker struct {
 	// declared holds the functions of the package that a directive
 	// declares, by kind, once the declaration fits the signature.
 	declared map[directive.Kind]map[*types.Func]bool
+	// holdsDeclared remembers, for each type asked about, whether a method
+	// of it is declared to end a transaction. methodSets builds the method
+	// sets it reads.
+	//
+	//declscope:private
+	holdsDeclared typeutil.Map
+	//declscope:private
+	methodSets typeutil.MethodSetCache
 	// keys holds the name a flag would give each function asked about,
 	// since every call is asked about and formatting a name is costly.
 	//declscope:private
@@ -76,6 +86,32 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 		}
 	}
 	return c
+}
+
+// holds reports whether a value of type t is a transaction: it has a method
+// that ends one, by its name, as Commit, or by a declaration, here or in
+// the package that declares the method.
+//
+//declscope:shared // run.go hands it to closer and helper, and asks it of signatures
+func (c *checker) holds(t types.Type) bool {
+	if txcall.Holds(t) {
+		return true
+	}
+	if v := c.holdsDeclared.At(t); v != nil {
+		return v.(bool)
+	}
+	found := false
+	for _, mset := range []*types.MethodSet{c.methodSets.MethodSet(t), c.methodSets.MethodSet(types.NewPointer(t))} {
+		for sel := range mset.Methods() {
+			m := sel.Obj().(*types.Func)
+			var f closer.Fact
+			if c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0) {
+				found = true
+			}
+		}
+	}
+	c.holdsDeclared.Set(t, found)
+	return found
 }
 
 // declares reports whether fn is declared as kind: by a directive of the
