@@ -1,4 +1,4 @@
-// Package closer tells which instructions may end a transaction.
+// Package txcloser tells which instructions may end a transaction.
 //
 // A transaction ends when a method named Commit or Rollback is called on
 // it, or on a field of it, as pop's tx.TX.Commit(). It may also end inside
@@ -16,7 +16,7 @@
 // receiver in many places, and would otherwise seem to end it. A
 // transaction given to a function value or an interface method, whose body
 // is not known, is taken to stay open.
-package closer
+package txcloser
 
 import (
 	"go/constant"

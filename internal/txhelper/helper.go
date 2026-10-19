@@ -1,4 +1,4 @@
-// Package helper finds the helpers of a project that are invokers: they
+// Package txhelper finds the helpers of a project that are invokers: they
 // open a transaction and invoke a function they are given inside it, as
 // s.withTx(ctx, fn) does.
 //
@@ -9,11 +9,10 @@
 // a helper that may run it outside the transaction, or keep it, is no
 // helper. A helper of another package says what it is in a fact, which the
 // analysis of its package exports.
-package helper
+package txhelper
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 	"slices"
 
@@ -21,7 +20,6 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/declared"
 	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/fact"
@@ -29,15 +27,23 @@ import (
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/txcall"
+	"github.com/mpyw/txbypass/internal/txcloser"
 )
 
 // Helpers finds the helpers, for one pass.
 type Helpers struct {
-	pass   *analysis.Pass
-	prog   *program.Program
+	pass *analysis.Pass
+	// prog is the package's SSA form, and paths says which handle each
+	// value of it is.
+	//
+	//declscope:shared // invoker.go and begin.go read helpers through them
+	prog *program.Program
+	//declscope:shared // invoker.go and begin.go read helpers through them
 	paths  *handle.Paths
-	closer *closer.Closer
+	closer *txcloser.Closer
 	// decl tells what is declared, and which types are transactions.
+	//
+	//declscope:shared // begin.go asks it which types are transactions
 	decl *declared.Set
 	// decls holds the declared functions of the package, by object.
 	decls map[*types.Func]*ast.FuncDecl
@@ -48,7 +54,7 @@ type Helpers struct {
 	begins   map[*types.Func]*txcall.BeginShape
 	// txs holds the transactions of each function already listed, as both
 	// readers list them for a function that may be either helper.
-	txs map[*ssa.Function][]transaction
+	txs map[*ssa.Function][]helperTransaction
 	// outers holds the handle that each declared function of the package
 	// opens on, once read from its body. A function being read is held as
 	// opening on no handle of its body, so a body that calls itself ends.
@@ -65,15 +71,15 @@ type helperOuter struct {
 	found  bool
 }
 
-// New finds the helpers of pass, whose SSA form is prog. decl tells the
+// NewHelpers finds the helpers of pass, whose SSA form is prog. decl tells the
 // functions declared as invokers or begins, by a directive of the package
 // or a flag, and the types whose values are transactions. A declaration
 // wins over the body.
-func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, decl *declared.Set) *Helpers {
+func NewHelpers(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *txcloser.Closer, decl *declared.Set) *Helpers {
 	h := &Helpers{
 		pass: pass, prog: prog, paths: paths, closer: c, decl: decl, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
-		txs: make(map[*ssa.Function][]transaction), outers: make(map[*types.Func]*helperOuter),
+		txs: make(map[*ssa.Function][]helperTransaction), outers: make(map[*types.Func]*helperOuter),
 	}
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
@@ -113,7 +119,7 @@ func (h *Helpers) BeginOf(n ast.Node) (txcall.Begin, bool) {
 // helper gives it only to the callback, its parameter arg. The receiver of
 // a method is parameter 0.
 func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
-	if txcall.CallbackTx(fn, i) {
+	if txcall.InvokerGivesTx(fn, i) {
 		return true
 	}
 	s, ok := h.invokerShape(fn)
@@ -125,7 +131,7 @@ func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
 // library, or a helper. A helper gives it only to the callback, its
 // parameter arg.
 func (h *Helpers) GivesContext(fn *types.Func, arg, i int) bool {
-	if txcall.CallbackContext(fn, i) {
+	if txcall.InvokerGivesContext(fn, i) {
 		return true
 	}
 	s, ok := h.invokerShape(fn)
@@ -141,8 +147,8 @@ func (h *Helpers) IsBegin(fn *types.Func) bool {
 	return ok
 }
 
-// Calls reports whether call calls a helper of another package.
-func Calls(pass *analysis.Pass, call *ast.CallExpr) bool {
+// CallsHelper reports whether call calls a helper of another package.
+func CallsHelper(pass *analysis.Pass, call *ast.CallExpr) bool {
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
 	return ok && fn.Pkg() != pass.Pkg && (pass.ImportObjectFact(fn.Origin(), new(fact.Invokes)) || pass.ImportObjectFact(fn.Origin(), new(fact.Begins)))
 }
@@ -229,7 +235,7 @@ func (h *Helpers) readOuter(fn *types.Func) *helperOuter {
 		return &helperOuter{}
 	}
 	sfn := h.prog.Func(decl)
-	var found *transaction
+	var found *helperTransaction
 	// A savepoint only when every transaction opens one: a call on a
 	// transaction then opens a savepoint, whichever path it takes.
 	nests := true
@@ -274,200 +280,10 @@ func helperShape[S any](h *Helpers, fn *types.Func, known map[*types.Func]*S, fa
 	return *s, true
 }
 
-// readInvoker reads decl for a function parameter that it runs inside a
-// transaction. The first such parameter is the callback.
-func (h *Helpers) readInvoker(decl *ast.FuncDecl) *txcall.InvokerShape {
-	fn := h.prog.Func(decl)
-	var txs []transaction
-	for i, p := range fn.Params {
-		if _, ok := p.Type().Underlying().(*types.Signature); !ok {
-			continue
-		}
-		if txs == nil {
-			txs = h.transactions(fn, decl)
-		}
-		if s, ok := h.runs(fn, i, txs); ok {
-			return &s
-		}
-	}
-	return nil
-}
-
-// readBegin reads decl for a function that returns a transaction it
-// begins, open, on a handle that a parameter holds. Its first result is the
-// transaction, and its second, if any, an error. Every return gives the
-// transaction, from begins on one handle, or nil.
-func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
-	fn := h.prog.Func(decl)
-	res := fn.Signature.Results()
-	if res.Len() == 0 || res.Len() > 2 || !h.decl.Holds(res.At(0).Type()) || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
-		return nil
-	}
-	txs := h.transactions(fn, decl)
-	var shape *txcall.BeginShape
-	for _, b := range fn.Blocks {
-		ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
-		// A return after a deferred call recovers from a panic takes no
-		// part, as a path through a panic takes none in a region.
-		if !ok || b == fn.Recover {
-			continue
-		}
-		// A named result that a deferred literal reads is returned through
-		// a load of what the return stored.
-		if region.Stored(ret.Results[0], helperNil) {
-			// No transaction is returned. The caller has to read an error
-			// beside it, or it reads a begin that did not happen.
-			if len(ret.Results) < 2 || region.Stored(ret.Results[1], helperNil) {
-				return nil
-			}
-			continue
-		}
-		if len(ret.Results) == 2 && helperRewritten(ret.Results[1]) {
-			return nil
-		}
-		s, ok := h.returned(fn, ret, txs)
-		if !ok || shape != nil && !beginShapeEqual(*shape, s) {
-			return nil
-		}
-		shape = &s
-	}
-	return shape
-}
-
-// helperNil reports whether v is the constant nil.
-func helperNil(v ssa.Value) bool {
-	c, ok := v.(*ssa.Const)
-	return ok && c.IsNil()
-}
-
-// helperRewritten reports whether v, an error result, is a load of a
-// variable that a function literal may set to another error, or whose
-// address is handed on, as defer annotate(&err) or check(&err) does. A
-// literal that sets it only where it is not nil, as one that wraps it,
-// leaves a nil error nil, so a transaction returned beside it stays the
-// begin's. A store of the function's own is followed by the region.
-func helperRewritten(v ssa.Value) bool {
-	load, ok := v.(*ssa.UnOp)
-	if !ok || load.Op != token.MUL {
-		return false
-	}
-	alloc, ok := load.X.(*ssa.Alloc)
-	if !ok {
-		return false
-	}
-	for _, ref := range *alloc.Referrers() {
-		switch ref := ref.(type) {
-		case *ssa.UnOp, *ssa.DebugRef:
-		case *ssa.Store:
-			if ref.Addr != alloc {
-				return true
-			}
-		case *ssa.MakeClosure:
-			lit := ref.Fn.(*ssa.Function)
-			for i, b := range ref.Bindings {
-				if b == alloc && helperWrites(lit.FreeVars[i]) {
-					return true
-				}
-			}
-		default:
-			return true
-		}
-	}
-	return false
-}
-
-// helperWrites reports whether a literal may set fv to an error that is
-// not nil where it held nil: by a store not under fv != nil, or by handing
-// fv on.
-func helperWrites(fv *ssa.FreeVar) bool {
-	for _, ref := range *fv.Referrers() {
-		switch ref := ref.(type) {
-		case *ssa.UnOp, *ssa.DebugRef:
-		case *ssa.Store:
-			// A store of fv itself, rather than into it, hands it on.
-			if ref.Addr != fv || !helperUnderNotNil(ref.Block(), fv) {
-				return true
-			}
-		default:
-			return true
-		}
-	}
-	return false
-}
-
-// helperUnderNotNil reports whether b runs only where fv holds an error
-// that is not nil: it is dominated by the true edge of fv != nil.
-func helperUnderNotNil(b *ssa.BasicBlock, fv *ssa.FreeVar) bool {
-	for c := b; c.Idom() != nil; c = c.Idom() {
-		p := c.Idom()
-		cond, ok := p.Instrs[len(p.Instrs)-1].(*ssa.If)
-		if !ok || !p.Succs[0].Dominates(b) {
-			continue
-		}
-		cmp, ok := cond.Cond.(*ssa.BinOp)
-		if !ok || cmp.Op != token.NEQ {
-			continue
-		}
-		x, y := cmp.X, cmp.Y
-		if helperNil(x) {
-			x, y = y, x
-		}
-		if load, ok := x.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == fv && helperNil(y) {
-			return true
-		}
-	}
-	return false
-}
-
-// returned is the shape of a begin in fn whose transaction ret returns,
-// open.
-func (h *Helpers) returned(fn *ssa.Function, ret *ssa.Return, txs []transaction) (txcall.BeginShape, bool) {
-	v := h.paths.Of(ret.Results[0])
-	for _, t := range txs {
-		if t.region == nil || t.fn != fn || !t.region.Inside(ret) || !slices.ContainsFunc(t.txs, v.Equal) || h.deferredOn(fn, t.txs) {
-			continue
-		}
-		// A second result tells the caller whether the begin failed. Any
-		// other error leaves the transaction open where the caller reads
-		// none.
-		if len(ret.Results) == 2 && !t.region.GivesErr(ret.Results[1]) {
-			continue
-		}
-		if outer, fields, ok := helperParam(fn, t.outer); ok {
-			return txcall.BeginShape{Outer: outer, Fields: fields, Nests: t.nests}, true
-		}
-	}
-	return txcall.BeginShape{}, false
-}
-
-// deferredOn reports whether a deferred call of fn is given a value of txs,
-// as defer tx.Rollback() is, or a literal that holds one. It runs after the
-// return, so it may end the transaction before the caller uses it. The
-// region does not see it: a deferred call ends nothing where it is written.
-func (h *Helpers) deferredOn(fn *ssa.Function, txs []handle.Path) bool {
-	for _, b := range fn.Blocks {
-		for _, instr := range b.Instrs {
-			d, ok := instr.(*ssa.Defer)
-			if !ok {
-				continue
-			}
-			vals := append([]ssa.Value{d.Call.Value}, d.Call.Args...)
-			if mc, ok := d.Call.Value.(*ssa.MakeClosure); ok {
-				vals = append(vals, mc.Bindings...)
-			}
-			for _, v := range vals {
-				p := h.paths.Of(v)
-				if slices.ContainsFunc(txs, p.Within) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // helperParam is the parameter of fn that outer is rooted at, and the
 // fields selected from it, by name.
+//
+//declscope:shared // invoker.go and begin.go name the handle a helper opens on
 func helperParam(fn *ssa.Function, outer handle.Path) (int, []string, bool) {
 	p, ok := outer.Root().(*ssa.Parameter)
 	if !ok || p.Parent() != fn {
@@ -480,9 +296,11 @@ func helperParam(fn *ssa.Function, outer handle.Path) (int, []string, bool) {
 	return slices.Index(fn.Params, p), fields, true
 }
 
-// transaction is one transaction that a helper opens: in a callback, or in
-// a region of a begin.
-type transaction struct {
+// helperTransaction is one transaction that a helper opens: in a callback,
+// or in a region of a begin.
+//
+//declscope:shared // invoker.go and begin.go read the transactions a helper opens
+type helperTransaction struct {
 	// fn is where the transaction can be used: the callback, or the
 	// function that holds the begin.
 	fn *ssa.Function
@@ -501,11 +319,13 @@ type transaction struct {
 // transactions lists the transactions that fn, whose declaration is decl,
 // opens. A transaction that opens a savepoint, or rides in a context, is
 // left out.
-func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transaction {
+//
+//declscope:shared // invoker.go and begin.go read the transactions a helper opens
+func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []helperTransaction {
 	if txs, ok := h.txs[fn]; ok {
 		return txs
 	}
-	txs := []transaction{}
+	txs := []helperTransaction{}
 	ast.PreorderStack(decl.Body, nil, func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -520,7 +340,7 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transacti
 			lit := h.prog.Func(o.Callback)
 			obj := h.pass.TypesInfo.Defs[o.Tx]
 			i := slices.IndexFunc(lit.Params, func(p *ssa.Parameter) bool { return p.Object() == obj })
-			txs = append(txs, transaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer, nests: o.Nests})
+			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(lit.Params[i])}, outer: outer, nests: o.Nests})
 			return true
 		}
 		b, ok := txcall.BeginCall(h.pass.TypesInfo, call, h.beginShape)
@@ -536,7 +356,7 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []transacti
 			return true
 		}
 		r := region.Begun(begin, h.closer, h.paths)
-		txs = append(txs, transaction{fn: in, region: r, txs: r.Txs(), outer: outer, nests: b.Nests})
+		txs = append(txs, helperTransaction{fn: in, region: r, txs: r.Txs(), outer: outer, nests: b.Nests})
 		return true
 	})
 	h.txs[fn] = txs
@@ -558,96 +378,4 @@ func (h *Helpers) Outer(fn *ssa.Function, expr ast.Expr, receiver bool, fields [
 		return handle.Path{}, false
 	}
 	return h.paths.Of(ref.X).With(promoted).With(fields), true
-}
-
-// runs reports the shape of fn when its parameter i is a callback that it
-// runs only inside transactions of txs, opened on one handle that a
-// parameter holds, and is given the transaction at one place.
-func (h *Helpers) runs(fn *ssa.Function, i int, txs []transaction) (txcall.InvokerShape, bool) {
-	cb := h.paths.Of(fn.Params[i])
-	var shape *txcall.InvokerShape
-	ok := true
-	program.Walk(fn, func(instr ssa.Instruction) {
-		if !ok {
-			return
-		}
-		if call, isCall := instr.(ssa.CallInstruction); isCall && h.paths.Of(call.Common().Value).Equal(cb) {
-			s, runs := h.runInside(fn, call, txs)
-			ok = runs && (shape == nil || shapeEqual(*shape, s))
-			shape = &s
-			return
-		}
-		ok = !h.gives(instr, cb)
-	})
-	if !ok || shape == nil {
-		return txcall.InvokerShape{}, false
-	}
-	shape.Callback = i
-	return *shape, true
-}
-
-// runInside reports the shape of a call of the callback, when it is a plain
-// call inside one of txs, given the transaction.
-func (h *Helpers) runInside(fn *ssa.Function, call ssa.CallInstruction, txs []transaction) (txcall.InvokerShape, bool) {
-	c, ok := call.(*ssa.Call)
-	if !ok {
-		// A go statement may outlive the transaction, and a deferred call
-		// runs after the code that may end it.
-		return txcall.InvokerShape{}, false
-	}
-	for _, t := range txs {
-		if t.fn != c.Parent() || t.region != nil && !t.region.Inside(c) {
-			continue
-		}
-		at := slices.IndexFunc(c.Call.Args, func(arg ssa.Value) bool {
-			return slices.ContainsFunc(t.txs, h.paths.Of(arg).Equal)
-		})
-		if at < 0 {
-			continue
-		}
-		if outer, fields, ok := helperParam(fn, t.outer); ok {
-			return txcall.InvokerShape{Outer: outer, Fields: fields, Tx: at, Nests: t.nests}, true
-		}
-	}
-	return txcall.InvokerShape{}, false
-}
-
-// gives reports whether instr hands the callback cb on, other than by
-// calling it: as an argument, a stored value, or one edge of a phi. A store
-// into a local variable moves nothing out of reach: the loads of it are the
-// callback again. A debug reference does nothing, and neither does a
-// comparison: a function is only compared with nil, as if fn == nil does.
-func (h *Helpers) gives(instr ssa.Instruction, cb handle.Path) bool {
-	switch instr := instr.(type) {
-	case *ssa.DebugRef, *ssa.BinOp:
-		return false
-	case *ssa.Store:
-		// Only a variable written once, as a whole, gives the callback at
-		// every load. One written more than once is a value of its own, and
-		// a use of it is not seen as the callback's.
-		if alloc, local := instr.Addr.(*ssa.Alloc); local && h.paths.Of(alloc).Equal(cb) {
-			return false
-		}
-	}
-	for _, op := range instr.Operands(nil) {
-		if *op == nil {
-			continue
-		}
-		if _, isFunc := (*op).Type().Underlying().(*types.Signature); isFunc && h.paths.Of(*op).Equal(cb) {
-			return true
-		}
-	}
-	return false
-}
-
-// beginShapeEqual reports whether a and b, read from two returns, are one
-// shape.
-func beginShapeEqual(a, b txcall.BeginShape) bool {
-	return a.Outer == b.Outer && slices.Equal(a.Fields, b.Fields) && a.Nests == b.Nests
-}
-
-// shapeEqual reports whether a and b, read from two calls of one callback,
-// are one shape. The callback is set once the calls agree.
-func shapeEqual(a, b txcall.InvokerShape) bool {
-	return a.Outer == b.Outer && slices.Equal(a.Fields, b.Fields) && a.Tx == b.Tx && a.Nests == b.Nests
 }

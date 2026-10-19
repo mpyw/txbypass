@@ -150,7 +150,7 @@ func (s *Set) Holds(t types.Type) bool {
 	if v := s.holds.At(t); v != nil {
 		return v.(bool)
 	}
-	found := txcall.Holds(t) || s.declaredTx(t) || s.endsReceiver(t)
+	found := txcall.HoldsTx(t) || s.declaredTx(t) || s.endsReceiver(t)
 	s.holds.Set(t, found)
 	return found
 }
@@ -237,7 +237,7 @@ func alt(t types.Type) types.Type {
 // it. A method on the value or on the pointer counts either way, as a
 // begin of *T with an end on T.
 func (s *Set) txRecv(t types.Type) bool {
-	return txcall.Holds(t) || s.txTypes.At(t) != nil || s.txTypes.At(alt(t)) != nil
+	return txcall.HoldsTx(t) || s.txTypes.At(t) != nil || s.txTypes.At(alt(t)) != nil
 }
 
 // readBeginTxType records the type of the transaction fn returns, when it

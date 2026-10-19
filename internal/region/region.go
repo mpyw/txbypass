@@ -22,8 +22,8 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/handle"
+	"github.com/mpyw/txbypass/internal/txcloser"
 )
 
 // state is what is known of the transaction at a point.
@@ -57,7 +57,7 @@ type Region struct {
 	txAddr *ssa.Alloc
 	txs    []handle.Path
 	err    ssa.Value
-	closer *closer.Closer
+	closer *txcloser.Closer
 	// entry holds the state at the entry of each block.
 	entry map[*ssa.BasicBlock]state
 	// ends remembers what closer said of each instruction. The fixpoint
@@ -75,7 +75,7 @@ type Region struct {
 // nil. A transaction kept in a variable in memory is also every load of it,
 // so its address is given as txAddr, or nil. Handles are read through
 // paths.
-func build(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Closer, paths *handle.Paths) *Region {
+func build(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *txcloser.Closer, paths *handle.Paths) *Region {
 	r := &Region{
 		begin: begin, tx: tx, txAddr: txAddr, txs: []handle.Path{paths.Of(tx)}, err: err, closer: c,
 		entry: make(map[*ssa.BasicBlock]state), ends: make(map[ssa.Instruction]bool), at: make(map[ssa.Instruction]state),
@@ -92,7 +92,7 @@ func build(begin *ssa.Call, tx, err ssa.Value, txAddr *ssa.Alloc, c *closer.Clos
 // transaction is the begin's first result, and its error the second. A
 // transaction kept in a variable that a literal captures lives in memory, at
 // the address it is stored to.
-func Begun(begin *ssa.Call, c *closer.Closer, paths *handle.Paths) *Region {
+func Begun(begin *ssa.Call, c *txcloser.Closer, paths *handle.Paths) *Region {
 	var tx, err ssa.Value = begin, nil
 	for _, ref := range *begin.Referrers() {
 		if ex, ok := ref.(*ssa.Extract); ok {

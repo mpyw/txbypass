@@ -16,12 +16,12 @@ import (
 	"golang.org/x/tools/go/analysis/passes/ctrlflow"
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/declared"
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/txcall"
+	"github.com/mpyw/txbypass/internal/txcloser"
+	"github.com/mpyw/txbypass/internal/txhelper"
 )
 
 // errRunWithoutCtrlflow is returned by Run when the pass carries no
@@ -52,9 +52,9 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	if runNeedsProgram(pass, c.declared) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
 		c.paths = handle.NewPaths(runModule(pass.Module), c.declared)
-		c.closer = closer.New(pass, c.paths, c.declared)
+		c.closer = txcloser.New(pass, c.paths, c.declared)
 		c.closer.Export(c.prog)
-		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declared)
+		c.helpers = txhelper.NewHelpers(pass, c.prog, c.paths, c.closer, c.declared)
 		c.helpers.Export()
 		for _, f := range pass.Files {
 			// Nothing is reported in a generated file, so it is not
@@ -94,7 +94,7 @@ func runNeedsProgram(pass *analysis.Pass, decl *declared.Set) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
 				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
-				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || helper.Calls(pass, n) || decl.Calls(n)
+				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n) || txhelper.CallsHelper(pass, n) || decl.Calls(n)
 			case *ast.FuncDecl:
 				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature(), decl.Holds)
 			case *ast.FuncLit:

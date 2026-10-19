@@ -26,13 +26,13 @@ internal/                the rules: one flat package, one namespace per file
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //txbypass: comments
 internal/funcname/       the names -invokes, -begins and -closes take
-internal/txcall/         the calls that open a transaction: the tables, and ent's shape
+internal/txcall/         the calls that open a transaction: the tables (known.go), invokers, begins, ent's shape, and declared shapes
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/fact/           the facts a package exports: closes, invokes and begins
 internal/declared/       what a directive or a flag declares, and which types are transactions
-internal/closer/         which instructions may end a transaction
-internal/helper/         the helpers of the project that are invokers or begins
+internal/txcloser/       which instructions may end a transaction
+internal/txhelper/       the helpers of the project that are invokers or begins: helper.go, invoker.go, begin.go
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -49,9 +49,9 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | `fact` | Data only. The packages that export a fact and those that read it all import it, so it cannot live in one of them |
 | `declared` | Reads declarations, flags, facts and types. The packages below ask it, so it knows none of them |
 | `handle` | Reads SSA values only. It asks an interface which functions begin and which types are transactions |
-| `closer` | Reads SSA instructions and facts. It knows nothing of rules |
-| `helper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
-| `region` | Reads the SSA control flow, and asks `closer` what ends a transaction |
+| `txcloser` | Reads SSA instructions and facts. It knows nothing of rules |
+| `txhelper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
+| `region` | Reads the SSA control flow, and asks `txcloser` what ends a transaction |
 | `spell` | Reads syntax and types only |
 
 `plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `txbypass.Analyzer` instead would be state shared by every run in the process. The copy carries `Requires` and `FactTypes` too. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`. A nested module would need a second tag per release, and would make `declscope shrink` stand down on `internal/`.
@@ -125,7 +125,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 
 ## Helpers
 
-`closer` reads a function of the package for whether it ends a parameter, and remembers the answer. It exports a fact for each function that does, so that the analysis of an importer reads it.
+`txcloser` reads a function of the package for whether it ends a parameter, and remembers the answer. It exports a fact for each function that does, so that the analysis of an importer reads it.
 
 | Decision | Why |
 | --- | --- |
@@ -137,7 +137,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | In a helper, every end in such a body counts | A path that rolls back and returns has ended the parameter before the helper returns |
 | The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys. A completed fixpoint is final, so a later question reads only the keys it adds |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
-| `txcall.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
+| `txcall.HoldsTx` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
@@ -145,7 +145,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 
 ## Helpers that are invokers or begins
 
-`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
+`txhelper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
 
 | Decision | Why |
 | --- | --- |
@@ -162,7 +162,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | An error whose address is handed to a call or stored makes a begin helper no helper | The walk back to the last store sees only stores of the function. A call given `&err` may set it after the begin succeeded |
 | The return in the block that a recovered panic reaches takes no part | It returns whatever the named results hold. A path through a panic takes no part in a region either |
 | A literal's parameter is a helper's transaction only when the literal is given as the helper's callback | A helper may take two literals. The other one may be given the handle itself, so a transaction opened on it is no savepoint |
-| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
+| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. One connection given as the handle makes the helper's call not read, as for a library |
 | `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 
 ## Declared helpers
@@ -172,7 +172,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Three directives, `invokes`, `begins` and `closes`, with no arguments | A transaction is opened by invoking a callback or by beginning, and ended by a call. The verbs say which. Open and begin read the same, so invoke names the callback kind |
 | Read the shape from the signature | An interface method has no body. The defaults fit a transaction manager: the receiver is the handle, and the callback takes the transaction, or a context that carries it |
 | A body of the package that opens on one handle names it | A declared method of a struct that holds two handles would report every use of the struct otherwise |
-| One `declared.Set` answers what is declared and which types are transactions | `closer`, `helper` and `handle` all ask both. The checker held the answers once, and handed each of them over as a function value, so a constructor took three of them |
+| One `declared.Set` answers what is declared and which types are transactions | `txcloser`, `txhelper` and `handle` all ask both. The checker held the answers once, and handed each of them over as a function value, so a constructor took three of them |
 | Flag names are matched where they are called, by `funcname.Key`, as errlogreturn's `-sinks` is | Every pass sees the same flags, so no fact is needed. A directive is seen only where it is written, so it exports a fact |
 | A declaration wins over the body | A declaration is for code the reader knows better than the body says |
 | A declared end ends any input, the receiver of an interface method included | An interface method's receiver is the transaction, as `tx.Done(err)` is. A name that is not `Commit` or `Rollback` is otherwise not an end |
@@ -196,7 +196,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Follow the callback when it is a named function or a method value | The outer handle is in the caller. Inside the function, the same field is selected from another value, the receiver |
 | End a region at any call the transaction is given to | Passing the transaction to repository helpers is how it is used. Only a helper that ends it ends the region |
 | Report the outer transaction inside a savepoint | The savepoint runs on the transaction's connection, so the statement runs inside it. `ROLLBACK TO SAVEPOINT` undoes it with the rest. The tests of pgx and bun use the outer transaction there on purpose |
-| Read a begin on one dedicated connection, as `*sql.Conn` or `*pgx.Conn` | A statement on the connection runs inside the transaction. The tests of pgx do so 29 times. A type created in the transaction is loaded through the connection, since the transaction has no method for it |
+| Read a begin on one connection, as `*sql.Conn` or `*pgx.Conn` | A statement on the connection runs inside the transaction. The tests of pgx do so 29 times. A type created in the transaction is loaded through the connection, since the transaction has no method for it |
 | Report every use of Firestore's client inside the transaction | `tx.Get(client.Doc(p))` is the canonical read, and every transaction has one |
 | Treat any value with a `WithTx` method as the outer handle | A scope that never calls it may hold one built on another database |
 | Make `outer-context` read bun, bob, Spanner and Firestore callbacks too | Their transaction is a value. The outer context there only carries deadlines and values |
@@ -218,7 +218,7 @@ go test ./...            # analysistest over testdata/src, and unit tests
 mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, coverage
 ```
 
-- `testdata/src/*` are analysistest packages. Each library `internal/txcall` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `txhelper` holds helpers whose facts another fixture reads.
+- `testdata/src/*` are analysistest packages. Each library `internal/txcall` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `helperlib` holds helpers whose facts another fixture reads.
 - `testdata/mod` is a module, run by `TestModule` in module mode. It holds what depends on the module, as a repository in another package of it. Its `go.mod` replaces `gorm.io/gorm` with the stub, which has a `go.mod` for that.
 - `analyzer_test.go` lists every fixture package. **A package left out of the list is not run**, and its `want` comments are never checked. It runs the default flags, `-outer-handle=false` and `-outer-context=false`.
 - A fact is checked as a `want` too: `// want finish:"closes\\[0\\]"` on the function that exports it.

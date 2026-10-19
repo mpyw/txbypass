@@ -23,7 +23,7 @@ func (c *checker) checkOuterContext(o txcall.Invoker, fn *ssa.Function) {
 	// The context of MongoDB's WithSession carries the session. A
 	// transaction on it, as sess.WithTransaction(sc, ...), runs with sc too:
 	// a statement on sc runs inside it.
-	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, func(fn *types.Func, _, i int) bool { return txcall.CallbackSession(fn, i) }) {
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, func(fn *types.Func, _, i int) bool { return txcall.InvokerGivesSession(fn, i) }) {
 		return
 	}
 	// An invoker that nests, as go-transaction-manager's Do or go-rel's

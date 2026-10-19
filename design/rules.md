@@ -73,14 +73,14 @@ A call is not an invoker for txbypass when:
 | The callback is not a function literal | Its body is not read |
 | The receiver is given as an argument, through a method expression | The arguments are shifted, and the selector names no handle |
 | The arguments are one call with several results, as `pgx.BeginFunc(args())` | There is no function literal to read |
-| The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, an alias of one, or a type whose `Begin` is declared on one | See [Dedicated connections](#dedicated-connections) |
+| The outer handle is one connection, rather than a pool, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`. So is an alias of one, or a type whose `Begin` is declared on one | See [Single connections](#single-connections) |
 | The outer handle is a transaction | See [Savepoints](#savepoints) |
 
 A method promoted from an embedded field is an invoker of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
 
-### Dedicated connections
+### Single connections
 
-A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. A begin or an invoker on one is not read:
+A transaction begun on one connection, rather than a pool, runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. A begin or an invoker on one is not read:
 
 | Library | Type |
 | --- | --- |
@@ -156,7 +156,7 @@ At the call, the scope is read as an invoker's is. The message names the helper 
 | The callback is not a function literal | Its body is not read |
 | The callback is the receiver, or the handle is the receiver of a method expression | The selector names no handle, or no literal |
 | The arguments are one call with several results | There is no function literal to read |
-| The handle given is one dedicated connection, or a transaction that holds one, as pgx's `Tx` | See [Dedicated connections](#dedicated-connections) |
+| The handle given is one connection, or a transaction that holds one, as pgx's `Tx` | See [Single connections](#single-connections) |
 
 A transaction that a helper gives its callback, or that a helper returns, is a transaction for [Savepoints](#savepoints) too.
 
@@ -500,7 +500,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A hook kept for after the callback, but called inside it too | The literal is not read |
 | A hook kept for after a begin's commit, in a region | A region reads every literal it makes. Write an ignore, or open the transaction with a callback |
 | A transaction placed in a field of a struct, even a local one, as `job := Job{tx: tx}` | The region ends there, so nothing after it is read. Following the struct to see where the transaction goes would be a guess, and a miss is preferred |
-| A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one dedicated connection |
+| A begin through bun's `IDB` that holds a `Conn`, then a use of it | It is reported. The type does not say that the value is one connection |
 | A savepoint on a gorm transaction this analysis does not know as one, as a `*gorm.DB` parameter of a declared function | It is reported. The type does not say that the handle is a transaction |
 | A helper given the handle and the transaction, as `audit(db, tx)` | Not reported. A call given both keeps the handle beside the transaction, as a constructor does |
 | A framework context given to a helper that takes its own type, as `saveOrder(c)` with a `*gin.Context` parameter, which runs a statement with it | Not reported. A parameter of a concrete type takes it as that type, not as a context, and the helper is not read |

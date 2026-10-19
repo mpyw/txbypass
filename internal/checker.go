@@ -7,13 +7,13 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/declared"
 	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/rule"
+	"github.com/mpyw/txbypass/internal/txcloser"
+	"github.com/mpyw/txbypass/internal/txhelper"
 )
 
 // checker is one pass's state.
@@ -26,12 +26,12 @@ type checker struct {
 	// prog is the package's SSA form.
 	prog *program.Program
 	// closer says what may end a transaction.
-	closer *closer.Closer
+	closer *txcloser.Closer
 	// paths says which handle each SSA value is.
 	paths *handle.Paths
 	// helpers says which calls are invokers: a library's, and
 	// the helpers of the project.
-	helpers *helper.Helpers
+	helpers *txhelper.Helpers
 	// declared says what a directive or a flag declares, and which types
 	// are transactions.
 	declared *declared.Set

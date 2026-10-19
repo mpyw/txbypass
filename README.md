@@ -244,7 +244,7 @@ Query builders that take the handle as an argument, such as [jet](https://github
 The exact receivers and signatures are in [design/rules.md](design/rules.md#invokers).
 
 > [!NOTE]
-> A transaction begun on one dedicated connection is not read. `*sql.Conn`, `*pgx.Conn`, `*pgxpool.Conn`, `bun.Conn`, `bob.Conn` and go-pg's `*pg.Conn` are such connections. A statement on the connection runs inside the transaction, so it bypasses nothing. A savepoint, a transaction opened on a transaction, is not read either, for the same reason. The `Tx` of upper/db is no savepoint on a transaction: it begins another transaction on the pool.
+> A transaction begun on one connection, rather than a pool, is not read. `*sql.Conn`, `*pgx.Conn`, `*pgxpool.Conn`, `bun.Conn`, `bob.Conn` and go-pg's `*pg.Conn` are such connections. A statement on the connection runs inside the transaction, so it bypasses nothing. A savepoint, a transaction opened on a transaction, is not read either, for the same reason. The `Tx` of upper/db is no savepoint on a transaction: it begins another transaction on the pool.
 
 ### Helpers of your own
 

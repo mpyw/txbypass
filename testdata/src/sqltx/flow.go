@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"txhelper"
+	"helperlib"
 
 	"github.com/stretchr/testify/require"
 )
@@ -64,20 +64,20 @@ func finish(tx *sql.Tx, err error) error { // want finish:"closes\\[0\\]"
 // A helper of another package, through the fact it exports.
 func ForeignHelper(db *sql.DB) {
 	tx, err := db.Begin()
-	_ = txhelper.Finish(tx, err)
+	_ = helperlib.Finish(tx, err)
 	db.Exec("after a helper of another package")
 	tx2, _ := db.Begin()
-	txhelper.Close(tx2)
+	helperlib.Close(tx2)
 	db.Exec("after a helper that calls a helper")
 	tx3, _ := db.Begin()
-	txhelper.Later(tx3)
+	helperlib.Later(tx3)
 	db.Exec("after a helper that defers the rollback")
 }
 
 // A helper that keeps the transaction open does not end it.
 func KeepingHelper(db *sql.DB) {
 	tx, _ := db.Begin()
-	tx = txhelper.Keep(tx)
+	tx = helperlib.Keep(tx)
 	db.Exec("still inside") // want `^db bypasses the transaction opened with Begin; use tx instead \[outer-handle\]$`
 	tx.Commit()
 }

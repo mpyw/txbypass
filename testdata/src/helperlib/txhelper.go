@@ -1,6 +1,6 @@
-// Package txhelper holds helpers that end a transaction, for the fixtures of
+// Package helperlib holds helpers that end a transaction, for the fixtures of
 // another package.
-package txhelper
+package helperlib
 
 import (
 	"context"
