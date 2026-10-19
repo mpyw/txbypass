@@ -30,8 +30,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // Fact says which parameters a function ends, before it returns or by
@@ -116,7 +116,7 @@ func (c *Closer) escapes(instr ssa.Instruction, txs []handle.Path) bool {
 
 // callEnds reports whether a call may end the transaction.
 func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
-	if recv, name, ok := receiver(call); ok && opener.Ending(name) && !takesFunc(call.Signature()) && c.within(recv, txs) {
+	if recv, name, ok := receiver(call); ok && txcall.Ending(name) && !takesFunc(call.Signature()) && c.within(recv, txs) {
 		return true
 	}
 	fn := call.StaticCallee()
@@ -124,7 +124,7 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 		return false
 	}
 	for i, arg := range call.Args {
-		if c.within(arg, txs) && opener.Holds(arg.Type()) && c.paramEnds(fn, i) {
+		if c.within(arg, txs) && txcall.Holds(arg.Type()) && c.paramEnds(fn, i) {
 			return true
 		}
 	}
@@ -307,7 +307,7 @@ func (c *Closer) Export(prog *program.Program) {
 		}
 		var params []int
 		for i, p := range fn.Params {
-			if opener.Holds(p.Type()) && c.rootEnds(fn, p) {
+			if txcall.Holds(p.Type()) && c.rootEnds(fn, p) {
 				params = append(params, i)
 			}
 		}

@@ -257,7 +257,7 @@ func NotASavepoint(db *gorm.DB, other func() *gorm.DB, u *User) error {
 	})
 }
 
-// Not reported: the outer callback captures nothing, so the opener's call
+// Not reported: the outer callback captures nothing, so the invoker's call
 // names it directly.
 func SavepointNoCapture(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -268,7 +268,7 @@ func SavepointNoCapture(db *gorm.DB) error {
 	})
 }
 
-// A literal given to a function value is no callback of an opener, so its
+// A literal given to a function value is no callback of an invoker, so its
 // parameter is not known to be a transaction.
 func ParamOfFuncValue(run func(func(*gorm.DB) error) error) error {
 	return run(func(h *gorm.DB) error {

@@ -23,8 +23,8 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // Path is a handle: a root value, and the fields selected from it.
@@ -454,7 +454,7 @@ func returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 		return nil, false
 	}
 	same := types.Identical(call.Type(), recv.Type())
-	return recv, same && fn.Name() != "WithTx" && !opener.IsBeginFunc(fn) && !binds(fn, recv.Type())
+	return recv, same && fn.Name() != "WithTx" && !txcall.IsBeginFunc(fn) && !binds(fn, recv.Type())
 }
 
 // binds reports whether fn takes a value of its receiver's type, or one that
@@ -462,7 +462,7 @@ func returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 // given, as repo.Using(tx) does, whatever its name.
 func binds(fn *types.Func, recv types.Type) bool {
 	for p := range fn.Signature().Params().Variables() {
-		if types.Identical(p.Type(), recv) || opener.Holds(p.Type()) {
+		if types.Identical(p.Type(), recv) || txcall.Holds(p.Type()) {
 			return true
 		}
 	}

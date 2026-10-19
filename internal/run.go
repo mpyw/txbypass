@@ -18,8 +18,8 @@ import (
 
 	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // errRunWithoutCtrlflow is returned by Run when the pass carries no
@@ -72,7 +72,7 @@ func runModule(module *analysis.Module) string {
 	return module.Path
 }
 
-// runNeedsProgram reports whether the package calls an opener or a begin,
+// runNeedsProgram reports whether the package calls an invoker or a begin,
 // or has a function with a parameter that has a method that ends a
 // transaction.
 func runNeedsProgram(pass *analysis.Pass) bool {
@@ -81,8 +81,8 @@ func runNeedsProgram(pass *analysis.Pass) bool {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
-				_, isOpener := opener.Of(pass.TypesInfo, n)
-				found = found || isOpener || opener.IsBegin(pass.TypesInfo, n)
+				_, isInvoker := txcall.InvokerOf(pass.TypesInfo, n)
+				found = found || isInvoker || txcall.IsBegin(pass.TypesInfo, n)
 			case *ast.FuncDecl:
 				found = found || runTakesTx(pass.TypesInfo.Defs[n.Name].(*types.Func).Signature())
 			case *ast.FuncLit:
@@ -97,11 +97,11 @@ func runNeedsProgram(pass *analysis.Pass) bool {
 // runTakesTx reports whether a function of signature sig takes a value that
 // has a method that ends a transaction, as its receiver or a parameter.
 func runTakesTx(sig *types.Signature) bool {
-	if sig.Recv() != nil && opener.Holds(sig.Recv().Type()) {
+	if sig.Recv() != nil && txcall.Holds(sig.Recv().Type()) {
 		return true
 	}
 	for p := range sig.Params().Variables() {
-		if opener.Holds(p.Type()) {
+		if txcall.Holds(p.Type()) {
 			return true
 		}
 	}
@@ -144,9 +144,9 @@ func (c *checker) runFile(f *ast.File) {
 	}
 }
 
-// runCall runs the rule of the callback opener that call is, in fn.
+// runCall runs the rule of the invoker that call is, in fn.
 func (c *checker) runCall(call *ast.CallExpr, fn *ssa.Function) {
-	o, ok := opener.Of(c.pass.TypesInfo, call)
+	o, ok := txcall.InvokerOf(c.pass.TypesInfo, call)
 	switch {
 	case !ok:
 	case o.InContext:

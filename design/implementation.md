@@ -25,7 +25,7 @@ internal/                the rules: one flat package, one namespace per file
   outer_context.go       outer-context
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //txbypass: comments
-internal/opener/         the calls that open a transaction: the tables, and ent's shape
+internal/txcall/         the calls that open a transaction: the tables, and ent's shape
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/closer/         which instructions may end a transaction, and the fact of helpers
@@ -39,7 +39,7 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | --- | --- |
 | `rule` | Names only. Flags, messages and directives all spell them |
 | `directive` | Reads comments and source text only |
-| `opener` | Reads syntax and types only. It knows nothing of rules |
+| `txcall` | Reads syntax and types only. It knows nothing of rules |
 | `program` | Builds the SSA form, and maps syntax to it. It knows nothing of handles |
 | `handle` | Reads SSA values only |
 | `closer` | Reads SSA instructions and facts. It knows nothing of rules |
@@ -66,10 +66,10 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | --- | --- |
 | Find uses in the syntax, and ask the SSA form what they hold | Reports point at the expression the reader wrote, and messages spell it. The SSA form alone has no positions for most operands |
 | Give the program `ctrlflow`'s `NoReturn` | A call of `log.Fatal` or `os.Exit` then ends its block, so a path through it takes no part in a region |
-| Build the SSA form only for a package that calls an opener or a begin, or takes a value with an ending method | The analyzer runs on every dependency for its facts. Most have nothing to read, and building the SSA form of each would make a run slow |
+| Build the SSA form only for a package that calls an invoker or a begin, or takes a value with an ending method | The analyzer runs on every dependency for its facts. Most have nothing to read, and building the SSA form of each would make a run slow |
 | Find a begin's call by the position of its parenthesis | A call whose results are assigned to several variables gets no `DebugRef` |
 | Read a variable on the left of an assignment as written, not used | Its `DebugRef` is the value assigned. `create := db.Create` would report `create` |
-| Read the body of a range over a function in the function the builder makes of it | The builder moves the body into a yield function, which the range statement names. Its uses, openers and begins live there, not in the enclosing function |
+| Read the body of a range over a function in the function the builder makes of it | The builder moves the body into a yield function, which the range statement names. Its uses, invokers and begins live there, not in the enclosing function |
 
 ## Comparing handles
 
@@ -89,7 +89,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | `WithTx` does not give its receiver back | `qtx := q.WithTx(tx)` is another handle, bound to the transaction |
 | Leave the embedded fields at the end out of a comparison | `db.Begin()` on a `*sqlx.DB` is database/sql's, on the embedded `db.DB`. `db.Get` is sqlx's own, on `db`. Both are one handle |
 | Report an expression once, then skip what is inside it | `r.db.Create(u)` gives the handle as the call, the selector and `r.db`. One report is enough |
-| Deduplicate by position and rule | Two openers on one handle, one inside the other, read the inner callback twice |
+| Deduplicate by position and rule | Two invokers on one handle, one inside the other, read the inner callback twice |
 
 ## Regions
 
@@ -129,7 +129,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | In a helper, every end in such a body counts | A path that rolls back and returns has ended the parameter before the helper returns |
 | The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys. A completed fixpoint is final, so a later question reads only the keys it adds |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
-| `opener.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
+| `txcall.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
@@ -176,7 +176,7 @@ go test ./...            # analysistest over testdata/src, and unit tests
 mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, coverage
 ```
 
-- `testdata/src/*` are analysistest packages. Each library `internal/opener` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `txhelper` holds helpers whose facts another fixture reads.
+- `testdata/src/*` are analysistest packages. Each library `internal/txcall` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `txhelper` holds helpers whose facts another fixture reads.
 - `testdata/mod` is a module, run by `TestModule` in module mode. It holds what depends on the module, as a repository in another package of it. Its `go.mod` replaces `gorm.io/gorm` with the stub, which has a `go.mod` for that.
 - `analyzer_test.go` lists every fixture package. **A package left out of the list is not run**, and its `want` comments are never checked. It runs the default flags, `-outer-handle=false` and `-outer-context=false`.
 - A fact is checked as a `want` too: `// want finish:"closes\\[0\\]"` on the function that exports it.

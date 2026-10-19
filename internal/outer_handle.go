@@ -6,26 +6,26 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // checkOuterHandle reports each use, inside the callback of a transaction,
 // of the handle the transaction was opened on. A statement run through that
 // handle runs outside the transaction: it is not rolled back with it, and it
-// may wait on a lock the transaction holds. fn is the function the opener
+// may wait on a lock the transaction holds. fn is the function the invoker
 // is called in.
 //
-//declscope:shared // run.go calls it for every callback opener
-func (c *checker) checkOuterHandle(o opener.Opener, fn *ssa.Function) {
+//declscope:shared // run.go calls it for every invoker
+func (c *checker) checkOuterHandle(o txcall.Invoker, fn *ssa.Function) {
 	outer, ok := c.scopeOuter(o, fn)
 	if !ok || o.Nests && outerHandleSavepoint(outer) {
 		return
 	}
 	lit := c.prog.Func(o.Callback)
-	s := txScope{root: o.Callback.Body, fn: lit, opener: o.Name, tx: o.Tx, unnamed: "the callback's transaction", builds: o.Builds}
+	s := txScope{root: o.Callback.Body, fn: lit, openedWith: o.Name, tx: o.Tx, unnamed: "the callback's transaction", builds: o.Builds}
 	if o.Tx != nil {
 		s.txs = []handle.Path{c.paths.Of(outerHandleParam(lit, c.pass.TypesInfo.Defs[o.Tx]))}
 	}
@@ -61,7 +61,7 @@ func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) 
 				return false
 			}
 		}
-		b, ok := opener.BeginOf(c.pass.TypesInfo, n)
+		b, ok := txcall.BeginOf(c.pass.TypesInfo, n)
 		if !ok {
 			return true
 		}
@@ -71,7 +71,7 @@ func (c *checker) checkOuterHandleBegins(fn *ssa.Function, body *ast.BlockStmt) 
 }
 
 // checkOuterHandleBegin reports the uses of b's handle in its region.
-func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b opener.Begin) {
+func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b txcall.Begin) {
 	call, ok := program.Call(fn, b.Call)
 	if !ok {
 		// The begin is in code that no path reaches. It never runs.
@@ -95,7 +95,7 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 		}
 	}
 	r := region.New(call, tx, err, addr, c.closer, c.paths)
-	s := txScope{root: body, fn: fn, region: r, opener: b.Name, tx: b.Tx, txs: []handle.Path{c.paths.Of(tx)}}
+	s := txScope{root: body, fn: fn, region: r, openedWith: b.Name, tx: b.Tx, txs: []handle.Path{c.paths.Of(tx)}}
 	if addr != nil {
 		s.txs = append(s.txs, c.paths.Of(addr))
 	}
@@ -110,7 +110,7 @@ func (c *checker) checkOuterHandleBegin(fn *ssa.Function, body *ast.BlockStmt, b
 }
 
 // outerHandleSavepoint reports whether outer is a transaction, so that a
-// transaction opened on it, by an opener or a begin that nests, is a
+// transaction opened on it, by an invoker or a begin that nests, is a
 // savepoint. The savepoint runs on the
 // transaction's connection, and so does a statement on the transaction:
 // it bypasses nothing. outer is a transaction when it is a begin's result,
@@ -123,7 +123,7 @@ func outerHandleSavepoint(outer handle.Path) bool {
 	case *ssa.Call:
 		return outerHandleBegun(root)
 	case *ssa.Parameter:
-		return scopeGiven(root, opener.CallbackTx)
+		return scopeGiven(root, txcall.CallbackTx)
 	}
 	return false
 }
@@ -135,5 +135,5 @@ func outerHandleBegun(v ssa.Value) bool {
 		return false
 	}
 	fn, ok := scopeCallee(call.Common())
-	return ok && opener.IsBeginFunc(fn)
+	return ok && txcall.IsBeginFunc(fn)
 }

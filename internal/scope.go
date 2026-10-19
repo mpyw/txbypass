@@ -11,11 +11,11 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/handle"
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/rule"
 	"github.com/mpyw/txbypass/internal/spell"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // txScope is the code that runs inside one transaction: the body of a
@@ -31,8 +31,9 @@ type txScope struct {
 	// region is where a begun transaction is open in fn. It is nil for a
 	// callback, which is inside throughout.
 	region *region.Region
-	// opener names the call that opened the transaction, for messages.
-	opener string
+	// openedWith names the begin or the invoker that opened the transaction,
+	// for messages.
+	openedWith string
 	// tx is the variable or parameter that holds the transaction, or the
 	// context that carries it. It is nil when there is none to name.
 	tx *ast.Ident
@@ -42,7 +43,7 @@ type txScope struct {
 	unnamed string
 	// builds reports whether the handle builds references for the
 	// transaction, so that a use counts only when it runs. See
-	// opener.Opener.Builds.
+	// txcall.Invoker.Builds.
 	builds bool
 }
 
@@ -50,7 +51,7 @@ type txScope struct {
 // that is its receiver, through the embedded fields its promotion passes.
 //
 //declscope:shared // both rules find the handle or the context outside the scope through it
-func (c *checker) scopeOuter(o opener.Opener, fn *ssa.Function) (handle.Path, bool) {
+func (c *checker) scopeOuter(o txcall.Invoker, fn *ssa.Function) (handle.Path, bool) {
 	expr := o.Outer
 	var promoted []*types.Var
 	if o.Receiver {
@@ -1011,7 +1012,7 @@ func (c *checker) reportScopeUse(s txScope, e ast.Expr, stack []ast.Node, outer 
 	if s.builds && !scopeRuns(info, e, stack) {
 		return
 	}
-	c.report(e.Pos(), r, spell.Of(info, e, c.pass.Pkg, outer.Depth())+" bypasses the transaction opened with "+s.opener+"; use "+use+" instead")
+	c.report(e.Pos(), r, spell.Of(info, e, c.pass.Pkg, outer.Depth())+" bypasses the transaction opened with "+s.openedWith+"; use "+use+" instead")
 }
 
 // scopeChainsOn reports whether e is an expression in exempt, or a chain of
@@ -1201,9 +1202,9 @@ func scopePrepared(t types.Type) bool {
 }
 
 // scopeGiven reports whether p is the parameter of a callback that an
-// opener runs, which takes reports of the opener and p's index.
+// invoker runs, which takes reports of the invoker and p's index.
 //
-//declscope:shared // both rules ask whether a value is what an opener gives its callback
+//declscope:shared // both rules ask whether a value is what an invoker gives its callback
 func scopeGiven(p *ssa.Parameter, takes func(*types.Func, int) bool) bool {
 	lit := p.Parent()
 	if lit.Parent() == nil {

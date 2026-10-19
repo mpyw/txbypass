@@ -8,9 +8,9 @@ import (
 
 // ===== The body of a range over a function =====
 
-// The builder makes the loop body a function of its own. An opener in it
+// The builder makes the loop body a function of its own. An invoker in it
 // is read.
-func OpenerInRangeFunc(db *gorm.DB, users iter.Seq[*User]) error {
+func InvokerInRangeFunc(db *gorm.DB, users iter.Seq[*User]) error {
 	for u := range users {
 		if err := db.Transaction(func(tx *gorm.DB) error {
 			return db.Create(u).Error // want `^db bypasses the transaction opened with Transaction; use tx instead \[outer-handle\]$`

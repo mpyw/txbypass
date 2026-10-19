@@ -9,13 +9,13 @@ txbypass reports code that runs outside a transaction while the transaction is o
 | Rule | What it reports |
 | --- | --- |
 | [`outer-handle`](#outer-handle) | The handle a transaction was opened on, used while the transaction is open |
-| [`outer-context`](#outer-context) | The context given to an opener, used inside a callback whose context carries the transaction |
+| [`outer-context`](#outer-context) | The context given to an invoker, used inside a callback whose context carries the transaction |
 
 ### Terms
 
 | Term | Meaning |
 | --- | --- |
-| Callback opener | A call that opens a transaction and runs a function literal in it. See [Callback openers](#callback-openers) |
+| Invoker | A call that opens a transaction and invokes a function literal in it. See [Invokers](#invokers) |
 | Begin | A call that returns a transaction, which stays open until it is committed or rolled back. See [Begins](#begins) |
 | Handle | A variable, and the fields selected from it. See [Handles](#handles) |
 | Outer handle | The handle a transaction is opened on |
@@ -24,9 +24,9 @@ txbypass reports code that runs outside a transaction while the transaction is o
 
 Nothing is reported in a generated file. Test files are checked like any other file. Code in a package-level declaration is read too, as a function literal in a table of test cases: the package initializer runs it.
 
-## Callback openers
+## Invokers
 
-A callback opener is recognized by the package path, the receiver's type and the name of the function it calls. An alias of the type does not hide it.
+An invoker is recognized by the package path, the receiver's type and the name of the function it calls. An alias of the type does not hide it.
 
 | Library | Package | Receiver | Name | Outer handle | Callback | Transaction |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -66,7 +66,7 @@ These carry the transaction in the callback's context. They are read by [`outer-
 | go-transaction-manager | `github.com/avito-tech/go-transaction-manager/trm/v2`, and its `manager` package | `Manager` | `Do` | Argument 0 | Argument 1 | Parameter 0 |
 | go-transaction-manager | The same | `Manager` | `DoWithSettings` | Argument 0 | Argument 2 | Parameter 0 |
 
-A call is not a callback opener for txbypass when:
+A call is not an invoker for txbypass when:
 
 | Case | Why |
 | --- | --- |
@@ -76,11 +76,11 @@ A call is not a callback opener for txbypass when:
 | The outer handle is one dedicated connection, as pgx v5's `*pgx.Conn` or go-pg's `*Conn`, an alias of one, or a type whose `Begin` is declared on one | See [Dedicated connections](#dedicated-connections) |
 | The outer handle is a transaction | See [Savepoints](#savepoints) |
 
-A method promoted from an embedded field is an opener of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
+A method promoted from an embedded field is an invoker of that field. `s.Transaction(fn)`, where `s` embeds `*gorm.DB`, opens the transaction on `s.DB`, which is the handle `s`.
 
 ### Dedicated connections
 
-A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. A begin or an opener on one is not read:
+A transaction begun on one dedicated connection runs on that connection. A statement on the connection runs inside the transaction too, so it bypasses nothing. A begin or an invoker on one is not read:
 
 | Library | Type |
 | --- | --- |
@@ -101,13 +101,13 @@ A transaction opened on a transaction is a savepoint. It runs on the connection 
 | --- | --- |
 | pgx's `Tx`, v5 and v4, and bun's `Tx`, or a type that embeds one, as pgxmock's mock | Its type, or the type the method is declared on |
 | A begin's result, as gorm's `tx := db.Begin()` | Where it comes from |
-| The transaction a callback opener gives, as gorm's `tx` in `db.Transaction(func(tx *gorm.DB) error { ... })` | Where it comes from |
+| The transaction an invoker gives, as gorm's `tx` in `db.Transaction(func(tx *gorm.DB) error { ... })` | Where it comes from |
 
 A savepoint's begins stay in the table of begins. Its result is then a handle of its own, so its commit ends nothing of the outer transaction.
 
 Only these open a savepoint, or reuse the transaction, when called on one. The others are read on any handle:
 
-| Library | Opener or begin |
+| Library | Invoker or begin |
 | --- | --- |
 | gorm | `Transaction`, `Begin` |
 | pop | `Transaction`, `Rollback`, `NewTransaction`, `NewTransactionContext`, `NewTransactionContextOptions` |
@@ -117,7 +117,7 @@ The `Tx` of upper/db on a transaction begins another transaction on the pool. Th
 
 ## Begins
 
-A begin is a method recognized as a callback opener is. It returns the transaction first, and an error second when it may fail.
+A begin is a method recognized as an invoker is. It returns the transaction first, and an error second when it may fail.
 
 | Library | Package | Receiver | Name |
 | --- | --- | --- | --- |
@@ -208,14 +208,14 @@ A scope is the code that runs inside one transaction. Each use of the outer hand
 
 | Opened by | Scope |
 | --- | --- |
-| A callback opener | The callback's body, with its own function literals |
+| An invoker | The callback's body, with its own function literals |
 | A begin | The region where the transaction is open. See [Regions](#regions) |
 
 In a callback, a function literal kept for after it is not read. Such a literal is stored in a variable declared outside the callback, or in a field or an element of one. It may be stored directly, appended, set as a field of a composite literal, or converted to a named function type. It may also be named first in a local of the callback that nothing else uses. That is how an after-commit hook is kept: it runs once the callback has returned, outside the transaction, on purpose.
 
 A literal given to any other call, as `after = wrap(func() {...})`, is still read: the call may run it inside the callback.
 
-Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`, nor a begin or an opener inside one. A literal that a call runs is made, whatever becomes of the call's result, as `func() {...}()` or `g.Go(func() error {...})`.
+Code that no path reaches, as after a `return` or a call of `log.Fatal`, is not read: it never runs. Neither is a function literal that is never made, as one assigned to `_`, nor a begin or an invoker inside one. A literal that a call runs is made, whatever becomes of the call's result, as `func() {...}()` or `g.Go(func() error {...})`.
 
 Once an expression is reported, nothing inside it is read again. A position is reported once for each rule. A use inside two transactions opened on the same handle is reported for the first one that reads it.
 
@@ -294,9 +294,9 @@ In each scope opened on a handle, each expression that names the outer handle is
 
 ## `outer-context`
 
-In the callback of an opener that carries the transaction in its context, each expression that names the outer context is reported. The outer context is a handle too: `s.ctx` is one.
+In the callback of an invoker that carries the transaction in its context, each expression that names the outer context is reported. The outer context is a handle too: `s.ctx` is one.
 
-The handle the opener is called on is not reported there. With MongoDB, `coll.InsertOne(sc, doc)` runs in the transaction, because `sc` carries it.
+The handle the invoker is called on is not reported there. With MongoDB, `coll.InsertOne(sc, doc)` runs in the transaction, because `sc` carries it.
 
 The context of a callback that carries a session, as MongoDB's `WithSession` and `UseSession` give, is not reported inside a transaction on that session. `sess.WithTransaction(sc, ...)` runs with `sc` too, so a statement on `sc` runs inside it.
 
@@ -309,13 +309,13 @@ The outer context is reported where it is used as a context: given to a call, or
 Every report of a rule has one shape. A report about a directive has its own, listed in [Directives](#directives):
 
 ```text
-<use> bypasses the transaction opened with <opener>; use <instead> instead [<rule>]
+<use> bypasses the transaction opened with <call>; use <instead> instead [<rule>]
 ```
 
 | Part | Spelled as |
 | --- | --- |
 | `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields at the end. A variable of another package is qualified by its package's name |
-| `<opener>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
+| `<call>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
 | `<instead>` | The transaction's variable or parameter. For a handle rebound with `WithTx`, the variable its result is assigned to, or the call as written |
 
 When the callback's parameter is unnamed or `_`:
@@ -354,7 +354,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | Gap | Why |
 | --- | --- |
 | A callback that is not a function literal | Its body is not read |
-| A function literal given to a transaction helper of the project, as `s.withTx(ctx, func(tx *sql.Tx) error { ... })` | Only a call of a known opener opens a scope. Inside the helper, the callback is a function value, whose body is not read |
+| A function literal given to a transaction helper of the project, as `s.withTx(ctx, func(tx *sql.Tx) error { ... })` | Only a call of a known invoker opens a scope. Inside the helper, the callback is a function value, whose body is not read |
 | A function or method the scope calls, which uses the outer handle itself | Only the scope's own code is read for uses |
 | An outer handle given by a call, as `open().Transaction(...)` | Each call gives a root of its own |
 | A variable assigned two handles on two paths, then used | The phi gives no single handle |
@@ -363,7 +363,7 @@ Each rule has a boolean flag of its name. Every rule is on by default. The golan
 | A transaction ended through a function value or an interface method | Its body is not known, so the transaction stays open, and a use after it is reported |
 | A helper that stores the transaction somewhere, and code elsewhere ends it | Only an end the helper writes counts. A use after the helper is reported |
 | A Firestore reference built in the scope, then used to run outside it. `ref := client.Doc(p)` then `ref.Set(ctx, v)` is one | `ref` is a reference, not the client |
-| An opener or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
+| An invoker or a begin called through a method expression or a function value | The selector names no handle, or there is no selector |
 | sqlboiler's global executor, Spanner's `NewReadWriteStmtBasedTransaction`, MongoDB's `StartTransaction` | They open no scope this analysis reads |
 | xorm's `session.Begin()` ... `session.Commit()` | The session is the transaction, and its begin returns only an error. No value marks where the transaction is, so no region is read. Use `engine.Transaction(...)` for a scope this analysis reads |
 | A method of a wrapper that embeds the handle, after a begin promoted from it. `db.MustExec(...)` after `db.Begin()` on a `*sqlx.DB` is one | The begin is opened on the embedded `db.DB`, and `db` is a struct that embeds it. Use sqlx's `Beginx` |

@@ -1,6 +1,6 @@
-// Package opener knows the calls that open a transaction.
+// Package txcall knows the calls that open a transaction.
 //
-// There are two shapes. A callback opener runs a function literal inside the
+// There are two shapes. An invoker runs a function literal inside the
 // transaction, as gorm's Transaction does. A begin returns the transaction,
 // which runs until it is committed or rolled back, as database/sql's BeginTx
 // does.
@@ -9,7 +9,7 @@
 // an alias or a wrapper type of the caller's does not hide it. ent generates
 // its client into the caller's package, so its begin is read from the shape
 // of the generated code instead.
-package opener
+package txcall
 
 import (
 	"go/ast"
@@ -19,8 +19,8 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Opener is one call that opens a transaction and runs a callback in it.
-type Opener struct {
+// Invoker is one call that opens a transaction and runs a callback in it.
+type Invoker struct {
 	// Name is how a message names the call: a method by its name, a
 	// function by its package's name and its own, as in pgx.BeginFunc.
 	Name string
@@ -47,7 +47,7 @@ type Opener struct {
 	// no I/O, so only a chain that ends in a call taking a context runs
 	// outside the transaction.
 	Builds bool
-	// Nests reports whether the opener, called on a transaction, runs on the
+	// Nests reports whether the invoker, called on a transaction, runs on the
 	// transaction's connection, as gorm's Transaction opens a savepoint
 	// there. upper/db's Tx begins another transaction on the pool instead,
 	// and go-redis's TxPipelined queues commands that a command on the
@@ -79,9 +79,9 @@ type known struct {
 	session bool
 }
 
-// knownOpeners lists every callback opener. Each group names the version of
+// knownInvokers lists every invoker. Each group names the version of
 // its library whose signatures it was read from.
-var knownOpeners = []known{
+var knownInvokers = []known{
 	// gorm v1.31: func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) error
 	{pkg: "gorm.io/gorm", recv: "DB", name: "Transaction", outer: -1, callback: 0, tx: 0, nests: true},
 
@@ -182,46 +182,46 @@ var knownOpeners = []known{
 	{pkg: "github.com/avito-tech/go-transaction-manager/trm/v2/manager", recv: "Manager", name: "DoWithSettings", outer: 0, callback: 2, tx: 0, inContext: true, nests: true},
 }
 
-// Of reports the callback opener that call is. It reports nothing for a call
+// InvokerOf reports the invoker that call is. It reports nothing for a call
 // that opens no transaction, and for one whose callback is not a function
 // literal: a callback held in a variable or named as a function has no body
 // here to read.
-func Of(info *types.Info, call *ast.CallExpr) (Opener, bool) {
-	fn, k, ok := lookup(info, call, knownOpeners)
+func InvokerOf(info *types.Info, call *ast.CallExpr) (Invoker, bool) {
+	fn, k, ok := lookup(info, call, knownInvokers)
 	// The arguments may be one call with several results, as in
 	// pgx.BeginFunc(args()). Then there is no literal to read.
 	if !ok || len(call.Args) <= max(k.outer, k.callback) {
-		return Opener{}, false
+		return Invoker{}, false
 	}
-	o := Opener{Name: displayName(fn), InContext: k.inContext, Builds: k.builds, Nests: k.nests}
+	o := Invoker{Name: displayName(fn), InContext: k.inContext, Builds: k.builds, Nests: k.nests}
 	if k.outer < 0 {
 		// A method expression, as in (*gorm.DB).Transaction(db, fn), takes
 		// its receiver as an argument, so its arguments are shifted and its
 		// selector names no handle.
 		sel, ok := methodSelector(info, call)
 		if !ok {
-			return Opener{}, false
+			return Invoker{}, false
 		}
 		if dedicated(info.TypeOf(sel.X)) || dedicated(fn.Signature().Recv().Type()) {
-			return Opener{}, false
+			return Invoker{}, false
 		}
 		o.Outer, o.Receiver = sel, true
 	} else {
 		o.Outer = call.Args[k.outer]
 		if t := info.TypeOf(o.Outer); dedicated(t) || dedicatedBegin(t) {
-			return Opener{}, false
+			return Invoker{}, false
 		}
 	}
 	lit, ok := ast.Unparen(call.Args[k.callback]).(*ast.FuncLit)
 	if !ok {
-		return Opener{}, false
+		return Invoker{}, false
 	}
 	o.Callback = lit
 	o.Tx = paramIdent(lit, k.tx)
 	return o, true
 }
 
-// dedicatedConns are the types whose begin or opener runs on one
+// dedicatedConns are the types whose begin or invoker runs on one
 // connection, which the tables cannot tell apart by the receiver. pgx v5's
 // BeginFunc takes any value that begins. go-pg's Conn begins through the
 // *baseDB it embeds, as DB does. A transaction of pgx or bun opens a
@@ -292,7 +292,7 @@ func Holds(t types.Type) bool {
 // Begin is one call that returns a transaction, and the variables it is
 // assigned to.
 type Begin struct {
-	// Name is how a message names the call, as Opener.Name does.
+	// Name is how a message names the call, as Invoker.Name does.
 	Name string
 	// Outer is the selector of the call, which names the handle.
 	Outer *ast.SelectorExpr
@@ -300,7 +300,7 @@ type Begin struct {
 	Call *ast.CallExpr
 	// Tx is the variable the transaction is assigned to.
 	Tx *ast.Ident
-	// Nests is Opener.Nests, for a begin: gorm's Begin on a transaction
+	// Nests is Invoker.Nests, for a begin: gorm's Begin on a transaction
 	// opens a savepoint on its connection.
 	Nests bool
 }
@@ -395,25 +395,25 @@ func IsBegin(info *types.Info, call *ast.CallExpr) bool {
 	return IsBeginFunc(fn) && !dedicated(info.TypeOf(sel.X)) && !dedicated(fn.Signature().Recv().Type())
 }
 
-// CallbackTx reports whether fn is a callback opener whose callback takes
+// CallbackTx reports whether fn is an invoker whose callback takes
 // the transaction itself as its parameter i.
 func CallbackTx(fn *types.Func, i int) bool {
-	k, ok := lookupFunc(fn, knownOpeners)
+	k, ok := lookupFunc(fn, knownInvokers)
 	return ok && !k.inContext && k.tx == i
 }
 
-// CallbackContext reports whether fn is an opener whose callback takes, as
+// CallbackContext reports whether fn is an invoker whose callback takes, as
 // its parameter i, the context that carries the transaction.
 func CallbackContext(fn *types.Func, i int) bool {
-	k, ok := lookupFunc(fn, knownOpeners)
+	k, ok := lookupFunc(fn, knownInvokers)
 	return ok && k.inContext && k.tx == i
 }
 
-// CallbackSession reports whether fn is an opener whose callback takes, as
+// CallbackSession reports whether fn is an invoker whose callback takes, as
 // its parameter i, a context that carries a session, as MongoDB's
 // WithSession and UseSession do.
 func CallbackSession(fn *types.Func, i int) bool {
-	k, ok := lookupFunc(fn, knownOpeners)
+	k, ok := lookupFunc(fn, knownInvokers)
 	return ok && k.session && k.tx == i
 }
 
