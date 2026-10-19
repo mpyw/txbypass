@@ -498,6 +498,16 @@ txbypass \
   ./...
 ```
 
+Each flag takes a comma-separated list of names of its kind. A flag given twice declares the names of both:
+
+```bash
+txbypass \
+  -invokes '(example.com/db.Manager).InTx,(example.com/db.Store).WithTx' \
+  ./...
+```
+
+A comma inside the brackets of type arguments does not split, as in `(example.com/db.Map[K, V]).InTx`. The golangci-lint plugin takes one name per item of a list instead.
+
 | Kind | Spelling |
 | --- | --- |
 | A function | `example.com/db.InTx` |
