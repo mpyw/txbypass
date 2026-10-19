@@ -207,7 +207,7 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 	// A declaration the signature does not fit declares nothing. A directive
 	// that does not fit is reported. A flag's is not, and the body is read
 	// as it would be without the flag.
-	if h.declares(directive.Invokes, fn) {
+	if h.declares(directive.KindInvokes, fn) {
 		// The fact of another package was read from the body there, or
 		// from a directive, and names the handle more closely than the
 		// signature does.
@@ -228,7 +228,7 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
-	if h.declares(directive.Begins, fn) {
+	if h.declares(directive.KindBegins, fn) {
 		var f Begins
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true

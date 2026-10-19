@@ -335,3 +335,33 @@ func Joined(ctx context.Context, m Manager) error {
 		})
 	})
 }
+
+// Handle is a transaction with no method: only its manager ends it.
+type Handle struct{ id int }
+
+// Mgr begins and ends handles.
+type Mgr struct{}
+
+//txbypass:begins
+func (*Mgr) Open(ctx context.Context) (*Handle, error) { return &Handle{}, nil } // want Open:`^begins\[p0\]$`
+
+//txbypass:closes
+func (*Mgr) Shut(h *Handle, why string) error { return nil } // want Shut:`^closes\[0 1 2\]$`
+
+func (*Mgr) Exec(ctx context.Context, query string) error { return nil }
+
+// shutHandle ends h through its manager, so it ends h too. m is no
+// transaction: its declared end is given one.
+func shutHandle(m *Mgr, h *Handle) error { return m.Shut(h, "done") } // want shutHandle:`^closes\[1\]$`
+
+func Handled(ctx context.Context, m *Mgr) error {
+	h, err := m.Open(ctx)
+	if err != nil {
+		return err
+	}
+	m.Exec(ctx, "q") // want `^m bypasses the transaction opened with Open; use h instead \[outer-handle\]$`
+	if err := shutHandle(m, h); err != nil {
+		return err
+	}
+	return m.Exec(ctx, "after")
+}

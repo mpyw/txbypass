@@ -327,7 +327,7 @@ A transaction given to a function value or an interface method, whose body is no
 
 ### Helpers
 
-A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read. A method declared as an end counts when it takes no other transaction: `tx.Done(err)` makes `tx` one, and `m.End(tx)` does not make `m` one.
+A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read. A method declared as an end counts when it takes nothing else that may be a transaction. A number, a string, a bool, an error, a context or a function may not. So `tx.Done(err)` makes `tx` one, and `m.End(tx)` does not make `m` one. A type that a declared begin the package calls returns, or that a declared end takes, other than as its receiver, is a transaction too. It may have no method, as an opaque handle that only its manager ends.
 
 | The function is | It is read |
 | --- | --- |
@@ -398,7 +398,7 @@ A declaration that the signature does not fit is reported, and declares nothing:
 | Directive | Reported when |
 | --- | --- |
 | `invokes` | There is no parameter of a function type, no handle, or a callback that takes neither a transaction nor a context. A callback that takes only a context needs a context parameter of the invoker |
-| `begins` | There is no result, more than two, a first that is a number, a string or a bool, a second that is not an `error`, or no handle |
+| `begins` | There is no result or more than two. The first is a number, a string or a bool, or a second is not an `error`. There is no handle |
 | `closes` | There is no receiver and no parameter |
 
 A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.

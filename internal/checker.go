@@ -44,15 +44,15 @@ type checker struct {
 	//
 	//declscope:private
 	holdsDeclared typeutil.Map
-	//declscope:private
-	methodSets typeutil.MethodSetCache
-	// holdsDepth counts the walks of holds in progress. Only the outermost
-	// keeps its answer: an inner one may have read a type of an outer walk
-	// held as no transaction for now, and would keep an answer that
-	// depends on which type was asked about first.
+	// txTypes holds the types of the transactions that declared helpers the
+	// package calls give or take. txTypesRead reports that they were read.
 	//
 	//declscope:private
-	holdsDepth int
+	txTypes typeutil.Map
+	//declscope:private
+	txTypesRead bool
+	//declscope:private
+	methodSets typeutil.MethodSetCache
 	// keys holds the name a flag would give each function asked about,
 	// since every call is asked about and formatting a name is costly.
 	//declscope:private
@@ -101,37 +101,27 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 //
 //declscope:shared // run.go hands it to closer and helper, and asks it of signatures
 func (c *checker) holds(t types.Type) bool {
-	if txcall.Holds(t) {
+	if txcall.Holds(t) || c.declaredTx(t) {
 		return true
 	}
 	if v := c.holdsDeclared.At(t); v != nil {
 		return v.(bool)
 	}
-	// Held as no transaction while its methods are read, so that a method
-	// that takes a value of t again ends the walk.
-	c.holdsDeclared.Set(t, false)
-	c.holdsDepth++
 	found := false
 	for _, sel := range typeutil.IntuitiveMethodSet(t, &c.methodSets) {
 		m := sel.Obj().(*types.Func)
 		var f closer.Fact
-		ends := c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0)
+		ends := c.declares(directive.KindCloses, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0)
 		// A declared end of the receiver alone, as tx.Done(err), makes
-		// the receiver a transaction. One given a transaction, as
-		// m.End(tx), ends that one: the receiver is what ends it. The
-		// parameters are read only of a declared end, since reading them
-		// walks the methods of each of their types.
-		if ends && !checkerTakesTx(m, c.holds) {
+		// the receiver a transaction. One given a value that may be a
+		// transaction, as m.End(tx), ends that one: the receiver is what
+		// ends it.
+		if ends && !slices.ContainsFunc(checkerParamTypes(m), checkerTxLike) {
 			found = true
 			break
 		}
 	}
-	c.holdsDepth--
-	if c.holdsDepth == 0 {
-		c.holdsDeclared.Set(t, found)
-	} else {
-		c.holdsDeclared.Delete(t)
-	}
+	c.holdsDeclared.Set(t, found)
 	return found
 }
 
@@ -141,18 +131,79 @@ func (c *checker) holds(t types.Type) bool {
 //
 //declscope:shared // run.go hands it to handle
 func (c *checker) begins(fn *types.Func) bool {
-	return txcall.IsBeginFunc(fn) || c.declares(directive.Begins, fn) || fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
-}
-
-// checkerTakesTx reports whether a method takes a transaction, a value of a
-// type that holds says is one.
-func checkerTakesTx(m *types.Func, holds func(types.Type) bool) bool {
-	for p := range m.Signature().Params().Variables() {
-		if holds(p.Type()) {
+	if txcall.IsBeginFunc(fn) {
+		return true
+	}
+	// A flag's declaration that the signature does not fit declares
+	// nothing, as it does for the helpers.
+	if c.declares(directive.KindBegins, fn) {
+		if _, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
 			return true
 		}
 	}
-	return false
+	return fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), new(helper.Begins))
+}
+
+// checkerParamTypes lists the types of the parameters of m, not its
+// receiver.
+func checkerParamTypes(m *types.Func) []types.Type {
+	var out []types.Type
+	for p := range m.Signature().Params().Variables() {
+		out = append(out, p.Type())
+	}
+	return out
+}
+
+// declaredTx reports whether t is the type of a transaction that a declared
+// helper the package calls gives or takes: the first result of a begin,
+// or a parameter of an end other than its receiver. Such a type may have
+// no method at all, as an opaque handle that only its manager ends.
+func (c *checker) declaredTx(t types.Type) bool {
+	if !c.txTypesRead {
+		c.txTypesRead = true
+		for _, obj := range c.pass.TypesInfo.Uses {
+			if fn, ok := obj.(*types.Func); ok {
+				c.readTxTypes(fn)
+			}
+		}
+	}
+	return c.txTypes.At(t) != nil
+}
+
+// readTxTypes records the types of the transactions fn gives or takes, when
+// it is a declared begin or end, or an end of another package.
+func (c *checker) readTxTypes(fn *types.Func) {
+	sig := fn.Signature()
+	if !txcall.IsBeginFunc(fn) && c.begins(fn) && sig.Results().Len() > 0 {
+		c.txTypes.Set(sig.Results().At(0).Type(), true)
+	}
+	var f closer.Fact
+	declared := c.declares(directive.KindCloses, fn)
+	if !declared && (fn.Pkg() == c.pass.Pkg || !c.pass.ImportObjectFact(fn.Origin(), &f)) {
+		return
+	}
+	first := 0
+	if sig.Recv() != nil {
+		first = 1
+	}
+	for i := range sig.Params().Len() {
+		pt := sig.Params().At(i).Type()
+		if (declared || slices.Contains(f.Params, first+i)) && checkerTxLike(pt) {
+			c.txTypes.Set(pt, true)
+		}
+	}
+}
+
+// checkerTxLike reports whether a value of type t may be a transaction: it
+// is not a number, a string, an error, a context or a function.
+func checkerTxLike(t types.Type) bool {
+	switch u := t.Underlying().(type) {
+	case *types.Basic, *types.Signature:
+		return false
+	case *types.Interface:
+		return !types.Identical(t, types.Universe.Lookup("error").Type()) && !txcall.IsContext(t) && u.NumMethods() > 0
+	}
+	return true
 }
 
 // declares reports whether fn is declared as kind: by a directive of the

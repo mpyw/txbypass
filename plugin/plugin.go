@@ -40,7 +40,7 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 	p := &pluginRules{on: make(map[rule.Name]bool), declared: make(map[directive.Kind]map[string]bool)}
 	for name, v := range named {
 		switch kind := directive.Kind(name); kind {
-		case directive.Invokes, directive.Begins, directive.Closes:
+		case directive.KindInvokes, directive.KindBegins, directive.KindCloses:
 			names, err := pluginNames(v)
 			if err != nil {
 				return nil, fmt.Errorf("%s in settings: %w", name, err)

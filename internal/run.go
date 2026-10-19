@@ -46,7 +46,7 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	if runNeedsProgram(pass, c.declares, c.holds) {
 		c.prog = program.Build(pass, cfgs.NoReturn)
 		c.paths = handle.NewPaths(runModule(pass.Module), c.begins, c.holds)
-		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.Closes, fn) }, c.holds)
+		c.closer = closer.New(pass, c.paths, func(fn *types.Func) bool { return c.declares(directive.KindCloses, fn) }, c.holds)
 		c.closer.Export(c.prog)
 		c.helpers = helper.New(pass, c.prog, c.paths, c.closer, c.declares, c.holds)
 		c.helpers.Export()
@@ -77,15 +77,15 @@ func (c *checker) runDeclarations() {
 		var fact analysis.Fact
 		var problem string
 		switch d.Kind {
-		case directive.Invokes:
+		case directive.KindInvokes:
 			var s txcall.InvokerShape
 			s, problem = txcall.DeclaredInvoker(d.Obj)
 			fact = &helper.Invokes{Shape: s}
-		case directive.Begins:
+		case directive.KindBegins:
 			var s txcall.BeginShape
 			s, problem = txcall.DeclaredBegin(d.Obj)
 			fact = &helper.Begins{Shape: s}
-		case directive.Closes:
+		case directive.KindCloses:
 			var params []int
 			params, problem = txcall.DeclaredCloser(d.Obj)
 			fact = &closer.Fact{Params: params}
@@ -141,7 +141,7 @@ func runNeedsProgram(pass *analysis.Pass, declares func(directive.Kind, *types.F
 // invoker or a begin.
 func runCallsDeclared(pass *analysis.Pass, call *ast.CallExpr, declares func(directive.Kind, *types.Func) bool) bool {
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
-	return ok && (declares(directive.Invokes, fn) || declares(directive.Begins, fn))
+	return ok && (declares(directive.KindInvokes, fn) || declares(directive.KindBegins, fn))
 }
 
 // runTakesTx reports whether a function of signature sig takes a value that

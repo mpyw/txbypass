@@ -40,7 +40,7 @@ var analyzerFlagOf = make(map[rule.Name]*bool)
 
 // analyzerDeclared holds -invokes, -begins and -closes.
 var analyzerDeclared = map[directive.Kind]*analyzerNames{
-	directive.Invokes: {}, directive.Begins: {}, directive.Closes: {},
+	directive.KindInvokes: {}, directive.KindBegins: {}, directive.KindCloses: {},
 }
 
 func init() {
@@ -48,11 +48,11 @@ func init() {
 		analyzerFlagOf[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
 	}
 	usage := map[directive.Kind]string{
-		directive.Invokes: "functions that open a transaction and run a callback in it",
-		directive.Begins:  "functions that return a transaction they begin",
-		directive.Closes:  "functions that end every transaction they are given",
+		directive.KindInvokes: "functions that open a transaction and run a callback in it",
+		directive.KindBegins:  "functions that return a transaction they begin",
+		directive.KindCloses:  "functions that end every transaction they are given",
 	}
-	for _, k := range []directive.Kind{directive.Invokes, directive.Begins, directive.Closes} {
+	for _, k := range []directive.Kind{directive.KindInvokes, directive.KindBegins, directive.KindCloses} {
 		Analyzer.Flags.Var(analyzerDeclared[k], string(k),
 			"comma-separated "+usage[k]+", spelled pkg/path.Func or (pkg/path.Type).Method")
 	}

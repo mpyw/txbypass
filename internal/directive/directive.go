@@ -41,13 +41,13 @@ type Kind string
 
 // The declaring directives.
 const (
-	// Invokes declares an invoker: it opens a transaction and runs a
+	// KindInvokes declares an invoker: it opens a transaction and runs a
 	// callback inside it.
-	Invokes Kind = "invokes"
-	// Begins declares a begin: it returns a transaction.
-	Begins Kind = "begins"
-	// Closes declares an end: it ends every transaction it is given.
-	Closes Kind = "closes"
+	KindInvokes Kind = "invokes"
+	// KindBegins declares a begin: it returns a transaction.
+	KindBegins Kind = "begins"
+	// KindCloses declares an end: it ends every transaction it is given.
+	KindCloses Kind = "closes"
 )
 
 // Declaration is one declaring directive, and the function it declares.
@@ -163,7 +163,7 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 // declaring reports whether name is a declaring directive.
 func declaring(name string) bool {
 	switch Kind(name) {
-	case Invokes, Begins, Closes:
+	case KindInvokes, KindBegins, KindCloses:
 		return true
 	}
 	return false
