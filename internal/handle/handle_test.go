@@ -51,4 +51,4 @@ type libraryTypes struct{}
 
 func (libraryTypes) Begins(fn *types.Func) bool { return txcall.IsBeginFunc(fn) }
 
-func (libraryTypes) Holds(t types.Type) bool { return txcall.Holds(t) }
+func (libraryTypes) Holds(t types.Type) bool { return txcall.HoldsTx(t) }

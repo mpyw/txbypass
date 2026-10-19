@@ -26,7 +26,7 @@ internal/                the rules: one flat package, one namespace per file
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //txbypass: comments
 internal/funcname/       the names -invokes, -begins and -closes take
-internal/txcall/         the calls that open a transaction: the tables, and ent's shape
+internal/txcall/         the calls that open a transaction: the tables (known.go), invokers, begins, ent's shape, and declared shapes
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
 internal/fact/           the facts a package exports: closes, invokes and begins
@@ -137,7 +137,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | In a helper, every end in such a body counts | A path that rolls back and returns has ended the parameter before the helper returns |
 | The answers are a least fixpoint over every function and root asked about | Helpers may call each other. Memoizing a provisional false made the answer depend on which was read first. Not memoizing it re-read every path through a ring of helpers, which took factorial time. A fixpoint reads each key once a pass, and the passes are at most the keys. A completed fixpoint is final, so a later question reads only the keys it adds |
 | The functions are read in the order of their positions | Whatever order dependence is left gives the same answer on each run |
-| `txcall.Holds` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
+| `txcall.HoldsTx` looks up each ending method by name | A handle such as gorm's `*DB` has well over a hundred methods. Building the method set for each argument took most of a run |
 | A `Rollback` that takes a function is not an end | pop's `Rollback(fn)` opens a transaction of its own, and rolls that back |
 | A generic instance is read through its origin | Instances are not built without `InstantiateGenerics` |
 | A literal of a type parameter is read in its core type | `T{id}` with `T ~struct{ ID int }` selects a field of the struct every type of `T` has, as the SSA form builds it. Its underlying type is the constraint, an interface |
@@ -162,7 +162,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | An error whose address is handed to a call or stored makes a begin helper no helper | The walk back to the last store sees only stores of the function. A call given `&err` may set it after the begin succeeded |
 | The return in the block that a recovered panic reaches takes no part | It returns whatever the named results hold. A path through a panic takes no part in a region either |
 | A literal's parameter is a helper's transaction only when the literal is given as the helper's callback | A helper may take two literals. The other one may be given the handle itself, so a transaction opened on it is no savepoint |
-| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. A dedicated connection given as the handle makes the helper's call not read, as for a library |
+| A savepoint through a helper is known as one through a library | The shape carries `Nests` of the invoker or begin inside. A transaction a helper gives, or a helper's begin, counts as a transaction for the savepoint check. One connection given as the handle makes the helper's call not read, as for a library |
 | `Begin` names its handle as `Invoker` does: an expression, whether it is the receiver, and fields | A helper may take its handle as an argument. The library begins keep the selector of their call |
 
 ## Declared helpers
@@ -196,7 +196,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Follow the callback when it is a named function or a method value | The outer handle is in the caller. Inside the function, the same field is selected from another value, the receiver |
 | End a region at any call the transaction is given to | Passing the transaction to repository helpers is how it is used. Only a helper that ends it ends the region |
 | Report the outer transaction inside a savepoint | The savepoint runs on the transaction's connection, so the statement runs inside it. `ROLLBACK TO SAVEPOINT` undoes it with the rest. The tests of pgx and bun use the outer transaction there on purpose |
-| Read a begin on one dedicated connection, as `*sql.Conn` or `*pgx.Conn` | A statement on the connection runs inside the transaction. The tests of pgx do so 29 times. A type created in the transaction is loaded through the connection, since the transaction has no method for it |
+| Read a begin on one connection, as `*sql.Conn` or `*pgx.Conn` | A statement on the connection runs inside the transaction. The tests of pgx do so 29 times. A type created in the transaction is loaded through the connection, since the transaction has no method for it |
 | Report every use of Firestore's client inside the transaction | `tx.Get(client.Doc(p))` is the canonical read, and every transaction has one |
 | Treat any value with a `WithTx` method as the outer handle | A scope that never calls it may hold one built on another database |
 | Make `outer-context` read bun, bob, Spanner and Firestore callbacks too | Their transaction is a value. The outer context there only carries deadlines and values |

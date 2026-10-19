@@ -119,7 +119,7 @@ func (h *Helpers) BeginOf(n ast.Node) (txcall.Begin, bool) {
 // helper gives it only to the callback, its parameter arg. The receiver of
 // a method is parameter 0.
 func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
-	if txcall.CallbackTx(fn, i) {
+	if txcall.InvokerGivesTx(fn, i) {
 		return true
 	}
 	s, ok := h.invokerShape(fn)
@@ -131,7 +131,7 @@ func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
 // library, or a helper. A helper gives it only to the callback, its
 // parameter arg.
 func (h *Helpers) GivesContext(fn *types.Func, arg, i int) bool {
-	if txcall.CallbackContext(fn, i) {
+	if txcall.InvokerGivesContext(fn, i) {
 		return true
 	}
 	s, ok := h.invokerShape(fn)
