@@ -67,7 +67,7 @@ type audit struct{ c *gin.Context }
 // render takes the gin context as itself, not as a context.
 func render(c *gin.Context, id string) { c.JSON(200, gin.H{"id": id}) }
 
-// A gin handler gives its *gin.Context to the opener. Its own methods and
+// A gin handler gives its *gin.Context to the invoker. Its own methods and
 // fields run no statement, and the inner context has none of them, so they
 // are no use of the outer context. Using it as a context is.
 func Handler(c *gin.Context, m *manager.Manager) error {

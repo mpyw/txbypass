@@ -161,7 +161,9 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 ### Supported libraries
 
-| Library | Callback | Begin ... Commit |
+An invoker opens a transaction and invokes a callback inside it. A begin returns the transaction, which stays open until it is committed or rolled back.
+
+| Library | Invoker | Begin ... Commit |
 | --- | --- | --- |
 | [database/sql](https://pkg.go.dev/database/sql) |  | [`DB.Begin`](https://pkg.go.dev/database/sql#DB.Begin), [`DB.BeginTx`](https://pkg.go.dev/database/sql#DB.BeginTx) |
 | [sqlx](https://pkg.go.dev/github.com/jmoiron/sqlx) |  | [`DB.Beginx`](https://pkg.go.dev/github.com/jmoiron/sqlx#DB.Beginx), [`DB.BeginTxx`](https://pkg.go.dev/github.com/jmoiron/sqlx#DB.BeginTxx), [`DB.MustBegin`](https://pkg.go.dev/github.com/jmoiron/sqlx#DB.MustBegin), [`DB.MustBeginTx`](https://pkg.go.dev/github.com/jmoiron/sqlx#DB.MustBeginTx) |
@@ -188,7 +190,7 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 Query builders that take the handle as an argument, such as [jet](https://github.com/go-jet/jet) and [squirrel](https://github.com/Masterminds/squirrel), need nothing of their own. Passing the outer handle to them is a use. [sqlc](https://sqlc.dev) is covered through [`WithTx`](#sqlcs-withtx).
 
-The exact receivers and signatures are in [design/rules.md](design/rules.md#callback-openers).
+The exact receivers and signatures are in [design/rules.md](design/rules.md#invokers).
 
 > [!NOTE]
 > A transaction begun on one dedicated connection is not read. `*sql.Conn`, `*pgx.Conn`, `*pgxpool.Conn`, `bun.Conn`, `bob.Conn` and go-pg's `*pg.Conn` are such connections. A statement on the connection runs inside the transaction, so it bypasses nothing. A savepoint, a transaction opened on a transaction, is not read either, for the same reason. The `Tx` of upper/db is no savepoint on a transaction: it begins another transaction on the pool.
@@ -809,7 +811,7 @@ type DBTX interface {
 
 ### `outer-context`
 
-Some openers carry the transaction in the callback's context, not in a value. A statement run with the outer context runs outside the transaction:
+Some invokers carry the transaction in the callback's context, not in a value. A statement run with the outer context runs outside the transaction:
 
 ```go
 _, err := sess.WithTransaction(
@@ -844,7 +846,7 @@ sess.WithTransaction(
 
 </td>
 <td>❌</td>
-<td><code>ctx</code> was given to the opener, and carries no transaction</td>
+<td><code>ctx</code> was given to the invoker, and carries no transaction</td>
 </tr>
 <tr>
 <td>
@@ -982,7 +984,7 @@ s.withTx(ctx, func(tx *sql.Tx) error {
 
 </td>
 <td>⚠️</td>
-<td>A literal given to a transaction helper of your own is not read. Only a call of a known opener opens a scope. Inside the helper, the callback is a function value</td>
+<td>A literal given to a transaction helper of your own is not read. Only a call of a known invoker opens a scope. Inside the helper, the callback is a function value</td>
 </tr>
 <tr>
 <td>

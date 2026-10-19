@@ -39,7 +39,7 @@ func SharedRegion() error {
 	return tx.Commit().Error
 }
 
-// Not reported: a begin or an opener in a literal that is never made never
+// Not reported: a begin or an invoker in a literal that is never made never
 // runs.
 func NeverMadeBegin(db *sql.DB, g *gorm.DB, u *User) {
 	_ = func() {

@@ -3,17 +3,17 @@ package internal
 import (
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/txbypass/internal/opener"
 	"github.com/mpyw/txbypass/internal/rule"
+	"github.com/mpyw/txbypass/internal/txcall"
 )
 
 // checkOuterContext reports each use, inside a callback whose context
-// carries the transaction, of the context given to the opener. A statement
+// carries the transaction, of the context given to the invoker. A statement
 // run with that context runs outside the transaction, as with MongoDB's
-// WithTransaction. fn is the function the opener is called in.
+// WithTransaction. fn is the function the invoker is called in.
 //
-//declscope:shared // run.go calls it for every callback opener whose transaction rides in a context
-func (c *checker) checkOuterContext(o opener.Opener, fn *ssa.Function) {
+//declscope:shared // run.go calls it for every invoker whose transaction rides in a context
+func (c *checker) checkOuterContext(o txcall.Invoker, fn *ssa.Function) {
 	outer, ok := c.scopeOuter(o, fn)
 	if !ok {
 		return
@@ -21,16 +21,16 @@ func (c *checker) checkOuterContext(o opener.Opener, fn *ssa.Function) {
 	// The context of MongoDB's WithSession carries the session. A
 	// transaction on it, as sess.WithTransaction(sc, ...), runs with sc too:
 	// a statement on sc runs inside it.
-	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, opener.CallbackSession) {
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && scopeGiven(p, txcall.CallbackSession) {
 		return
 	}
-	// An opener that nests, as go-transaction-manager's Do or go-rel's
+	// An invoker that nests, as go-transaction-manager's Do or go-rel's
 	// Transaction, given the context of another one's callback, joins that
 	// transaction or opens a savepoint in it. A statement with the outer
 	// context runs inside it.
-	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && o.Nests && scopeGiven(p, opener.CallbackContext) {
+	if p, ok := outer.Root().(*ssa.Parameter); ok && outer.Depth() == 0 && o.Nests && scopeGiven(p, txcall.CallbackContext) {
 		return
 	}
-	s := txScope{root: o.Callback.Body, fn: c.prog.Func(o.Callback), opener: o.Name, tx: o.Tx, unnamed: "the callback's context"}
+	s := txScope{root: o.Callback.Body, fn: c.prog.Func(o.Callback), openedWith: o.Name, tx: o.Tx, unnamed: "the callback's context"}
 	c.reportScopeUses(s, outer, rule.OuterContext, s.scopeUse(), nil)
 }

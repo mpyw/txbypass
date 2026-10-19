@@ -1,4 +1,4 @@
-// Package pgx4tx covers outer-handle with pgx v4, whose callback openers are
+// Package pgx4tx covers outer-handle with pgx v4, whose invokers are
 // methods.
 package pgx4tx
 
