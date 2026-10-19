@@ -159,6 +159,18 @@ func (h *Helpers) GivesTx(fn *types.Func, arg, i int) bool {
 	return ok && !s.InContext && s.Callback == arg && s.Tx == i
 }
 
+// GivesContext reports whether fn is an invoker whose callback takes the
+// context that carries the transaction as its parameter i: one of a
+// library, or a helper. A helper gives it only to the callback, its
+// parameter arg.
+func (h *Helpers) GivesContext(fn *types.Func, arg, i int) bool {
+	if txcall.CallbackContext(fn, i) {
+		return true
+	}
+	s, ok := h.invokerShape(fn)
+	return ok && s.InContext && s.Callback == arg && s.Tx == i
+}
+
 // IsBegin reports whether fn is a begin: one of a library, or a helper.
 func (h *Helpers) IsBegin(fn *types.Func) bool {
 	if txcall.IsBeginFunc(fn) {

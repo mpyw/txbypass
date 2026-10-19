@@ -390,7 +390,7 @@ What a declaration says is read from the signature:
 | The handle | The receiver of a method. For a function, its first parameter that is neither a `context.Context` nor of a function type. A body of the package that opens every transaction on one parameter, or one field of it, names that instead, as `s.db` for a method of `s` |
 | The callback of an invoker | The first parameter of a function type |
 | The transaction the callback is given | The callback's first parameter that is not a `context.Context` |
-| A callback that takes only a context | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter |
+| A callback that takes only a context | The transaction rides in the context, read by [`outer-context`](#outer-context). The outer context is the invoker's first `context.Context` parameter. Called with the context of another such callback, it joins that transaction, as go-transaction-manager's `Do` does |
 | The transaction a begin returns | Its first result. A second result is its error, and has to be an `error` |
 
 A declaration that the signature does not fit is reported, and declares nothing:

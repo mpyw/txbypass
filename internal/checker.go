@@ -46,6 +46,13 @@ type checker struct {
 	holdsDeclared typeutil.Map
 	//declscope:private
 	methodSets typeutil.MethodSetCache
+	// holdsDepth counts the walks of holds in progress. Only the outermost
+	// keeps its answer: an inner one may have read a type of an outer walk
+	// held as no transaction for now, and would keep an answer that
+	// depends on which type was asked about first.
+	//
+	//declscope:private
+	holdsDepth int
 	// keys holds the name a flag would give each function asked about,
 	// since every call is asked about and formatting a name is costly.
 	//declscope:private
@@ -103,21 +110,28 @@ func (c *checker) holds(t types.Type) bool {
 	// Held as no transaction while its methods are read, so that a method
 	// that takes a value of t again ends the walk.
 	c.holdsDeclared.Set(t, false)
+	c.holdsDepth++
 	found := false
 	for _, sel := range typeutil.IntuitiveMethodSet(t, &c.methodSets) {
 		m := sel.Obj().(*types.Func)
 		var f closer.Fact
+		ends := c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0)
 		// A declared end of the receiver alone, as tx.Done(err), makes
 		// the receiver a transaction. One given a transaction, as
-		// m.End(tx), ends that one: the receiver is what ends it.
-		if checkerTakesTx(m, c.holds) {
-			continue
-		}
-		if c.declares(directive.Closes, m) || m.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(m.Origin(), &f) && slices.Contains(f.Params, 0) {
+		// m.End(tx), ends that one: the receiver is what ends it. The
+		// parameters are read only of a declared end, since reading them
+		// walks the methods of each of their types.
+		if ends && !checkerTakesTx(m, c.holds) {
 			found = true
+			break
 		}
 	}
-	c.holdsDeclared.Set(t, found)
+	c.holdsDepth--
+	if c.holdsDepth == 0 {
+		c.holdsDeclared.Set(t, found)
+	} else {
+		c.holdsDeclared.Delete(t)
+	}
 	return found
 }
 

@@ -325,3 +325,13 @@ func (*TxEnder) End(tx Tx) error { return nil } // want End:`^closes\[0 1\]$`
 
 // endTx ends tx, and not e, which is no transaction.
 func endTx(e *TxEnder, tx Tx) error { return e.End(tx) } // want endTx:`^closes\[1\]$`
+
+// A declared manager called inside its own callback joins the transaction
+// the callback's context carries, as go-transaction-manager's Do does.
+func Joined(ctx context.Context, m Manager) error {
+	return m.Do(ctx, func(outer context.Context) error {
+		return m.Do(outer, func(inner context.Context) error {
+			return save(outer)
+		})
+	})
+}

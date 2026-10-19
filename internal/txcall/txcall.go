@@ -292,7 +292,10 @@ func DeclaredInvoker(fn *types.Func) (InvokerShape, string) {
 	if len(takes) == 0 {
 		return InvokerShape{}, "needs a callback that takes a transaction or a context"
 	}
-	s.Tx, s.InContext = 0, true
+	// A transaction manager that carries the transaction in a context
+	// joins the one its context carries, as go-transaction-manager's Do
+	// does.
+	s.Tx, s.InContext, s.Nests = 0, true, true
 	s.Outer = slices.IndexFunc(params, IsContext)
 	if s.Outer < 0 {
 		return InvokerShape{}, "needs a context parameter, since the callback takes only a context"
