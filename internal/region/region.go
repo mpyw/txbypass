@@ -120,11 +120,11 @@ func (r *Region) Txs() []handle.Path {
 }
 
 // GivesErr reports whether v, returned beside the transaction, is the
-// begin's error, or nil. Any v does for a begin with no error. A named
-// result that a deferred literal reads lives in memory, so v may be a load
-// of it.
+// begin's error, or nil. For a begin with no error result, as gorm's Begin,
+// the begin's error is the transaction's Error field. A named result that a
+// deferred literal reads lives in memory, so v may be a load of it.
 func (r *Region) GivesErr(v ssa.Value) bool {
-	if c, ok := v.(*ssa.Const); r.err == nil || ok && c.IsNil() {
+	if c, ok := v.(*ssa.Const); ok && c.IsNil() {
 		return true
 	}
 	return r.holdsErr(v)

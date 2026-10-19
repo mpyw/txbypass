@@ -1197,21 +1197,18 @@ func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) b
 	made, _ := program.Creation(lit)
 	i := slices.Index(lit.Params, p)
 	var calls []ssa.CallInstruction
-	var value ssa.Value = lit
+	values := []ssa.Value{lit}
 	switch made := made.(type) {
 	case ssa.CallInstruction:
 		calls = append(calls, made)
 	case *ssa.MakeClosure:
-		value = made
-		for _, ref := range *made.Referrers() {
-			if call, ok := ref.(ssa.CallInstruction); ok {
-				calls = append(calls, call)
-			}
-		}
+		values, calls = scopePassed(made, values, nil)
+	case *ssa.ChangeType:
+		values, calls = scopePassed(made, values, nil)
 	}
 	return slices.ContainsFunc(calls, func(call ssa.CallInstruction) bool {
 		fn, ok := scopeCallee(call.Common())
-		arg := slices.Index(call.Common().Args, value)
+		arg := slices.IndexFunc(call.Common().Args, func(a ssa.Value) bool { return slices.Contains(values, a) })
 		if call.Common().IsInvoke() && arg >= 0 {
 			// The receiver of an interface method is not among the
 			// arguments.
@@ -1219,6 +1216,22 @@ func scopeGiven(p *ssa.Parameter, takes func(fn *types.Func, arg, i int) bool) b
 		}
 		return ok && takes(fn, arg, i)
 	})
+}
+
+// scopePassed adds v to values, and the calls it is given to to calls. A
+// literal given as a named function type, as a func(*gorm.DB) error given
+// as a HandlerFunc, is converted first, and the conversion is given instead.
+func scopePassed(v ssa.Value, values []ssa.Value, calls []ssa.CallInstruction) ([]ssa.Value, []ssa.CallInstruction) {
+	values = append(values, v)
+	for _, ref := range *v.Referrers() {
+		switch ref := ref.(type) {
+		case ssa.CallInstruction:
+			calls = append(calls, ref)
+		case *ssa.ChangeType:
+			values, calls = scopePassed(ref, values, calls)
+		}
+	}
+	return values, calls
 }
 
 // scopeCallee is the function, or the interface method, that call calls.

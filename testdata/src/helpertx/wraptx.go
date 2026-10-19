@@ -298,3 +298,33 @@ func OnErr(db *gorm.DB, v any) error {
 		})
 	})
 }
+
+// GormTxFunc is a named function type. A literal given as one is converted
+// first.
+type GormTxFunc func(*gorm.DB) error
+
+// namedTx takes its callback as a GormTxFunc.
+func namedTx(db *gorm.DB, fn GormTxFunc) error { // want namedTx:`^invokes\[p0, p1\(0\)\]$`
+	return db.Transaction(func(tx *gorm.DB) error {
+		return fn(tx)
+	})
+}
+
+// A savepoint opened inside a callback given as a named function type runs
+// on the outer transaction's connection too, whether the callback captures
+// a variable or not.
+func SavepointNamed(db *gorm.DB) error {
+	return namedTx(db, func(tx *gorm.DB) error {
+		return namedTx(tx, func(sp *gorm.DB) error {
+			return tx.Exec("audit").Error
+		})
+	})
+}
+
+func SavepointNamedCaptured(db *gorm.DB, v any) error {
+	return namedTx(db, func(tx *gorm.DB) error {
+		return gormTx(tx, func(sp *gorm.DB) error {
+			return tx.Create(v).Error
+		})
+	})
+}

@@ -12,6 +12,7 @@ package spell
 import (
 	"go/ast"
 	"go/types"
+	"slices"
 	"strings"
 )
 
@@ -22,19 +23,41 @@ import (
 // spelled s. db.writer reaches db.dbbase.writer, and is spelled db.writer. A
 // variable of another package is qualified by its package's name.
 func Of(info *types.Info, e ast.Expr, from *types.Package, depth int) string {
-	head, fields := path(info, e, from)
+	head, steps := path(info, e, from)
+	steps = steps[:min(depth, len(steps))]
 	var b strings.Builder
 	b.WriteString(head)
-	for _, f := range fields[:min(depth, len(fields))] {
-		if !f.Embedded() {
-			b.WriteString("." + f.Name())
+	for i, s := range steps {
+		if s.field.Embedded() && promoted(steps[i:], from) {
+			continue
 		}
+		b.WriteString("." + s.field.Name())
 	}
 	return b.String()
 }
 
+// promoted reports whether the embedded field steps[0] can be left out: no
+// named field follows it, or the next one is promoted through it. A field
+// of the outer struct of the same name shadows it, as o.Inner.db does when
+// o has a db of its own, so o.db would name another field.
+func promoted(steps []step, from *types.Package) bool {
+	i := slices.IndexFunc(steps, func(s step) bool { return !s.field.Embedded() })
+	if i < 0 {
+		return true
+	}
+	obj, _, _ := types.LookupFieldOrMethod(steps[0].in, true, from, steps[i].field.Name())
+	v, ok := obj.(*types.Var)
+	return ok && v.Origin() == steps[i].field.Origin()
+}
+
+// step is one field a path selects, and the type it is selected from.
+type step struct {
+	field *types.Var
+	in    types.Type
+}
+
 // path is how e begins, spelled, and the fields it selects after that.
-func path(info *types.Info, e ast.Expr, from *types.Package) (string, []*types.Var) {
+func path(info *types.Info, e ast.Expr, from *types.Package) (string, []step) {
 	switch e := ast.Unparen(e).(type) {
 	case *ast.Ident:
 		// The SSA form gives a handle only to an identifier of a
@@ -79,7 +102,7 @@ func path(info *types.Info, e ast.Expr, from *types.Package) (string, []*types.V
 // selected is the path a selector names. A field extends the path of the
 // value it is selected from. A method value adds the embedded fields its
 // promotion passes. A qualified identifier names a package-level variable.
-func selected(info *types.Info, e *ast.SelectorExpr, from *types.Package) (string, []*types.Var) {
+func selected(info *types.Info, e *ast.SelectorExpr, from *types.Package) (string, []step) {
 	sel := info.Selections[e]
 	if sel == nil {
 		return qualified(info.Uses[e.Sel], from), nil
@@ -91,11 +114,12 @@ func selected(info *types.Info, e *ast.SelectorExpr, from *types.Package) (strin
 	}
 	t := sel.Recv()
 	for _, i := range idx {
+		in := t
 		if ptr, ok := t.Underlying().(*types.Pointer); ok {
 			t = ptr.Elem()
 		}
 		f := t.Underlying().(*types.Struct).Field(i)
-		fields = append(fields, f)
+		fields = append(fields, step{field: f, in: in})
 		t = f.Type()
 	}
 	return head, fields

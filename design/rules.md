@@ -224,7 +224,7 @@ func (s *Store) begin(ctx context.Context) (*sql.Tx, error) {
 | --- | --- |
 | It is a declared function or method. Its first result has a method that ends a transaction. It has no other result, or a second of type `error` | The results read as a begin's do |
 | Each return gives `nil`, or a transaction it began with a begin or a helper, still open there | A transaction committed before the return, or one it was given, is not new |
-| A return that gives the transaction gives `nil` or the begin's own error beside it | The caller reads the error as a failed begin. A transaction returned with another error stays open where the caller reads none |
+| A return that gives the transaction gives `nil` or the begin's own error beside it. For gorm's `Begin`, which has no error result, that is `tx.Error` | The caller reads the error as a failed begin. A transaction returned with another error stays open where the caller reads none |
 | The transactions are begun on a parameter, or on a field selected from one, and every return agrees on which | That handle is the outer one |
 
 A transaction wrapped in a struct of the project is not read. A helper of another package is known by the fact `begins[pO.f]`, spelled as `invokes` spells its handle. At the call, a method expression or arguments of one call with several results are not read.
@@ -386,7 +386,7 @@ Every report of a rule has one shape. A report about a directive has its own, li
 
 | Part | Spelled as |
 | --- | --- |
-| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields, as the source leaves them out. `db.writer`, promoted from an embedded `dbbase`, is spelled `db.writer`. A variable of another package is qualified by its package's name |
+| `<use>` | The variable, then each field, joined by dots, up to the outer handle's depth and without the embedded fields, as the source leaves them out. `db.writer`, promoted from an embedded `dbbase`, is spelled `db.writer`. An embedded field stays when a field of the same name shadows the one it holds: `o.Inner.db` stays `o.Inner.db` when `o` has a `db` of its own. A variable of another package is qualified by its package's name |
 | `<call>` | A method by its name, as `Transaction`. A function by its package's name and its own, as `pgx.BeginFunc` |
 | `<instead>` | The transaction's variable or parameter. For a handle rebound with `WithTx`, the variable its result is assigned to, or the call as written |
 

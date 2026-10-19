@@ -334,3 +334,36 @@ func (s *Store) beginLoop(ctx context.Context, n int) (tx *sql.Tx, err error) { 
 	}
 	return tx, err
 }
+
+// beginGormErr returns gorm's transaction beside its own error.
+func (r *Repo) beginGormErr() (*gorm.DB, error) { // want beginGormErr:`^begins\[p0\.db\]$`
+	tx := r.db.Begin()
+	return tx, tx.Error
+}
+
+var errSetup = errors.New("setup")
+
+// beginGormOther returns gorm's open transaction beside another error, so
+// a caller that stops on the error leaves it open where it reads none.
+func (r *Repo) beginGormOther() (*gorm.DB, error) {
+	tx := r.db.Begin()
+	return tx, errSetup
+}
+
+func (r *Repo) GormErr(v any) error {
+	tx, err := r.beginGormErr()
+	if err != nil {
+		r.db.Create(v)
+		return err
+	}
+	r.db.Create(v) // want `^r\.db bypasses the transaction opened with beginGormErr; use tx instead \[outer-handle\]$`
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	other, err := r.beginGormOther()
+	if err != nil {
+		return err
+	}
+	r.db.Create(v)
+	return other.Commit().Error
+}
