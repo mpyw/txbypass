@@ -85,7 +85,9 @@ func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]b
 		name := fset.PositionFor(f.Pos(), false).Filename
 		text, _ := src(name)
 		s.scanFile(f, name, text)
-		s.scanDeclarations(f, info)
+		if info != nil {
+			s.scanDeclarations(f, info)
+		}
 	}
 	return s
 }

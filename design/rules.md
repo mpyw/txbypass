@@ -381,7 +381,7 @@ The directive goes in the doc comment of a function, a method, or an interface m
 | A method | `(example.com/db.Manager).InTx`. The `*` of a pointer receiver may be written or left out |
 | A method of a generic type | `(example.com/db.Store[T]).InTx` |
 
-A name not spelled this way stops the run. A name spelled right that names nothing is not reported.
+A name not spelled this way stops the run. A name spelled right that names nothing is not reported. A method is named by the type that declares it, not by a type that embeds it. A flag given twice declares the names of both. A declaration by a flag that the signature does not fit is not reported, and the body is read as it would be without the flag.
 
 What a declaration says is read from the signature:
 
@@ -398,7 +398,7 @@ A declaration that the signature does not fit is reported, and declares nothing:
 | Directive | Reported when |
 | --- | --- |
 | `invokes` | There is no parameter of a function type, no handle, or a callback that takes neither a transaction nor a context. A callback that takes only a context needs a context parameter of the invoker |
-| `begins` | There is no result, more than two, a second that is not an `error`, or no handle |
+| `begins` | There is no result, more than two, a first that is a number, a string or a bool, a second that is not an `error`, or no handle |
 | `closes` | There is no receiver and no parameter |
 
 A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.

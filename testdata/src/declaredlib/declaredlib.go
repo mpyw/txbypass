@@ -17,3 +17,25 @@ type Store interface {
 	//txbypass:invokes // runs fn in a transaction
 	WithTx(ctx context.Context, fn func(q Querier) error) error // want WithTx:`^invokes\[p0, p2\(0\)\]$`
 }
+
+// Session is a transaction with a name txbypass does not know.
+type Session struct{}
+
+// Exec runs a statement on the session.
+func (*Session) Exec(ctx context.Context, query string) error { return nil }
+
+// End ends the session.
+//
+//txbypass:closes
+func (*Session) End() error { return nil } // want End:`^closes\[0\]$`
+
+// Pool begins sessions.
+type Pool struct{}
+
+// Exec runs a statement on the pool.
+func (*Pool) Exec(ctx context.Context, query string) error { return nil }
+
+// Open begins a session.
+//
+//txbypass:begins
+func (*Pool) Open(ctx context.Context) (*Session, error) { return nil, nil } // want Open:`^begins\[p0\]$`

@@ -96,6 +96,16 @@ func TestDeclaredFlags(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer, "flagtx")
 }
 
+// TestDeclaredFlagAddsUp keeps the names of a flag given twice.
+func TestDeclaredFlagAddsUp(t *testing.T) {
+	setFlag(t, "invokes", "(flaglib.Manager).InTx")
+	setFlag(t, "invokes", "flaglib.Other")
+	f := txbypass.Analyzer.Flags.Lookup("invokes")
+	if got, want := f.Value.String(), "(flaglib.Manager).InTx,flaglib.Other"; got != want {
+		t.Errorf("-invokes = %q, want %q", got, want)
+	}
+}
+
 // TestDeclaredFlagRejectsMisspelling refuses a name that is not spelled like
 // a function, since a typo would switch its declaration off in silence.
 func TestDeclaredFlagRejectsMisspelling(t *testing.T) {

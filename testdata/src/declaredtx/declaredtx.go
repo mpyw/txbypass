@@ -190,6 +190,9 @@ func noResult(db *sql.DB) {}
 //txbypass:begins // second result // want `^txbypass:begins needs a transaction as its first result, and nothing but an error after it$`
 func notError(db *sql.DB) (*sql.Tx, int) { return nil, 0 }
 
+//txbypass:begins // a number // want `^txbypass:begins needs a transaction as its first result, and nothing but an error after it$`
+func openNumber(db *sql.DB) (int, error) { return 0, nil }
+
 //txbypass:begins // no handle // want `^txbypass:begins needs a handle: a receiver, or a parameter that is neither a context nor a function$`
 func beginNoHandle(ctx context.Context) (*sql.Tx, error) { return nil, nil }
 
@@ -202,4 +205,33 @@ func withArgument(db *sql.DB, fn func(*sql.Tx) error) error { return nil }
 func misplaced() {
 	//txbypass:begins // not on a declaration // want `^txbypass:begins belongs in the doc comment of a function or an interface method$`
 	_ = 0
+}
+
+// retry calls itself, so reading its body reaches its own declaration.
+//
+//txbypass:invokes
+func (s *Store) retry(ctx context.Context, n int, fn func(*sql.Tx) error) error { // want retry:`^invokes\[p0\.db, p3\(0\)\]$`
+	if n > 0 {
+		return s.retry(ctx, n-1, fn)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func Ended(ctx context.Context, p *declaredlib.Pool) error {
+	s, err := p.Open(ctx)
+	if err != nil {
+		return err
+	}
+	p.Exec(ctx, "q") // want `^p bypasses the transaction opened with Open; use s instead \[outer-handle\]$`
+	if err := s.End(); err != nil {
+		return err
+	}
+	return p.Exec(ctx, "after")
 }

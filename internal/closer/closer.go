@@ -149,7 +149,8 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 // declaredEnds reports whether call calls a function declared to end what
 // it is given, and gives it the transaction. A declaration of another
 // package says so in its fact, which an interface method has too: its body
-// is never read.
+// is never read. The fact is read whatever the transaction's type, as a
+// declared begin may return one with no method txbypass knows ends it.
 func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 	var fn *types.Func
 	inputs := call.Args
@@ -164,7 +165,7 @@ func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 	}
 	var f Fact
 	declared := c.declared(fn)
-	imported := call.IsInvoke() && c.pass.ImportObjectFact(fn, &f)
+	imported := fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), &f)
 	if !declared && !imported {
 		return false
 	}

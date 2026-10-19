@@ -78,7 +78,12 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 //
 //declscope:shared // run.go hands it to closer and helper
 func (c *checker) declares(kind directive.Kind, fn *types.Func) bool {
-	return c.declared[kind][fn.Origin()] || c.cfg.Declared[kind][funcname.Key(fn)]
+	if c.declared[kind][fn.Origin()] {
+		return true
+	}
+	// Key formats a name, and every call is asked about: no flag, no name.
+	names := c.cfg.Declared[kind]
+	return len(names) > 0 && names[funcname.Key(fn)]
 }
 
 // report reports msg at pos for rule r, unless r is off, an ignore silences

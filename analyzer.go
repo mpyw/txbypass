@@ -9,6 +9,8 @@
 package txbypass
 
 import (
+	"maps"
+
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/ctrlflow"
 
@@ -75,12 +77,23 @@ type analyzerNames struct {
 // String returns the flag as it was set.
 func (f *analyzerNames) String() string { return f.raw }
 
-// Set parses a comma-separated list of names.
+// Set parses a comma-separated list of names. A flag given twice declares
+// the names of both. An empty value clears it, as resetting the flag to its
+// default does.
 func (f *analyzerNames) Set(v string) error {
+	if v == "" {
+		f.raw, f.names = "", nil
+		return nil
+	}
 	m, err := funcname.Parse(v)
 	if err != nil {
 		return err
 	}
-	f.raw, f.names = v, m
+	if f.names == nil {
+		f.raw, f.names = v, m
+		return nil
+	}
+	f.raw += "," + v
+	maps.Copy(f.names, m)
 	return nil
 }

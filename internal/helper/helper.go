@@ -87,6 +87,20 @@ type Helpers struct {
 	// txs holds the transactions of each function already listed, as both
 	// readers list them for a function that may be either helper.
 	txs map[*ssa.Function][]transaction
+	// outers holds the handle that each declared function of the package
+	// opens on, once read from its body. A function being read is held as
+	// opening on no handle of its body, so a body that calls itself ends.
+	outers map[*types.Func]*helperOuter
+}
+
+// helperOuter is the handle a declared function's body opens on: its
+// parameter param, through fields. found is false when the body names no
+// single handle.
+type helperOuter struct {
+	param  int
+	fields []string
+	nests  bool
+	found  bool
 }
 
 // New finds the helpers of pass, whose SSA form is prog. declares reports
@@ -96,7 +110,7 @@ func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *clo
 	h := &Helpers{
 		pass: pass, prog: prog, paths: paths, closer: c, declares: declares, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
-		txs: make(map[*ssa.Function][]transaction),
+		txs: make(map[*ssa.Function][]transaction), outers: make(map[*types.Func]*helperOuter),
 	}
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
@@ -176,12 +190,14 @@ func (h *Helpers) Export() {
 
 // invokerShape is the shape of fn, when it is an invoker.
 func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
-	if h.declares(directive.Invokes, fn) {
-		s, problem := txcall.DeclaredInvoker(fn.Origin())
+	// A declaration the signature does not fit declares nothing. A directive
+	// that does not fit is reported. A flag's is not, and the body is read
+	// as it would be without the flag.
+	if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" && h.declares(directive.Invokes, fn) {
 		if !s.InContext {
 			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
 		}
-		return s, problem == ""
+		return s, true
 	}
 	var f Invokes
 	return helperShape(h, fn, h.invokers, &f, func() txcall.InvokerShape { return f.Shape }, h.readInvoker)
@@ -189,10 +205,9 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
-	if h.declares(directive.Begins, fn) {
-		s, problem := txcall.DeclaredBegin(fn.Origin())
+	if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" && h.declares(directive.Begins, fn) {
 		s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
-		return s, problem == ""
+		return s, true
 	}
 	var f Begins
 	return helperShape(h, fn, h.begins, &f, func() txcall.BeginShape { return f.Shape }, h.readBegin)
@@ -203,26 +218,42 @@ func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
 // field of one, names it, as s.db for a method of s. Otherwise it is the
 // parameter the signature gives, outer.
 func (h *Helpers) declaredOuter(fn *types.Func, outer int) (int, []string, bool) {
-	decl, ok := h.decls[fn.Origin()]
+	fn = fn.Origin()
+	o, ok := h.outers[fn]
 	if !ok {
+		h.outers[fn] = &helperOuter{}
+		o = h.readOuter(fn)
+		h.outers[fn] = o
+	}
+	if !o.found {
 		return outer, nil, false
+	}
+	return o.param, o.fields, o.nests
+}
+
+// readOuter reads the body of fn, when it is of the package, for the one
+// handle that it opens every transaction on.
+func (h *Helpers) readOuter(fn *types.Func) *helperOuter {
+	decl, ok := h.decls[fn]
+	if !ok {
+		return &helperOuter{}
 	}
 	sfn := h.prog.Func(decl)
 	var found *transaction
 	for _, t := range h.transactions(sfn, decl) {
 		if found != nil && !found.outer.Equal(t.outer) {
-			return outer, nil, false
+			return &helperOuter{}
 		}
 		found = &t
 	}
 	if found == nil {
-		return outer, nil, false
+		return &helperOuter{}
 	}
 	i, fields, ok := helperParam(sfn, found.outer)
 	if !ok {
-		return outer, nil, false
+		return &helperOuter{}
 	}
-	return i, fields, found.nests
+	return &helperOuter{param: i, fields: fields, nests: found.nests, found: true}
 }
 
 // helperShape is the shape of fn: read from its body when it is of the

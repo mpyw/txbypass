@@ -307,6 +307,10 @@ func DeclaredBegin(fn *types.Func) (BeginShape, string) {
 	if res.Len() == 0 || res.Len() > 2 || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
 		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
 	}
+	// A transaction is a value with methods. A number or a string is none.
+	if _, basic := res.At(0).Type().Underlying().(*types.Basic); basic {
+		return BeginShape{}, "needs a transaction as its first result, and nothing but an error after it"
+	}
 	outer, ok := declaredOuter(fn.Signature(), declaredParams(fn.Signature()))
 	if !ok {
 		return BeginShape{}, "needs a handle: a receiver, or a parameter that is neither a context nor a function"
