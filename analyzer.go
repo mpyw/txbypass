@@ -15,10 +15,9 @@ import (
 	"golang.org/x/tools/go/analysis/passes/ctrlflow"
 
 	"github.com/mpyw/txbypass/internal"
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/fact"
 	"github.com/mpyw/txbypass/internal/funcname"
-	"github.com/mpyw/txbypass/internal/helper"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -31,7 +30,7 @@ var Analyzer = &analysis.Analyzer{
 	// The facts say which parameters a function ends, and which function
 	// is an invoker or a begin, so that a helper of another package is
 	// seen. Every fact type is listed here, or go vet cannot encode it.
-	FactTypes: []analysis.Fact{new(closer.Fact), new(helper.Invokes), new(helper.Begins)},
+	FactTypes: []analysis.Fact{new(fact.Closes), new(fact.Invokes), new(fact.Begins)},
 	Run:       runAnalyzer,
 }
 

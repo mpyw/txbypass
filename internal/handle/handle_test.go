@@ -37,7 +37,7 @@ func f(x *int) {
 	}
 	f := pkg.Func("f")
 	fv := f.AnonFuncs[0].FreeVars[0]
-	ps := NewPaths("", txcall.IsBeginFunc, txcall.Holds)
+	ps := NewPaths("", libraryTypes{})
 	if !ps.Of(fv).Equal(ps.Of(fv)) {
 		t.Error("the free variable is not the same handle as itself")
 	}
@@ -45,3 +45,10 @@ func f(x *int) {
 		t.Error("the free variable of a literal that is never made is bound to the parameter")
 	}
 }
+
+// libraryTypes knows the begins and the transactions of the tables alone.
+type libraryTypes struct{}
+
+func (libraryTypes) Begins(fn *types.Func) bool { return txcall.IsBeginFunc(fn) }
+
+func (libraryTypes) Holds(t types.Type) bool { return txcall.Holds(t) }

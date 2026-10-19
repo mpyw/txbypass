@@ -8,8 +8,7 @@ import (
 	"golang.org/x/tools/go/analysis/analysistest"
 
 	"github.com/mpyw/txbypass"
-	"github.com/mpyw/txbypass/internal/closer"
-	"github.com/mpyw/txbypass/internal/helper"
+	"github.com/mpyw/txbypass/internal/fact"
 )
 
 // No test in this file may call t.Parallel: the flags live on the global
@@ -140,7 +139,7 @@ func setFlag(t *testing.T, name, value string) func() {
 // by their registered types, and panics on one left out. analysistest keeps
 // facts in memory, so it does not see a type missing from the list.
 func TestFactTypes(t *testing.T) {
-	want := []any{new(closer.Fact), new(helper.Invokes), new(helper.Begins)}
+	want := []any{new(fact.Closes), new(fact.Invokes), new(fact.Begins)}
 	got := make(map[reflect.Type]bool)
 	for _, f := range txbypass.Analyzer.FactTypes {
 		got[reflect.TypeOf(f)] = true
