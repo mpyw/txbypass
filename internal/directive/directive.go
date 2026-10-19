@@ -50,6 +50,9 @@ const (
 	KindCloses Kind = "closes"
 )
 
+// Kinds lists the declaring directives, in the order the flags list them.
+var Kinds = []Kind{KindInvokes, KindBegins, KindCloses}
+
 // Declaration is one declaring directive, and the function it declares.
 type Declaration struct {
 	Obj  *types.Func
@@ -162,11 +165,7 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
 
 // declaring reports whether name is a declaring directive.
 func declaring(name string) bool {
-	switch Kind(name) {
-	case KindInvokes, KindBegins, KindCloses:
-		return true
-	}
-	return false
+	return slices.Contains(Kinds, Kind(name))
 }
 
 // Declarations lists the declaring directives, in the order of the files

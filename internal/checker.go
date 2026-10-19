@@ -194,7 +194,16 @@ func (c *checker) declaredTx(t types.Type) bool {
 			c.txTypes.Set(t, true)
 		}
 	}
-	return c.txTypes.At(t) != nil
+	// A transaction may be held as T or as *T, whichever the begin returns.
+	return c.txTypes.At(t) != nil || c.txTypes.At(checkerAlt(t)) != nil
+}
+
+// checkerAlt is *T for T, and T for *T.
+func checkerAlt(t types.Type) types.Type {
+	if p, ok := types.Unalias(t).(*types.Pointer); ok {
+		return p.Elem()
+	}
+	return types.NewPointer(t)
 }
 
 // txRecv reports whether a method on a receiver of type t ends its
@@ -202,11 +211,7 @@ func (c *checker) declaredTx(t types.Type) bool {
 // it. A method on the value or on the pointer counts either way, as a
 // begin of *T with an end on T.
 func (c *checker) txRecv(t types.Type) bool {
-	alt := types.Type(types.NewPointer(t))
-	if p, ok := types.Unalias(t).(*types.Pointer); ok {
-		alt = p.Elem()
-	}
-	return txcall.Holds(t) || c.txTypes.At(t) != nil || c.txTypes.At(alt) != nil
+	return txcall.Holds(t) || c.txTypes.At(t) != nil || c.txTypes.At(checkerAlt(t)) != nil
 }
 
 // readBeginTxType records the type of the transaction fn returns, when it

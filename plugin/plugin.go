@@ -9,6 +9,7 @@ package plugin
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/golangci/plugin-module-register/register"
 	"golang.org/x/tools/go/analysis"
@@ -39,8 +40,7 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 	}
 	p := &pluginRules{on: make(map[rule.Name]bool), declared: make(map[directive.Kind]map[string]bool)}
 	for name, v := range named {
-		switch kind := directive.Kind(name); kind {
-		case directive.KindInvokes, directive.KindBegins, directive.KindCloses:
+		if kind := directive.Kind(name); slices.Contains(directive.Kinds, kind) {
 			names, err := pluginNames(v)
 			if err != nil {
 				return nil, fmt.Errorf("%s in settings: %w", name, err)

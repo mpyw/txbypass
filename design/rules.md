@@ -327,7 +327,7 @@ A transaction given to a function value or an interface method, whose body is no
 
 ### Helpers
 
-A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read. A method declared as an end counts when it takes nothing else that may be a transaction. A number, a string, a bool, an error, a context or a function may not. So `tx.Done(err)` makes `tx` one, and `m.End(tx)` does not make `m` one. A type that a declared begin the package calls returns is a transaction too. So is the first parameter of a declared end that may be a transaction, as `h` in `End(h *Handle, l *Logger)`. A parameter after it, as the logger, is not. A declared end that is a method of a transaction, one with an ending method or one a begin returns, ends its receiver: a parameter of it, as options in `tx.End(opts)`, is not a transaction. It may have no method, as an opaque handle that only its manager ends, or be a named interface with no method. The empty interface `any` names no type, so it is not one.
+A function ends its parameter when its body calls one of the ending methods on it, or a method declared as an end. So does a function that gives the parameter to a function or a literal that ends it. Deferred calls count. Only a parameter whose type has an ending method is read. A method declared as an end counts when it takes nothing else that may be a transaction. A number, a string, a bool, an error, a context or a function may not. So `tx.Done(err)` makes `tx` one, and `m.End(tx)` does not make `m` one. A type that a declared begin the package calls returns is a transaction too. So is the first parameter of a declared end that may be a transaction, as `h` in `End(h *Handle, l *Logger)`. A parameter after it, as the logger, is not. A declared end may be a method of a transaction: one with an ending method, or one a begin returns, as `T` or `*T`. It ends its receiver, and a parameter of it, as options in `tx.End(opts)`, is not a transaction. It may have no method, as an opaque handle that only its manager ends, or be a named interface with no method. The empty interface `any` names no type, so it is not one.
 
 | The function is | It is read |
 | --- | --- |
@@ -402,6 +402,14 @@ A declaration that the signature does not fit is reported, and declares nothing:
 | `closes` | There is no receiver and no parameter |
 
 A directive declared in one package holds in every package that calls it, through the facts `invokes`, `begins` and `closes`.
+
+What is a transaction is read from the types, and these are not read as one:
+
+| Case | Read as |
+| --- | --- |
+| A declared end of the receiver that takes options, as `tx.Done(opts ...Option)`, where no begin the package sees returns the receiver's type | The options are the transaction. Declare a begin that returns the type, or end it with no argument |
+| A transaction type known only from the callback of a declared invoker | No transaction type. Declare a begin that returns it |
+| An invoker or a begin function whose handle is not its first parameter that is neither a context nor a function | The first such parameter is the handle. Put the handle first, or make it a method of the handle |
 
 ## `outer-handle`
 
