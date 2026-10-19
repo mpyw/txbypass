@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"txhelper"
+	"helperlib"
 )
 
 // ===== Begins =====
@@ -84,12 +84,12 @@ func BegunOn(ctx context.Context, db *sql.DB) error {
 }
 
 func BegunImported(ctx context.Context, db *sql.DB) error {
-	tx, err := txhelper.Begin(ctx, db)
+	tx, err := helperlib.Begin(ctx, db)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	db.ExecContext(ctx, "audit") // want `^db bypasses the transaction opened with txhelper\.Begin; use tx instead \[outer-handle\]$`
+	db.ExecContext(ctx, "audit") // want `^db bypasses the transaction opened with helperlib\.Begin; use tx instead \[outer-handle\]$`
 	return tx.Commit()
 }
 

@@ -1,4 +1,4 @@
-// Package helper finds the helpers of a project that are invokers: they
+// Package txhelper finds the helpers of a project that are invokers: they
 // open a transaction and invoke a function they are given inside it, as
 // s.withTx(ctx, fn) does.
 //
@@ -9,7 +9,7 @@
 // a helper that may run it outside the transaction, or keep it, is no
 // helper. A helper of another package says what it is in a fact, which the
 // analysis of its package exports.
-package helper
+package txhelper
 
 import (
 	"go/ast"
@@ -20,7 +20,6 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 
-	"github.com/mpyw/txbypass/internal/closer"
 	"github.com/mpyw/txbypass/internal/declared"
 	"github.com/mpyw/txbypass/internal/directive"
 	"github.com/mpyw/txbypass/internal/fact"
@@ -28,6 +27,7 @@ import (
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/txcall"
+	"github.com/mpyw/txbypass/internal/txcloser"
 )
 
 // Helpers finds the helpers, for one pass.
@@ -40,7 +40,7 @@ type Helpers struct {
 	prog *program.Program
 	//declscope:shared // invoker.go and begin.go read helpers through them
 	paths  *handle.Paths
-	closer *closer.Closer
+	closer *txcloser.Closer
 	// decl tells what is declared, and which types are transactions.
 	//
 	//declscope:shared // begin.go asks it which types are transactions
@@ -75,7 +75,7 @@ type helperOuter struct {
 // functions declared as invokers or begins, by a directive of the package
 // or a flag, and the types whose values are transactions. A declaration
 // wins over the body.
-func NewHelpers(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, decl *declared.Set) *Helpers {
+func NewHelpers(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *txcloser.Closer, decl *declared.Set) *Helpers {
 	h := &Helpers{
 		pass: pass, prog: prog, paths: paths, closer: c, decl: decl, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),

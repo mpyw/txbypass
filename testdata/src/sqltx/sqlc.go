@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"txhelper"
+	"helperlib"
 )
 
 // DBTX is what sqlc's generated Queries runs on.
@@ -127,7 +127,7 @@ func (s *Store) Transfer(ctx context.Context) error {
 // Not reported, and no crash: a function named WithTx rebinds nothing.
 func FunctionWithTx(ctx context.Context, db *sql.DB, q *Queries) error {
 	tx, _ := db.BeginTx(ctx, nil)
-	_ = txhelper.WithTx(tx)
+	_ = helperlib.WithTx(tx)
 	q.CreateUser(ctx, "b")
 	return tx.Commit()
 }

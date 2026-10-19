@@ -9,7 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"txhelper"
+	"helperlib"
 )
 
 type Store struct {
@@ -107,8 +107,8 @@ func Plain(ctx context.Context, db *sql.DB) error {
 }
 
 func Imported(ctx context.Context, db *sql.DB) error {
-	return txhelper.RunInTx(ctx, db, func(tx *sql.Tx) error {
-		_, err := db.ExecContext(ctx, "audit") // want `^db bypasses the transaction opened with txhelper\.RunInTx; use tx instead \[outer-handle\]$`
+	return helperlib.RunInTx(ctx, db, func(tx *sql.Tx) error {
+		_, err := db.ExecContext(ctx, "audit") // want `^db bypasses the transaction opened with helperlib\.RunInTx; use tx instead \[outer-handle\]$`
 		return err
 	})
 }

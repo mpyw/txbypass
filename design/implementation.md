@@ -31,8 +31,8 @@ internal/program/        the SSA form with debug information, and the ways from 
 internal/handle/         whether two SSA values are the same handle
 internal/fact/           the facts a package exports: closes, invokes and begins
 internal/declared/       what a directive or a flag declares, and which types are transactions
-internal/closer/         which instructions may end a transaction
-internal/helper/         the helpers of the project that are invokers or begins
+internal/txcloser/       which instructions may end a transaction
+internal/txhelper/       the helpers of the project that are invokers or begins: helper.go, invoker.go, begin.go
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -49,9 +49,9 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | `fact` | Data only. The packages that export a fact and those that read it all import it, so it cannot live in one of them |
 | `declared` | Reads declarations, flags, facts and types. The packages below ask it, so it knows none of them |
 | `handle` | Reads SSA values only. It asks an interface which functions begin and which types are transactions |
-| `closer` | Reads SSA instructions and facts. It knows nothing of rules |
-| `helper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
-| `region` | Reads the SSA control flow, and asks `closer` what ends a transaction |
+| `txcloser` | Reads SSA instructions and facts. It knows nothing of rules |
+| `txhelper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
+| `region` | Reads the SSA control flow, and asks `txcloser` what ends a transaction |
 | `spell` | Reads syntax and types only |
 
 `plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `txbypass.Analyzer` instead would be state shared by every run in the process. The copy carries `Requires` and `FactTypes` too. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`. A nested module would need a second tag per release, and would make `declscope shrink` stand down on `internal/`.
@@ -125,7 +125,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 
 ## Helpers
 
-`closer` reads a function of the package for whether it ends a parameter, and remembers the answer. It exports a fact for each function that does, so that the analysis of an importer reads it.
+`txcloser` reads a function of the package for whether it ends a parameter, and remembers the answer. It exports a fact for each function that does, so that the analysis of an importer reads it.
 
 | Decision | Why |
 | --- | --- |
@@ -145,7 +145,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 
 ## Helpers that are invokers or begins
 
-`helper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
+`txhelper` reads each declared function for a parameter of a function type that it runs inside a transaction. It also reads it for a first result that is a transaction it begins. It answers `InvokerOf` for every call, a library's invoker first, so the rules ask it alone.
 
 | Decision | Why |
 | --- | --- |
@@ -172,7 +172,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Three directives, `invokes`, `begins` and `closes`, with no arguments | A transaction is opened by invoking a callback or by beginning, and ended by a call. The verbs say which. Open and begin read the same, so invoke names the callback kind |
 | Read the shape from the signature | An interface method has no body. The defaults fit a transaction manager: the receiver is the handle, and the callback takes the transaction, or a context that carries it |
 | A body of the package that opens on one handle names it | A declared method of a struct that holds two handles would report every use of the struct otherwise |
-| One `declared.Set` answers what is declared and which types are transactions | `closer`, `helper` and `handle` all ask both. The checker held the answers once, and handed each of them over as a function value, so a constructor took three of them |
+| One `declared.Set` answers what is declared and which types are transactions | `txcloser`, `txhelper` and `handle` all ask both. The checker held the answers once, and handed each of them over as a function value, so a constructor took three of them |
 | Flag names are matched where they are called, by `funcname.Key`, as errlogreturn's `-sinks` is | Every pass sees the same flags, so no fact is needed. A directive is seen only where it is written, so it exports a fact |
 | A declaration wins over the body | A declaration is for code the reader knows better than the body says |
 | A declared end ends any input, the receiver of an interface method included | An interface method's receiver is the transaction, as `tx.Done(err)` is. A name that is not `Commit` or `Rollback` is otherwise not an end |
@@ -218,7 +218,7 @@ go test ./...            # analysistest over testdata/src, and unit tests
 mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, coverage
 ```
 
-- `testdata/src/*` are analysistest packages. Each library `internal/txcall` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `txhelper` holds helpers whose facts another fixture reads.
+- `testdata/src/*` are analysistest packages. Each library `internal/txcall` names has a stub there, with the signatures of the version its table names. `enttx/ent` is shaped like ent's generated client, and `enttx/value`, `enttx/noback` and `enttx/twoback` are clients that are not. `helperlib` holds helpers whose facts another fixture reads.
 - `testdata/mod` is a module, run by `TestModule` in module mode. It holds what depends on the module, as a repository in another package of it. Its `go.mod` replaces `gorm.io/gorm` with the stub, which has a `go.mod` for that.
 - `analyzer_test.go` lists every fixture package. **A package left out of the list is not run**, and its `want` comments are never checked. It runs the default flags, `-outer-handle=false` and `-outer-context=false`.
 - A fact is checked as a `want` too: `// want finish:"closes\\[0\\]"` on the function that exports it.
