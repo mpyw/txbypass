@@ -248,7 +248,8 @@ defer tx.Rollback()
 s.db.ExecContext(ctx, audit)
 ```
 
-These helpers are not read, so a bypass in a callback given to one is not reported:
+<details>
+<summary>Helpers that are not read, so a bypass in a callback given to one is not reported</summary>
 
 <table>
 <thead>
@@ -407,6 +408,8 @@ s.withTx(ctx, func(tx *sql.Tx) error {
 </tr>
 </tbody>
 </table>
+
+</details>
 
 The exact conditions are in [design/rules.md](design/rules.md#helpers-that-are-invokers) and [Helpers that are begins](design/rules.md#helpers-that-are-begins).
 
