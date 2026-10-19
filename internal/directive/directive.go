@@ -73,29 +73,37 @@ type ignore struct {
 
 // Scan reads the directives in files. src returns the text of a file, which
 // tells a directive on a line of its own from one after code. info gives
-// the function a declaring directive declares. A generated file is skipped:
-// nothing is reported in it, so neither its ignores nor its problems mean
-// anything.
+// the function a declaring directive declares. Of a generated file, only
+// the declarations are read.
 func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error), info *types.Info) *Set {
 	s := &Set{fset: fset, ignores: make(map[string]map[int][]*ignore)}
 	for _, f := range files {
-		if Generated(f) {
+		generated := Generated(f)
+		// A generator may write a declaration into what it generates, so
+		// declarations are read there too. Nothing else is: nothing is
+		// reported in a generated file, so neither its ignores nor its
+		// problems mean anything.
+		if info != nil {
+			s.scanDeclarations(f, info, generated)
+		}
+		if generated {
 			continue
 		}
 		name := fset.PositionFor(f.Pos(), false).Filename
 		text, _ := src(name)
 		s.scanFile(f, name, text)
-		if info != nil {
-			s.scanDeclarations(f, info)
-		}
 	}
 	return s
 }
 
 // scanDeclarations reads the declaring directives of f, and reports one
 // with an argument, or one that is not in the doc comment of a function or
-// an interface method.
-func (s *Set) scanDeclarations(f *ast.File, info *types.Info) {
+// an interface method. In a generated file, nothing is reported.
+func (s *Set) scanDeclarations(f *ast.File, info *types.Info, generated bool) {
+	report := s.report
+	if generated {
+		report = func(*ast.Comment, string) {}
+	}
 	placed := make(map[*ast.Comment]Kind)
 	for _, cg := range f.Comments {
 		for _, cm := range cg.List {
@@ -104,7 +112,7 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info) {
 				continue
 			}
 			if strings.TrimSpace(d.args) != "" {
-				s.report(cm, "txbypass:"+d.name+" takes no argument; write a reason after //")
+				report(cm, "txbypass:"+d.name+" takes no argument; write a reason after //")
 				continue
 			}
 			placed[cm] = ""
@@ -144,7 +152,7 @@ func (s *Set) scanDeclarations(f *ast.File, info *types.Info) {
 		for _, cm := range cg.List {
 			if kind, ok := placed[cm]; ok && kind == "" {
 				d, _ := parse(cm)
-				s.report(cm, "txbypass:"+d.name+" belongs in the doc comment of a function or an interface method")
+				report(cm, "txbypass:"+d.name+" belongs in the doc comment of a function or an interface method")
 			}
 		}
 	}

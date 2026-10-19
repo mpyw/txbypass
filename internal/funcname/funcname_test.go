@@ -1,6 +1,10 @@
 package funcname
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"maps"
 	"slices"
 	"testing"
@@ -21,8 +25,9 @@ func TestParse(t *testing.T) {
 		{flag: "(a.T)", wantErr: true},
 		{flag: "(a.T).", wantErr: true},
 		{flag: "a.F()", wantErr: true},
-		{flag: "(m.L[T]).Report", want: []string{"(m.L[T]).Report"}},
-		{flag: "(*m.L[K, V]).Report", want: []string{"(m.L[K, V]).Report"}},
+		{flag: "(m.L[T]).Report", want: []string{"(m.L).Report"}},
+		{flag: "(*m.L[K, V]).Report", want: []string{"(m.L).Report"}},
+		{flag: "(m.L[K,V]).Report,(m.L).Other", want: []string{"(m.L).Other", "(m.L).Report"}},
 		{flag: "(m.L[T).Report", wantErr: true},
 	}
 	for _, tt := range tests {
@@ -49,7 +54,7 @@ func TestParseEach(t *testing.T) {
 	}{
 		{name: "none", names: nil, want: nil},
 		{name: "one per item", names: []string{"a.F", " (*b.T).M "}, want: []string{"(b.T).M", "a.F"}},
-		{name: "a comma inside type arguments", names: []string{"(m.L[K, V]).Report"}, want: []string{"(m.L[K, V]).Report"}},
+		{name: "a comma inside type arguments", names: []string{"(m.L[K, V]).Report"}, want: []string{"(m.L).Report"}},
 		{name: "two names in one item", names: []string{"a.F,b.G"}, wantErr: true},
 		{name: "a misspelled name", names: []string{"garbage(("}, wantErr: true},
 	}
@@ -65,5 +70,32 @@ func TestParseEach(t *testing.T) {
 		if keys := slices.Sorted(maps.Keys(got)); !slices.Equal(keys, tt.want) {
 			t.Errorf("%s: got %v, want %v", tt.name, keys, tt.want)
 		}
+	}
+}
+
+// TestKeyGeneric names a method of a generic type whatever names its
+// receiver gives the type parameters, so that a flag spelled from the type
+// declaration matches.
+func TestKeyGeneric(t *testing.T) {
+	const src = `package m
+type L[K comparable, V any] struct{}
+func (l *L[A, B]) Report() {}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "m.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := new(types.Config).Check("m", fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, _, _ := types.LookupFieldOrMethod(types.NewPointer(pkg.Scope().Lookup("L").Type()), true, pkg, "Report")
+	names, err := Parse("(*m.L[K, V]).Report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key := Key(obj.(*types.Func)); !names[key] {
+		t.Errorf("Key = %q, not in %v", key, names)
 	}
 }

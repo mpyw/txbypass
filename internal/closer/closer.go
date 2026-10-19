@@ -153,10 +153,8 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 // declared begin may return one with no method txbypass knows ends it.
 func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 	var fn *types.Func
-	inputs := call.Args
 	if call.IsInvoke() {
 		fn = call.Method
-		inputs = append([]ssa.Value{call.Value}, call.Args...)
 	} else if callee := call.StaticCallee(); callee != nil {
 		fn, _ = callee.Object().(*types.Func)
 	}
@@ -168,6 +166,10 @@ func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 	imported := fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), &f)
 	if !declared && !imported {
 		return false
+	}
+	inputs := call.Args
+	if call.IsInvoke() {
+		inputs = append([]ssa.Value{call.Value}, call.Args...)
 	}
 	for i, v := range inputs {
 		if (declared || slices.Contains(f.Params, i)) && c.within(v, txs) {
@@ -345,7 +347,8 @@ func (c *Closer) Export(prog *program.Program) {
 			continue
 		}
 		if c.declared(obj) {
-			// The declaration's fact is exported already.
+			// A directive's fact is exported already. A flag declares the
+			// function in every package it is called from.
 			continue
 		}
 		var params []int

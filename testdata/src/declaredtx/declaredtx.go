@@ -235,3 +235,10 @@ func Ended(ctx context.Context, p *declaredlib.Pool) error {
 	}
 	return p.Exec(ctx, "after")
 }
+
+func Generated(ctx context.Context, g Gen) error {
+	return g.InTx(ctx, func(tx *sql.Tx) error {
+		_, err := g.ExecContext(ctx, "q") // want `^g bypasses the transaction opened with InTx; use tx instead \[outer-handle\]$`
+		return err
+	})
+}

@@ -379,7 +379,7 @@ The directive goes in the doc comment of a function, a method, or an interface m
 | --- | --- |
 | A function | `example.com/db.InTx` |
 | A method | `(example.com/db.Manager).InTx`. The `*` of a pointer receiver may be written or left out |
-| A method of a generic type | `(example.com/db.Store[T]).InTx` |
+| A method of a generic type | `(example.com/db.Store[T]).InTx`. The type arguments may be written with any names, or left out |
 
 A name not spelled this way stops the run. A name spelled right that names nothing is not reported. A method is named by the type that declares it, not by a type that embeds it. A flag given twice declares the names of both. A declaration by a flag that the signature does not fit is not reported, and the body is read as it would be without the flag.
 
@@ -461,7 +461,7 @@ A use is reported at the start of the expression that names the handle. For `r.d
 | One of them anywhere but the doc comment of a function, a method or an interface method | Reported: `txbypass:invokes belongs in the doc comment of a function or an interface method` |
 | Any other `//txbypass:` directive | Reported: `unknown directive txbypass:x` |
 
-A directive in a generated file is not read.
+A directive in a generated file is not read, except one that declares a helper. A generator may write one into what it generates. A problem with it is not reported there.
 
 ## Flags
 

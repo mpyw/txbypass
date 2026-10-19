@@ -36,6 +36,10 @@ type checker struct {
 	// declared holds the functions of the package that a directive
 	// declares, by kind, once the declaration fits the signature.
 	declared map[directive.Kind]map[*types.Func]bool
+	// keys holds the name a flag would give each function asked about,
+	// since every call is asked about and formatting a name is costly.
+	//declscope:private
+	keys map[*types.Func]string
 	//declscope:private
 	cfg Config
 	// generated holds the files marked as generated, by name. Nothing is
@@ -62,6 +66,7 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 		cfg:        cfg,
 		directives: directive.Scan(pass.Fset, pass.Files, pass.ReadFile, pass.TypesInfo),
 		declared:   make(map[directive.Kind]map[*types.Func]bool),
+		keys:       make(map[*types.Func]string),
 		generated:  make(map[string]bool),
 		reported:   make(map[rule.Name]map[token.Pos]bool),
 	}
@@ -83,7 +88,15 @@ func (c *checker) declares(kind directive.Kind, fn *types.Func) bool {
 	}
 	// Key formats a name, and every call is asked about: no flag, no name.
 	names := c.cfg.Declared[kind]
-	return len(names) > 0 && names[funcname.Key(fn)]
+	if len(names) == 0 {
+		return false
+	}
+	key, ok := c.keys[fn]
+	if !ok {
+		key = funcname.Key(fn)
+		c.keys[fn] = key
+	}
+	return names[key]
 }
 
 // report reports msg at pos for rule r, unless r is off, an ignore silences

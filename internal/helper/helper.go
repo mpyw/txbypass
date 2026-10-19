@@ -193,11 +193,13 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 	// A declaration the signature does not fit declares nothing. A directive
 	// that does not fit is reported. A flag's is not, and the body is read
 	// as it would be without the flag.
-	if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" && h.declares(directive.Invokes, fn) {
-		if !s.InContext {
-			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
+	if h.declares(directive.Invokes, fn) {
+		if s, problem := txcall.DeclaredInvoker(fn.Origin()); problem == "" {
+			if !s.InContext {
+				s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
+			}
+			return s, true
 		}
-		return s, true
 	}
 	var f Invokes
 	return helperShape(h, fn, h.invokers, &f, func() txcall.InvokerShape { return f.Shape }, h.readInvoker)
@@ -205,9 +207,11 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
-	if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" && h.declares(directive.Begins, fn) {
-		s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
-		return s, true
+	if h.declares(directive.Begins, fn) {
+		if s, problem := txcall.DeclaredBegin(fn.Origin()); problem == "" {
+			s.Outer, s.Fields, s.Nests = h.declaredOuter(fn, s.Outer)
+			return s, true
+		}
 	}
 	var f Begins
 	return helperShape(h, fn, h.begins, &f, func() txcall.BeginShape { return f.Shape }, h.readBegin)

@@ -32,8 +32,9 @@ func ParseEach(names []string) (map[string]bool, error) {
 	return parseNames(names)
 }
 
-// parseNames reads each name. The * of a pointer receiver is dropped, so that
-// either spelling names the method whatever its receiver is. A name that is
+// parseNames reads each name. The * of a pointer receiver and the type
+// arguments of a generic one are dropped, so that any spelling names the
+// method whatever its receiver is. A name that is
 // not spelled like a function is refused, since a typo would otherwise switch
 // its declaration off in silence.
 func parseNames(names []string) (map[string]bool, error) {
@@ -46,9 +47,20 @@ func parseNames(names []string) (map[string]bool, error) {
 		if !spelling.MatchString(s) {
 			return nil, fmt.Errorf("%q is not spelled pkg/path.Func or (pkg/path.Type).Method", s)
 		}
-		m[strings.Replace(s, "(*", "(", 1)] = true
+		m[normalize(s)] = true
 	}
 	return m, nil
+}
+
+// typeArgs is the type arguments of a receiver.
+var typeArgs = regexp.MustCompile(`\[[^\[\]]*\]`)
+
+// normalize drops the * of a pointer receiver and the type arguments of a
+// generic one. A method declares its own names for the type parameters, and
+// go/types writes them with a space after each comma, so a name that kept
+// them would match only when spelled exactly as the method's receiver.
+func normalize(name string) string {
+	return typeArgs.ReplaceAllString(strings.Replace(name, "(*", "(", 1), "")
 }
 
 // split splits a list at the commas outside brackets, so that the type
@@ -73,8 +85,7 @@ func split(list string) []string {
 }
 
 // Key is how a set from Parse names fn: its full name, with the * of a
-// pointer receiver dropped. A method of a generic type is named by its
-// origin, with the type parameters.
+// pointer receiver and the type parameters of a generic one dropped.
 func Key(fn *types.Func) string {
-	return strings.Replace(fn.Origin().FullName(), "(*", "(", 1)
+	return normalize(fn.Origin().FullName())
 }

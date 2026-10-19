@@ -90,7 +90,10 @@ func (c *checker) runDeclarations() {
 			fact = &closer.Fact{Params: runAllParams(d.Obj)}
 		}
 		if problem != "" {
-			c.reportf(d.Pos, "txbypass:"+string(d.Kind)+" "+problem)
+			// Nothing is reported in a generated file.
+			if !c.inGenerated(d.Pos) {
+				c.reportf(d.Pos, "txbypass:"+string(d.Kind)+" "+problem)
+			}
 			continue
 		}
 		if c.declared[d.Kind] == nil {
