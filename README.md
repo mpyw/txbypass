@@ -43,11 +43,59 @@ order.go:19:11: r.db bypasses the transaction opened with Transaction; use tx in
 
 The callback receives the transaction as `tx`. `r.db` is the pool the transaction came from, so the audit log is written outside the transaction.
 
-| What goes wrong | Why |
-| --- | --- |
-| The write survives a rollback | It was never part of the transaction |
-| The write can wait forever | It runs on another connection, and may need a lock the transaction holds |
-| The write cannot see the transaction's rows | They are not committed yet |
+<table>
+<thead>
+<tr><th>Code</th><th>What goes wrong</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+r.db.Transaction(func(tx *gorm.DB) error {
+	r.db.Create(&AuditLog{}) // kept
+	return errFailed // rolls back tx only
+})
+```
+
+</td>
+<td><b>The write survives a rollback.</b> It was never part of the transaction</td>
+</tr>
+<tr>
+<td>
+
+```go
+r.db.Transaction(func(tx *gorm.DB) error {
+	// locks the row
+	tx.Model(o).Update("status", "paid")
+	// waits for that lock, on another
+	// connection, until tx ends
+	return r.db.Model(o).
+		Update("note", "paid").Error
+})
+```
+
+</td>
+<td><b>The write can wait forever.</b> It runs on another connection, and needs a lock the transaction holds. With a pool of one connection, it waits for the connection itself</td>
+</tr>
+<tr>
+<td>
+
+```go
+r.db.Transaction(func(tx *gorm.DB) error {
+	tx.Create(o)
+	var n int64
+	// does not count o
+	r.db.Model(&Order{}).Count(&n)
+	return nil
+})
+```
+
+</td>
+<td><b>The read cannot see the transaction's rows.</b> They are not committed yet</td>
+</tr>
+</tbody>
+</table>
 
 The code compiles. A test where nothing fails passes too. txbypass finds it from the source.
 
