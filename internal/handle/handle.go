@@ -51,17 +51,24 @@ type Paths struct {
 	// module is the path of the module of the package read, or empty
 	// outside module mode.
 	module string
-	// begins reports whether a function is a begin, and holds whether a
-	// value of a type is a transaction, each by a declaration too.
-	begins func(*types.Func) bool
-	holds  func(types.Type) bool
+	// types tells the begins, and the types of transactions, each by a
+	// declaration too.
+	types Types
 }
 
 // NewPaths is a Paths that has read nothing yet, for a package of module,
-// which is empty outside module mode. begins reports whether a function is
-// a begin, and holds whether a value of a type is a transaction.
-func NewPaths(module string, begins func(*types.Func) bool, holds func(types.Type) bool) *Paths {
-	return &Paths{known: make(map[ssa.Value]Path), stores: make(map[*ssa.Alloc]allocStoreSet), module: module, begins: begins, holds: holds}
+// which is empty outside module mode. types tells the begins, and the types
+// of transactions.
+func NewPaths(module string, kinds Types) *Paths {
+	return &Paths{known: make(map[ssa.Value]Path), stores: make(map[*ssa.Alloc]allocStoreSet), module: module, types: kinds}
+}
+
+// Types tells the functions that begin a transaction, and the types whose
+// values are transactions, as the tables and the declarations of a pass
+// say.
+type Types interface {
+	Begins(fn *types.Func) bool
+	Holds(t types.Type) bool
 }
 
 // Of is the handle v is.
@@ -458,7 +465,7 @@ func (ps *Paths) returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 		return nil, false
 	}
 	same := types.Identical(call.Type(), recv.Type())
-	return recv, same && fn.Name() != "WithTx" && !ps.begins(fn) && !ps.binds(fn, recv.Type())
+	return recv, same && fn.Name() != "WithTx" && !ps.types.Begins(fn) && !ps.binds(fn, recv.Type())
 }
 
 // binds reports whether fn takes a value of its receiver's type, or one that
@@ -466,7 +473,7 @@ func (ps *Paths) returnedReceiver(call *ssa.Call) (ssa.Value, bool) {
 // given, as repo.Using(tx) does, whatever its name.
 func (ps *Paths) binds(fn *types.Func, recv types.Type) bool {
 	for p := range fn.Signature().Params().Variables() {
-		if types.Identical(p.Type(), recv) || ps.holds(p.Type()) {
+		if types.Identical(p.Type(), recv) || ps.types.Holds(p.Type()) {
 			return true
 		}
 	}

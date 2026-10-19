@@ -12,73 +12,33 @@
 package helper
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"slices"
-	"strconv"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mpyw/txbypass/internal/closer"
+	"github.com/mpyw/txbypass/internal/declared"
 	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/fact"
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/region"
 	"github.com/mpyw/txbypass/internal/txcall"
 )
 
-// Invokes says that a function is an invoker, and of what shape.
-type Invokes struct {
-	Shape txcall.InvokerShape
-}
-
-// AFact marks Invokes as an analysis fact.
-func (*Invokes) AFact() {}
-
-func (f *Invokes) String() string {
-	ctx := ""
-	if f.Shape.InContext {
-		ctx = ", context"
-	}
-	return fmt.Sprintf("invokes[p%d%s, p%d(%d)%s]", f.Shape.Outer, helperFields(f.Shape.Fields), f.Shape.Callback, f.Shape.Tx, ctx)
-}
-
-// Begins says that a function returns a transaction it begins, and on
-// what.
-type Begins struct {
-	Shape txcall.BeginShape
-}
-
-// AFact marks Begins as an analysis fact.
-func (*Begins) AFact() {}
-
-func (f *Begins) String() string {
-	return "begins[p" + strconv.Itoa(f.Shape.Outer) + helperFields(f.Shape.Fields) + "]"
-}
-
-// helperFields spells fields selected one after another, as .db.
-func helperFields(names []string) string {
-	var b strings.Builder
-	for _, name := range names {
-		b.WriteString("." + name)
-	}
-	return b.String()
-}
-
 // Helpers finds the helpers, for one pass.
 type Helpers struct {
-	pass     *analysis.Pass
-	prog     *program.Program
-	paths    *handle.Paths
-	closer   *closer.Closer
-	declares func(directive.Kind, *types.Func) bool
-	// holds reports whether a value of a type is a transaction.
-	holds func(types.Type) bool
+	pass   *analysis.Pass
+	prog   *program.Program
+	paths  *handle.Paths
+	closer *closer.Closer
+	// decl tells what is declared, and which types are transactions.
+	decl *declared.Set
 	// decls holds the declared functions of the package, by object.
 	decls map[*types.Func]*ast.FuncDecl
 	// invokers and begins hold the shape of each function of the package
@@ -105,12 +65,13 @@ type helperOuter struct {
 	found  bool
 }
 
-// New finds the helpers of pass, whose SSA form is prog. declares reports
-// whether a function is declared as an invoker or a begin, by a directive of
-// the package or a flag. A declaration wins over the body.
-func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, declares func(directive.Kind, *types.Func) bool, holds func(types.Type) bool) *Helpers {
+// New finds the helpers of pass, whose SSA form is prog. decl tells the
+// functions declared as invokers or begins, by a directive of the package
+// or a flag, and the types whose values are transactions. A declaration
+// wins over the body.
+func New(pass *analysis.Pass, prog *program.Program, paths *handle.Paths, c *closer.Closer, decl *declared.Set) *Helpers {
 	h := &Helpers{
-		pass: pass, prog: prog, paths: paths, closer: c, declares: declares, holds: holds, decls: make(map[*types.Func]*ast.FuncDecl),
+		pass: pass, prog: prog, paths: paths, closer: c, decl: decl, decls: make(map[*types.Func]*ast.FuncDecl),
 		invokers: make(map[*types.Func]*txcall.InvokerShape), begins: make(map[*types.Func]*txcall.BeginShape),
 		txs: make(map[*ssa.Function][]transaction), outers: make(map[*types.Func]*helperOuter),
 	}
@@ -183,7 +144,7 @@ func (h *Helpers) IsBegin(fn *types.Func) bool {
 // Calls reports whether call calls a helper of another package.
 func Calls(pass *analysis.Pass, call *ast.CallExpr) bool {
 	fn, ok := typeutil.Callee(pass.TypesInfo, call).(*types.Func)
-	return ok && fn.Pkg() != pass.Pkg && (pass.ImportObjectFact(fn.Origin(), new(Invokes)) || pass.ImportObjectFact(fn.Origin(), new(Begins)))
+	return ok && fn.Pkg() != pass.Pkg && (pass.ImportObjectFact(fn.Origin(), new(fact.Invokes)) || pass.ImportObjectFact(fn.Origin(), new(fact.Begins)))
 }
 
 // Export exports the facts of each helper of the package.
@@ -194,10 +155,10 @@ func (h *Helpers) Export() {
 			continue
 		}
 		if s, ok := h.invokerShape(obj); ok {
-			h.pass.ExportObjectFact(obj, &Invokes{Shape: s})
+			h.pass.ExportObjectFact(obj, &fact.Invokes{Shape: s})
 		}
 		if s, ok := h.beginShape(obj); ok {
-			h.pass.ExportObjectFact(obj, &Begins{Shape: s})
+			h.pass.ExportObjectFact(obj, &fact.Begins{Shape: s})
 		}
 	}
 }
@@ -207,11 +168,11 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 	// A declaration the signature does not fit declares nothing. A directive
 	// that does not fit is reported. A flag's is not, and the body is read
 	// as it would be without the flag.
-	if h.declares(directive.KindInvokes, fn) {
+	if h.decl.Declares(directive.KindInvokes, fn) {
 		// The fact of another package was read from the body there, or
 		// from a directive, and names the handle more closely than the
 		// signature does.
-		var f Invokes
+		var f fact.Invokes
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
@@ -222,14 +183,14 @@ func (h *Helpers) invokerShape(fn *types.Func) (txcall.InvokerShape, bool) {
 			return s, true
 		}
 	}
-	var f Invokes
+	var f fact.Invokes
 	return helperShape(h, fn, h.invokers, &f, func() txcall.InvokerShape { return f.Shape }, h.readInvoker)
 }
 
 // beginShape is the shape of fn, when it returns a transaction it begins.
 func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
-	if h.declares(directive.KindBegins, fn) {
-		var f Begins
+	if h.decl.Declares(directive.KindBegins, fn) {
+		var f fact.Begins
 		if fn.Pkg() != h.pass.Pkg && h.pass.ImportObjectFact(fn.Origin(), &f) {
 			return f.Shape, true
 		}
@@ -238,7 +199,7 @@ func (h *Helpers) beginShape(fn *types.Func) (txcall.BeginShape, bool) {
 			return s, true
 		}
 	}
-	var f Begins
+	var f fact.Begins
 	return helperShape(h, fn, h.begins, &f, func() txcall.BeginShape { return f.Shape }, h.readBegin)
 }
 
@@ -339,7 +300,7 @@ func (h *Helpers) readInvoker(decl *ast.FuncDecl) *txcall.InvokerShape {
 func (h *Helpers) readBegin(decl *ast.FuncDecl) *txcall.BeginShape {
 	fn := h.prog.Func(decl)
 	res := fn.Signature.Results()
-	if res.Len() == 0 || res.Len() > 2 || !h.holds(res.At(0).Type()) || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
+	if res.Len() == 0 || res.Len() > 2 || !h.decl.Holds(res.At(0).Type()) || res.Len() == 2 && !types.Identical(res.At(1).Type(), types.Universe.Lookup("error").Type()) {
 		return nil
 	}
 	txs := h.transactions(fn, decl)

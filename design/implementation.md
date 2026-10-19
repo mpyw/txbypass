@@ -11,7 +11,7 @@ The rules find uses in the syntax of a transaction's scope. They ask the SSA for
 ## Architecture
 
 ```text
-analyzer.go              Analyzer, one flag per rule, and the fact type
+analyzer.go              Analyzer, one flag per rule and per kind of declaration, and the fact types
 skills.go                Skills: the embedded skills/ directory
 plugin/                  the golangci-lint module plugin: the settings in place of the flags
 skills/                  the agent skills, installed by `txbypass skill install`
@@ -29,8 +29,10 @@ internal/funcname/       the names -invokes, -begins and -closes take
 internal/txcall/         the calls that open a transaction: the tables, and ent's shape
 internal/program/        the SSA form with debug information, and the ways from syntax to it
 internal/handle/         whether two SSA values are the same handle
-internal/closer/         which instructions may end a transaction, and the fact of helpers
-internal/helper/         the helpers of the project that are invokers or begins, and their facts
+internal/fact/           the facts a package exports: closes, invokes and begins
+internal/declared/       what a directive or a flag declares, and which types are transactions
+internal/closer/         which instructions may end a transaction
+internal/helper/         the helpers of the project that are invokers or begins
 internal/region/         where a begun transaction is open, on every path
 internal/spell/          how a message spells a use, from the syntax
 ```
@@ -44,7 +46,9 @@ The rules share one pass's state and nothing else, so they sit in one flat packa
 | `funcname` | Reads and spells names of functions only |
 | `txcall` | Reads syntax and types only. It knows nothing of rules |
 | `program` | Builds the SSA form, and maps syntax to it. It knows nothing of handles |
-| `handle` | Reads SSA values only |
+| `fact` | Data only. The packages that export a fact and those that read it all import it, so it cannot live in one of them |
+| `declared` | Reads declarations, flags, facts and types. The packages below ask it, so it knows none of them |
+| `handle` | Reads SSA values only. It asks an interface which functions begin and which types are transactions |
 | `closer` | Reads SSA instructions and facts. It knows nothing of rules |
 | `helper` | Reads syntax, SSA and facts, and asks `region` where a begin is open. It knows nothing of rules |
 | `region` | Reads the SSA control flow, and asks `closer` what ends a transaction |
@@ -168,6 +172,7 @@ The blocks start dead, and the entry starts closed. The states only fall, so the
 | Three directives, `invokes`, `begins` and `closes`, with no arguments | A transaction is opened by invoking a callback or by beginning, and ended by a call. The verbs say which. Open and begin read the same, so invoke names the callback kind |
 | Read the shape from the signature | An interface method has no body. The defaults fit a transaction manager: the receiver is the handle, and the callback takes the transaction, or a context that carries it |
 | A body of the package that opens on one handle names it | A declared method of a struct that holds two handles would report every use of the struct otherwise |
+| One `declared.Set` answers what is declared and which types are transactions | `closer`, `helper` and `handle` all ask both. The checker held the answers once, and handed each of them over as a function value, so a constructor took three of them |
 | Flag names are matched where they are called, by `funcname.Key`, as errlogreturn's `-sinks` is | Every pass sees the same flags, so no fact is needed. A directive is seen only where it is written, so it exports a fact |
 | A declaration wins over the body | A declaration is for code the reader knows better than the body says |
 | A declared end ends any input, the receiver of an interface method included | An interface method's receiver is the transaction, as `tx.Done(err)` is. A name that is not `Commit` or `Rollback` is otherwise not an end |

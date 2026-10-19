@@ -19,7 +19,6 @@
 package closer
 
 import (
-	"fmt"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -29,35 +28,20 @@ import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/mpyw/txbypass/internal/declared"
+	"github.com/mpyw/txbypass/internal/directive"
+	"github.com/mpyw/txbypass/internal/fact"
 	"github.com/mpyw/txbypass/internal/handle"
 	"github.com/mpyw/txbypass/internal/program"
 	"github.com/mpyw/txbypass/internal/txcall"
 )
 
-// Fact says which parameters a function ends, before it returns or by
-// letting them go. The receiver of a method is parameter 0.
-type Fact struct {
-	Params []int
-	// Declared is true when a //txbypass:closes directive, not the body,
-	// says so. Params then holds every input, and only the first that may
-	// be a transaction is one.
-	Declared bool
-}
-
-// AFact marks Fact as an analysis fact.
-func (*Fact) AFact() {}
-
-func (f *Fact) String() string { return fmt.Sprintf("closes%v", f.Params) }
-
 // Closer answers whether instructions end a transaction, for one pass.
 type Closer struct {
 	pass  *analysis.Pass
 	paths *handle.Paths
-	// declared reports whether a function is declared, by a directive of
-	// the package or a flag, to end every transaction it is given.
-	declared func(*types.Func) bool
-	// holds reports whether a value of a type is a transaction.
-	holds func(types.Type) bool
+	// decl tells what is declared, and which types are transactions.
+	decl *declared.Set
 	// ends holds, for each function asked about, the inputs a declaration
 	// or a fact of another package says it ends, since every call is asked
 	// about.
@@ -93,14 +77,11 @@ type closerKey struct {
 	root ssa.Value
 }
 
-// New is a Closer for pass, which reads handles through paths. declared
-// reports whether a function is declared to end every transaction it is
-// given.
-//
-// holds reports whether a value of a type is a transaction: it has a method
-// that ends one, by its name or by a declaration.
-func New(pass *analysis.Pass, paths *handle.Paths, declared func(*types.Func) bool, holds func(types.Type) bool) *Closer {
-	return &Closer{pass: pass, paths: paths, declared: declared, holds: holds, ends: make(map[*types.Func]closerEnds), known: make(map[closerKey]bool)}
+// New is a Closer for pass, which reads handles through paths. decl tells
+// the functions declared to end every transaction they are given, and the
+// types whose values are transactions.
+func New(pass *analysis.Pass, paths *handle.Paths, decl *declared.Set) *Closer {
+	return &Closer{pass: pass, paths: paths, decl: decl, ends: make(map[*types.Func]closerEnds), known: make(map[closerKey]bool)}
 }
 
 // Ends reports whether instr may end the transaction tx, which is any of
@@ -152,7 +133,7 @@ func (c *Closer) callEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 		return false
 	}
 	for i, arg := range call.Args {
-		if c.within(arg, txs) && c.holds(arg.Type()) && c.paramEnds(fn, i) {
+		if c.within(arg, txs) && c.decl.Holds(arg.Type()) && c.paramEnds(fn, i) {
 			return true
 		}
 	}
@@ -183,8 +164,8 @@ func (c *Closer) declaredEnds(call *ssa.CallCommon, txs []handle.Path) bool {
 	}
 	e, ok := c.ends[fn]
 	if !ok {
-		var f Fact
-		e.all = c.declared(fn)
+		var f fact.Closes
+		e.all = c.decl.Declares(directive.KindCloses, fn)
 		if !e.all && fn.Pkg() != c.pass.Pkg && c.pass.ImportObjectFact(fn.Origin(), &f) {
 			e.params = f.Params
 		}
@@ -240,7 +221,7 @@ func (c *Closer) paramEnds(fn *ssa.Function, i int) bool {
 		return c.rootEnds(fn, fn.Params[i])
 	}
 	obj, ok := fn.Object().(*types.Func)
-	var f Fact
+	var f fact.Closes
 	return ok && c.pass.ImportObjectFact(obj, &f) && slices.Contains(f.Params, i)
 }
 
@@ -374,19 +355,19 @@ func (c *Closer) Export(prog *program.Program) {
 		if !ok {
 			continue
 		}
-		if c.declared(obj) {
+		if c.decl.Declares(directive.KindCloses, obj) {
 			// A directive's fact is exported already. A flag declares the
 			// function in every package it is called from.
 			continue
 		}
 		var params []int
 		for i, p := range fn.Params {
-			if c.holds(p.Type()) && c.rootEnds(fn, p) {
+			if c.decl.Holds(p.Type()) && c.rootEnds(fn, p) {
 				params = append(params, i)
 			}
 		}
 		if len(params) > 0 {
-			c.pass.ExportObjectFact(obj, &Fact{Params: params})
+			c.pass.ExportObjectFact(obj, &fact.Closes{Params: params})
 		}
 	}
 }
