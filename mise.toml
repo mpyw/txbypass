@@ -2,4 +2,4 @@
 [tools]
 go = "1.27.0"
 golangci-lint = "2.13.1"
-"github:mpyw/declscope" = "0.20.4"
+"github:mpyw/declscope" = "0.23.0"
