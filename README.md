@@ -105,7 +105,7 @@ Every report of a rule ends with the rule's name. That name is what `//txbypass:
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/txbypass@0.3.0"` | Nothing. Installs the prebuilt binary |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/txbypass@0.3.1"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.26+ |
 | `go install` | `go install github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.26+ |
 | Release archive | See below | Nothing |
@@ -122,7 +122,7 @@ txbypass -V=full   # the release this binary was built from
 
 ```toml
 [tools]
-"github:mpyw/txbypass" = "0.3.0"
+"github:mpyw/txbypass" = "0.3.1"
 ```
 
 As a tool dependency in `go.mod`:
@@ -147,7 +147,7 @@ go run github.com/mpyw/txbypass/cmd/txbypass@latest ./...
 From a release archive, verified against the published checksums:
 
 ```bash
-VERSION=0.3.0
+VERSION=0.3.1
 REPO=https://github.com/mpyw/txbypass
 BASE="${REPO}/releases/download/v${VERSION}"
 curl -LO "${BASE}/txbypass_${VERSION}_darwin_arm64.tar.gz"
@@ -163,7 +163,7 @@ version: v2.13.1  # the golangci-lint release to build
 plugins:
   - module: github.com/mpyw/txbypass
     import: github.com/mpyw/txbypass/plugin
-    version: v0.3.0
+    version: v0.3.1
 ```
 
 Turn it on in `.golangci.yml`. Each key under `settings` is a rule's name, as the flags take it, or `invokes`, `begins` or `closes`. A rule left out keeps its default. An unknown name stops the run:
