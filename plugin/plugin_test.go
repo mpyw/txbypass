@@ -56,7 +56,7 @@ func TestPluginRejectsBadSettings(t *testing.T) {
 		{"a value that is not a bool", map[string]any{"outer-handle": "yes"}, `rule "outer-handle" in settings takes true or false`},
 		{"a declaration that is not a list", map[string]any{"invokes": "flaglib.InTx"}, "invokes in settings: takes a list of functions"},
 		{"a declaration with an item that is not a string", map[string]any{"begins": []any{1}}, "begins in settings: takes a list of functions"},
-		{"a name not spelled like a function", map[string]any{"closes": []any{"Finish"}}, "closes in settings: "},
+		{"a name not spelled like a function", map[string]any{"closes": []any{"Finish"}}, "settings: closes: "},
 		{"two names in one item", map[string]any{"closes": []any{"a.B, c.D"}}, "holds more than one name"},
 		{"settings that are not a map", []any{"outer-handle"}, "decoding settings"},
 	}

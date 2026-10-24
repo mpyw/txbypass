@@ -11,8 +11,8 @@ The rules find uses in the syntax of a transaction's scope. They ask the SSA for
 ## Architecture
 
 ```text
-analyzer.go              Analyzer, one flag per rule and per kind of declaration, and the fact types
-plugin/                  the golangci-lint module plugin: the settings in place of the flags
+analyzer.go              Analyzer, with one flag per rule and per kind of declaration; New, which takes a Config instead; and the fact types
+plugin/                  the golangci-lint module plugin: the settings, read into a Config for New
 skills/                  the agent skills, installed by `txbypass skill install`, and Set, which embeds them
 cmd/txbypass/            singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file

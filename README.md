@@ -192,6 +192,15 @@ golangci-lint custom  # writes ./custom-gcl
 ./custom-gcl run ./...
 ```
 
+From a Go program of your own, build an analyzer with `txbypass.New`. It takes the same settings as a `txbypass.Config`, and has no flags. `txbypass.Analyzer` is the one with flags:
+
+```go
+a, err := txbypass.New(txbypass.Config{
+	Rules:   map[string]bool{"outer-context": false},
+	Invokes: []string{"(example.com/db.Manager).InTx"},
+})
+```
+
 </details>
 
 ## Rules

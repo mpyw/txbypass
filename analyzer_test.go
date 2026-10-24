@@ -13,6 +13,7 @@ import (
 
 // No test in this file may call t.Parallel: the flags live on the global
 // txbypass.Analyzer, and a test that sets one would leak it into the others.
+// An analyzer that New builds has none, so new_test.go runs in parallel.
 
 func TestAnalyzer(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), txbypass.Analyzer,
