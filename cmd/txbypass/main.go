@@ -21,7 +21,7 @@ import (
 // Intercept reads only the first argument, and a test binary's first
 // argument is a -test flag, so it hands over at once.
 func init() {
-	skills.Intercept()
+	skillsInstaller.Intercept()
 	registerVersionFlag()
 }
 

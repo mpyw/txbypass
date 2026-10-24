@@ -3,16 +3,16 @@ package main
 import (
 	skillembed "github.com/mpyw/go-skill-embed"
 
-	"github.com/mpyw/txbypass"
+	"github.com/mpyw/txbypass/skills"
 )
 
-// skills is the command that puts the skills where an agent reads them. It
-// carries the release of this binary, so an installed copy names the version
-// of the rules it describes.
+// skillsInstaller is the command that puts the skills where an agent reads
+// them. It carries the release of this binary, so an installed copy names the
+// version of the rules it describes.
 //
 //declscope:shared // main.go's init hands it the arguments before the driver sees them
-var skills = skillembed.NewInstaller(
-	txbypass.Skills,
+var skillsInstaller = skillembed.NewInstaller(
+	skills.Set,
 	skillembed.WithToolName("txbypass"),
 	skillembed.WithVersion(versionRelease()),
 )

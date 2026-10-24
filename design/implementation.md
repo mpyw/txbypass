@@ -12,9 +12,8 @@ The rules find uses in the syntax of a transaction's scope. They ask the SSA for
 
 ```text
 analyzer.go              Analyzer, one flag per rule and per kind of declaration, and the fact types
-skills.go                Skills: the embedded skills/ directory
 plugin/                  the golangci-lint module plugin: the settings in place of the flags
-skills/                  the agent skills, installed by `txbypass skill install`
+skills/                  the agent skills, installed by `txbypass skill install`, and Set, which embeds them
 cmd/txbypass/            singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file
   run.go                 Run: build the SSA form when needed, every function and call, then the reports in order
