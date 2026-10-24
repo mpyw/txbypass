@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestVersionFlagReplacesTheDrivers checks that init registered -V. The
+// TestVersionFlagReplacesTheDrivers checks that mainPrepare registered -V. The
 // driver then leaves it alone, since it registers its own only when none is.
 func TestVersionFlagReplacesTheDrivers(t *testing.T) {
 	f := flag.Lookup("V")
