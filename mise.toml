@@ -1,5 +1,5 @@
 # Pins the tools so that CI and a local checkout run the same ones.
 [tools]
 go = "1.27.3"
-golangci-lint = "2.13.1"
+golangci-lint = "2.15.0"
 "github:mpyw/declscope" = "0.23.1"

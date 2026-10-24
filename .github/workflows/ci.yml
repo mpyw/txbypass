@@ -92,7 +92,8 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           # golangci-lint refuses to load a module whose go directive is newer
-          # than the Go it was built with, so this pin has to move whenever the
-          # directive in go.mod does. v2.13.0+ is built with Go 1.27.
-          version: v2.13.1
+          # than the Go it was built with, and fails to read the export data of
+          # a newer Go, so this pin has to move whenever the directive or the
+          # toolchain in go.mod does. v2.14.0+ reads Go 1.27.3's export data.
+          version: v2.15.0
           args: --timeout=5m
