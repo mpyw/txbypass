@@ -23,7 +23,7 @@ var version string
 // -V that prints "devel" for every binary, but only when no -V is registered
 // yet, so registering this one first replaces it.
 //
-//declscope:shared // main.go's init registers it before the driver runs
+//declscope:shared // main.go's mainPrepare registers it before the driver runs
 func registerVersionFlag() {
 	flag.Var(versionFlag{out: os.Stdout, exit: os.Exit, executable: os.Executable}, "V", "print version and exit")
 }

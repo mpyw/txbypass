@@ -9,6 +9,7 @@
 package txbypass
 
 import (
+	"fmt"
 	"maps"
 
 	"golang.org/x/tools/go/analysis"
@@ -21,28 +22,80 @@ import (
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
-// Analyzer reports a database handle used inside a transaction it opened.
-var Analyzer = &analysis.Analyzer{
-	Name:     "txbypass",
-	Doc:      "reports a database handle used inside a transaction it opened",
-	URL:      "https://github.com/mpyw/txbypass",
-	Requires: []*analysis.Analyzer{ctrlflow.Analyzer},
-	// The facts say which parameters a function ends, and which function
-	// is an invoker or a begin, so that a helper of another package is
-	// seen. Every fact type is listed here, or go vet cannot encode it.
-	FactTypes: []analysis.Fact{new(fact.Closes), new(fact.Invokes), new(fact.Begins)},
-	Run:       runAnalyzer,
+// Analyzer reports a database handle used inside a transaction it opened. It
+// takes its settings from flags, as the txbypass command and go vet give
+// them. A program that holds its own settings builds an analyzer with New.
+var Analyzer = analyzerWithFlags()
+
+// Config holds the settings of an analyzer that New builds. The zero Config
+// keeps every rule at its default and declares no function.
+type Config struct {
+	// Rules turns a rule on or off by its name, such as "outer-handle". A
+	// rule left out keeps its default.
+	Rules map[string]bool
+	// Invokes names functions that open a transaction and run a callback in
+	// it, each spelled pkg/path.Func or (pkg/path.Type).Method.
+	Invokes []string
+	// Begins names functions that return a transaction they begin.
+	Begins []string
+	// Closes names functions that end every transaction they are given.
+	Closes []string
 }
 
-// analyzerFlagOf holds the flag of each rule.
-var analyzerFlagOf = make(map[rule.Name]*bool)
+// New builds an analyzer with the settings of cfg, and no flags. Each call
+// builds one of its own, so two of them share nothing. It fails on a rule
+// it does not know, and on a name that is not spelled like a function.
+func New(cfg Config) (*analysis.Analyzer, error) {
+	on := make(map[rule.Name]bool, len(cfg.Rules))
+	for name, v := range cfg.Rules {
+		if !rule.Known(name) {
+			return nil, fmt.Errorf("unknown rule %q", name)
+		}
+		on[rule.Name(name)] = v
+	}
+	given := map[directive.Kind][]string{
+		directive.KindInvokes: cfg.Invokes,
+		directive.KindBegins:  cfg.Begins,
+		directive.KindCloses:  cfg.Closes,
+	}
+	declared := make(map[directive.Kind]map[string]bool, len(given))
+	for _, k := range directive.Kinds {
+		if len(given[k]) == 0 {
+			continue
+		}
+		names, err := funcname.ParseEach(given[k])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k, err)
+		}
+		declared[k] = names
+	}
+	c := internal.Config{
+		On: func(r rule.Name) bool {
+			if v, ok := on[r]; ok {
+				return v
+			}
+			return rule.OnByDefault(r)
+		},
+		Declared: declared,
+	}
+	return analyzerBuild(func() internal.Config { return c }), nil
+}
 
-// analyzerDeclared holds -invokes, -begins and -closes.
-var analyzerDeclared = make(map[directive.Kind]*analyzerNames, len(directive.Kinds))
-
-func init() {
+// analyzerWithFlags builds the analyzer with a flag for each rule and for
+// each kind of declaration. The flags live in the closure of Run, so nothing
+// is shared but the analyzer itself.
+func analyzerWithFlags() *analysis.Analyzer {
+	on := make(map[rule.Name]*bool, len(rule.All))
+	names := make(map[directive.Kind]*analyzerNames, len(directive.Kinds))
+	a := analyzerBuild(func() internal.Config {
+		declared := make(map[directive.Kind]map[string]bool, len(names))
+		for k, f := range names {
+			declared[k] = f.names
+		}
+		return internal.Config{On: func(r rule.Name) bool { return *on[r] }, Declared: declared}
+	})
 	for _, r := range rule.All {
-		analyzerFlagOf[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+		on[r] = a.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
 	}
 	usage := map[directive.Kind]string{
 		directive.KindInvokes: "functions that open a transaction and run a callback in it",
@@ -50,18 +103,29 @@ func init() {
 		directive.KindCloses:  "functions that end every transaction they are given",
 	}
 	for _, k := range directive.Kinds {
-		analyzerDeclared[k] = new(analyzerNames)
-		Analyzer.Flags.Var(analyzerDeclared[k], string(k),
+		names[k] = new(analyzerNames)
+		a.Flags.Var(names[k], string(k),
 			"comma-separated "+usage[k]+", spelled pkg/path.Func or (pkg/path.Type).Method")
 	}
+	return a
 }
 
-func runAnalyzer(pass *analysis.Pass) (any, error) {
-	declared := make(map[directive.Kind]map[string]bool, len(analyzerDeclared))
-	for k, f := range analyzerDeclared {
-		declared[k] = f.names
+// analyzerBuild builds an analyzer that runs with the settings config gives
+// when a pass starts.
+func analyzerBuild(config func() internal.Config) *analysis.Analyzer {
+	return &analysis.Analyzer{
+		Name:     "txbypass",
+		Doc:      "reports a database handle used inside a transaction it opened",
+		URL:      "https://github.com/mpyw/txbypass",
+		Requires: []*analysis.Analyzer{ctrlflow.Analyzer},
+		// The facts say which parameters a function ends, and which function
+		// is an invoker or a begin, so that a helper of another package is
+		// seen. Every fact type is listed here, or go vet cannot encode it.
+		FactTypes: []analysis.Fact{new(fact.Closes), new(fact.Invokes), new(fact.Begins)},
+		Run: func(pass *analysis.Pass) (any, error) {
+			return internal.Run(pass, config())
+		},
 	}
-	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *analyzerFlagOf[r] }, Declared: declared})
 }
 
 // analyzerNames is a flag that takes a list of functions. A name that is

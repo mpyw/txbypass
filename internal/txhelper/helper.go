@@ -338,7 +338,12 @@ func (h *Helpers) transactions(fn *ssa.Function, decl *ast.FuncDecl) []helperTra
 				return true
 			}
 			lit := h.prog.Func(o.Callback)
-			tx := program.Param(lit, h.pass.TypesInfo.Defs[o.Tx])
+			tx, ok := program.Param(lit, h.pass.TypesInfo.Defs[o.Tx])
+			if !ok {
+				// Unreachable: o.Tx is a parameter of the callback lit is built
+				// from. Without it, nothing is checked rather than reported.
+				return true
+			}
 			txs = append(txs, helperTransaction{fn: lit, txs: []handle.Path{h.paths.Of(tx)}, outer: outer, nests: o.Nests})
 			return true
 		}

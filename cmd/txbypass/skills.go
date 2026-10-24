@@ -10,7 +10,7 @@ import (
 // them. It carries the release of this binary, so an installed copy names the
 // version of the rules it describes.
 //
-//declscope:shared // main.go's init hands it the arguments before the driver sees them
+//declscope:shared // main.go's mainPrepare hands it the arguments before the driver sees them
 var skillsInstaller = skillembed.NewInstaller(
 	skills.Set,
 	skillembed.WithToolName("txbypass"),

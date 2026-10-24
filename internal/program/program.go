@@ -518,14 +518,14 @@ func defers(instr ssa.Instruction) bool {
 	return false
 }
 
-// Param is the parameter of fn that obj declares.
-func Param(fn *ssa.Function, obj types.Object) ssa.Value {
+// Param is the parameter of fn that obj declares, or false when fn has none.
+func Param(fn *ssa.Function, obj types.Object) (ssa.Value, bool) {
 	for _, p := range fn.Params {
 		if p.Object() == obj {
-			return p
+			return p, true
 		}
 	}
 	// Unreachable: each caller asks for a parameter of the declaration
 	// that the builder made fn from.
-	panic("program: no parameter of fn for the object")
+	return nil, false
 }

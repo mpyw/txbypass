@@ -106,8 +106,8 @@ Every report of a rule ends with the rule's name. That name is what `//txbypass:
 | Method | Command | Needs |
 | --- | --- | --- |
 | **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/txbypass@0.2.0"` | Nothing. Installs the prebuilt binary |
-| `go tool` | `go get -tool github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.27+ |
-| `go install` | `go install github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.27+ |
+| `go tool` | `go get -tool github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.26+ |
+| `go install` | `go install github.com/mpyw/txbypass/cmd/txbypass@latest` | Go 1.26+ |
 | Release archive | See below | Nothing |
 
 ```bash
@@ -190,6 +190,15 @@ Then build and run it:
 ```bash
 golangci-lint custom  # writes ./custom-gcl
 ./custom-gcl run ./...
+```
+
+From a Go program of your own, build an analyzer with `txbypass.New`. It takes the same settings as a `txbypass.Config`, and has no flags. `txbypass.Analyzer` is the one with flags:
+
+```go
+a, err := txbypass.New(txbypass.Config{
+	Rules:   map[string]bool{"outer-context": false},
+	Invokes: []string{"(example.com/db.Manager).InTx"},
+})
 ```
 
 </details>
@@ -1488,6 +1497,10 @@ db.Exec(refresh)
 </table>
 
 The full specification, with every limit, is [design/rules.md](design/rules.md).
+
+## AI usage
+
+txbypass is developed with AI coding agents (Claude Code). The rules in [design/rules.md](design/rules.md) and the fixtures under `testdata/src/` define what it reports.
 
 ## License
 

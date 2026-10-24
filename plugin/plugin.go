@@ -9,15 +9,12 @@ package plugin
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/golangci/plugin-module-register/register"
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mpyw/txbypass"
-	"github.com/mpyw/txbypass/internal"
 	"github.com/mpyw/txbypass/internal/directive"
-	"github.com/mpyw/txbypass/internal/funcname"
 	"github.com/mpyw/txbypass/internal/rule"
 )
 
@@ -25,12 +22,9 @@ func init() {
 	register.Plugin(txbypass.Analyzer.Name, newPlugin)
 }
 
-// pluginRules is the plugin built from one settings block.
-type pluginRules struct {
-	// on holds the rules the settings name.
-	on map[rule.Name]bool
-	// declared holds the functions the settings declare, by kind.
-	declared map[directive.Kind]map[string]bool
+// pluginAnalyzer is the plugin built from one settings block.
+type pluginAnalyzer struct {
+	analyzer *analysis.Analyzer
 }
 
 func newPlugin(settings any) (register.LinterPlugin, error) {
@@ -38,14 +32,19 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading settings: %w", err)
 	}
-	p := &pluginRules{on: make(map[rule.Name]bool), declared: make(map[directive.Kind]map[string]bool)}
+	cfg := txbypass.Config{Rules: make(map[string]bool)}
+	lists := map[directive.Kind]*[]string{
+		directive.KindInvokes: &cfg.Invokes,
+		directive.KindBegins:  &cfg.Begins,
+		directive.KindCloses:  &cfg.Closes,
+	}
 	for name, v := range named {
-		if kind := directive.Kind(name); slices.Contains(directive.Kinds, kind) {
+		if list, ok := lists[directive.Kind(name)]; ok {
 			names, err := pluginNames(v)
 			if err != nil {
 				return nil, fmt.Errorf("%s in settings: %w", name, err)
 			}
-			p.declared[kind] = names
+			*list = names
 			continue
 		}
 		if !rule.Known(name) {
@@ -55,13 +54,17 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 		if !ok {
 			return nil, fmt.Errorf("rule %q in settings takes true or false", name)
 		}
-		p.on[rule.Name(name)] = on
+		cfg.Rules[name] = on
 	}
-	return p, nil
+	a, err := txbypass.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("settings: %w", err)
+	}
+	return &pluginAnalyzer{analyzer: a}, nil
 }
 
 // pluginNames reads a list of functions, one name per item.
-func pluginNames(v any) (map[string]bool, error) {
+func pluginNames(v any) ([]string, error) {
 	items, ok := v.([]any)
 	if !ok {
 		return nil, fmt.Errorf("takes a list of functions")
@@ -74,33 +77,16 @@ func pluginNames(v any) (map[string]bool, error) {
 		}
 		names[i] = s
 	}
-	return funcname.ParseEach(names)
+	return names, nil
 }
 
-// BuildAnalyzers gives txbypass's analyzer, with the rules the settings turn on.
-// It is a copy, so the flags of txbypass.Analyzer are left alone.
-func (p *pluginRules) BuildAnalyzers() ([]*analysis.Analyzer, error) {
-	cfg := internal.Config{On: p.ruleOn, Declared: p.declared}
-	return []*analysis.Analyzer{{
-		Name:      txbypass.Analyzer.Name,
-		Doc:       txbypass.Analyzer.Doc,
-		URL:       txbypass.Analyzer.URL,
-		Requires:  txbypass.Analyzer.Requires,
-		FactTypes: txbypass.Analyzer.FactTypes,
-		Run: func(pass *analysis.Pass) (any, error) {
-			return internal.Run(pass, cfg)
-		},
-	}}, nil
+// BuildAnalyzers gives the analyzer that txbypass.New built from the
+// settings. It has no flags, so txbypass.Analyzer is left alone.
+func (p *pluginAnalyzer) BuildAnalyzers() ([]*analysis.Analyzer, error) {
+	return []*analysis.Analyzer{p.analyzer}, nil
 }
 
 // GetLoadMode asks for type information, which the rules read.
-func (*pluginRules) GetLoadMode() string {
+func (*pluginAnalyzer) GetLoadMode() string {
 	return register.LoadModeTypesInfo
-}
-
-func (p *pluginRules) ruleOn(r rule.Name) bool {
-	if v, ok := p.on[r]; ok {
-		return v
-	}
-	return rule.OnByDefault(r)
 }
