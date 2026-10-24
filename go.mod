@@ -2,7 +2,7 @@ module github.com/mpyw/txbypass
 
 go 1.26.0
 
-toolchain go1.27.0
+toolchain go1.27.3
 
 require (
 	github.com/golangci/plugin-module-register v0.1.2
