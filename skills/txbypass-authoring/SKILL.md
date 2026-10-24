@@ -6,7 +6,7 @@ license: MIT
 
 # Writing code under txbypass
 
-Written against **txbypass 0.2.0**. Check the version first with `txbypass -V=full`: this describes how that release behaves, not how an older one does.
+Written against **txbypass 0.3.0**. Check the version first with `txbypass -V=full`: this describes how that release behaves, not how an older one does.
 
 txbypass reports code that runs outside a transaction while the transaction is open. The full specification is `design/rules.md` in the txbypass repository. This skill says how to write code that satisfies it.
 
