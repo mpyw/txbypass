@@ -27,6 +27,10 @@ import (
 // them. A program that holds its own settings builds an analyzer with New.
 var Analyzer = analyzerWithFlags()
 
+// ErrNoCtrlflow is returned when the pass carries no ctrlflow result, which
+// means the analyzer was registered without its requirement.
+var ErrNoCtrlflow = internal.ErrRunWithoutCtrlflow
+
 // Config holds the settings of an analyzer that New builds. The zero Config
 // keeps every rule at its default and declares no function.
 type Config struct {
