@@ -24,10 +24,10 @@ import (
 	"github.com/mpyw/txbypass/internal/txhelper"
 )
 
-// errRunWithoutCtrlflow is returned by Run when the pass carries no
+// ErrRunWithoutCtrlflow is returned by Run when the pass carries no
 // ctrlflow result, which means the analyzer was registered without its
 // requirement.
-var errRunWithoutCtrlflow = errors.New("txbypass: ctrlflow result missing")
+var ErrRunWithoutCtrlflow = errors.New("txbypass: ctrlflow result missing")
 
 // Run analyzes one package. The SSA form is built only for a package that
 // opens a transaction, or has a function that takes one: the others have
@@ -35,7 +35,7 @@ var errRunWithoutCtrlflow = errors.New("txbypass: ctrlflow result missing")
 func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	cfgs, ok := pass.ResultOf[ctrlflow.Analyzer].(*ctrlflow.CFGs)
 	if !ok {
-		return nil, errRunWithoutCtrlflow
+		return nil, ErrRunWithoutCtrlflow
 	}
 	c := newChecker(pass, cfg)
 	for _, p := range c.directives.Problems() {
