@@ -1,4 +1,4 @@
-package txbypass_test
+package skills_test
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/mpyw/txbypass"
+	"github.com/mpyw/txbypass/skills"
 )
 
 // TestSkillFrontmatterParses reads the frontmatter of every skill as YAML. An
@@ -18,7 +18,7 @@ import (
 // go-skill-embed reads only the name, with a reader of its own, so it does
 // not catch this.
 func TestSkillFrontmatterParses(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
+	paths, err := filepath.Glob(filepath.Join("*", "SKILL.md"))
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("no skills found: %v", err)
 	}
@@ -50,14 +50,14 @@ func TestSkillFrontmatterParses(t *testing.T) {
 }
 
 // TestSkillsEmbedEverySkill checks that the embedded set is the directory:
-// a skill added under skills/ ships without another change.
+// a skill added in this directory ships without another change.
 func TestSkillsEmbedEverySkill(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
+	paths, err := filepath.Glob(filepath.Join("*", "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := txbypass.Skills.Len(); got != len(paths) {
-		t.Errorf("%d skills embedded, %d under skills/", got, len(paths))
+	if got := skills.Set.Len(); got != len(paths) {
+		t.Errorf("%d skills embedded, %d in this directory", got, len(paths))
 	}
 }
 
@@ -65,7 +65,7 @@ func TestSkillsEmbedEverySkill(t *testing.T) {
 // against" line on the release the README tells a reader to install. A
 // release bumps both, and this catches the one forgotten.
 func TestSkillsNameTheReleaseTheReadmeInstalls(t *testing.T) {
-	readme, err := os.ReadFile("README.md")
+	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSkillsNameTheReleaseTheReadmeInstalls(t *testing.T) {
 		t.Fatal("README.md names no release to install")
 	}
 	want := "Written against **txbypass " + string(m[1]) + "**."
-	paths, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
+	paths, err := filepath.Glob(filepath.Join("*", "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

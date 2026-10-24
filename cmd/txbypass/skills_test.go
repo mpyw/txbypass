@@ -12,7 +12,7 @@ import (
 // with this tool.
 func TestSkillInstall(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "skills")
-	if err := skills.Run(t.Context(), []string{"install", "--dir", dest}); err != nil {
+	if err := skillsInstaller.Run(t.Context(), []string{"install", "--dir", dest}); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(filepath.Join(dest, "txbypass-authoring", "SKILL.md"))
