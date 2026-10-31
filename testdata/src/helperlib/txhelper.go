@@ -46,6 +46,23 @@ func RunInTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
+// Base holds a database, for a type of another package to embed.
+type Base struct {
+	DB *sql.DB
+}
+
+// InTx runs fn in a transaction begun on b.DB.
+func (b *Base) InTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := b.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
 // Begin begins a transaction on db.
 func Begin(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	return db.BeginTx(ctx, nil)

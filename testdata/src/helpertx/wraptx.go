@@ -73,6 +73,14 @@ type Repo struct {
 	db *gorm.DB
 }
 
+// attempt runs fn through retry, which runs it through withTx. A helper
+// three calls away from its begin opens on s.db too.
+func (s *Store) attempt(ctx context.Context, fn func(*sql.Tx) error) error { // want attempt:`^invokes\[p0\.db, p2\(0\)\]$`
+	return s.retry(ctx, func(tx *sql.Tx) error {
+		return fn(tx)
+	})
+}
+
 // InTx runs fn in the callback of a known invoker.
 func (r *Repo) InTx(fn func(tx *gorm.DB) error) error { // want InTx:`^invokes\[p0\.db, p1\(0\)\]$`
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -134,6 +142,81 @@ type App struct {
 func (a *App) Run(ctx context.Context) error {
 	return a.withTx(ctx, func(tx *sql.Tx) error {
 		_, err := a.db.ExecContext(ctx, "audit") // want `^a\.db bypasses the transaction opened with withTx; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+func (s *Store) Attempted(ctx context.Context) error {
+	return s.attempt(ctx, func(tx *sql.Tx) error {
+		_, err := s.db.ExecContext(ctx, "audit") // want `^s\.db bypasses the transaction opened with attempt; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+// Shell reaches attempt through two embedded fields, App and its Store.
+type Shell struct {
+	App
+}
+
+func (sh *Shell) Run(ctx context.Context) error {
+	return sh.attempt(ctx, func(tx *sql.Tx) error {
+		_, err := sh.db.ExecContext(ctx, "audit") // want `^sh\.db bypasses the transaction opened with attempt; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+// The embedded fields may be spelled at the call, and left out at the use.
+func (sh *Shell) Spelled(ctx context.Context) error {
+	return sh.App.Store.retry(ctx, func(tx *sql.Tx) error {
+		_, err := sh.db.ExecContext(ctx, "audit") // want `^sh\.db bypasses the transaction opened with retry; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+// Held embeds a Store by value, not by pointer.
+type Held struct {
+	Store
+}
+
+func (h *Held) Run(ctx context.Context) error {
+	return h.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := h.db.ExecContext(ctx, "audit") // want `^h\.db bypasses the transaction opened with withTx; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+// Layer is a helper of its own, which begins on a field promoted from the
+// Store it embeds.
+type Layer struct {
+	*Store
+}
+
+func (l *Layer) inTx(ctx context.Context, fn func(*sql.Tx) error) error { // want inTx:`^invokes\[p0\.Store\.db, p2\(0\)\]$`
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
+func (l *Layer) Run(ctx context.Context) error {
+	return l.inTx(ctx, func(tx *sql.Tx) error {
+		_, err := l.Store.db.ExecContext(ctx, "audit") // want `^l\.db bypasses the transaction opened with inTx; use tx instead \[outer-handle\]$`
+		return err
+	})
+}
+
+// Service reaches a helper of another package through the Base it embeds.
+type Service struct {
+	helperlib.Base
+}
+
+func (s *Service) Run(ctx context.Context) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		_, err := s.DB.ExecContext(ctx, "audit") // want `^s\.DB bypasses the transaction opened with InTx; use tx instead \[outer-handle\]$`
 		return err
 	})
 }
